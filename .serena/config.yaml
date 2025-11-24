@@ -1,0 +1,65 @@
+# Serena MCP 项目配置
+# 为 AlkaidSYS-tp 项目自动生成
+
+project:
+  name: AlkaidSYS-tp
+  description: 强大、现代、低代码的企业级 SAAS 系统框架
+  root: /Users/Benson/Code/AlkaidSYS-tp
+  
+# 支持的编程语言
+languages:
+  - php        # 后端主要语言
+  - javascript # 前端脚本
+  - typescript # 前端主要语言
+  - yaml       # 配置文件
+  - markdown   # 文档
+  - json       # 配置和数据
+
+# 忽略的目录和文件
+ignore:
+  # 依赖目录
+  - node_modules
+  - vendor
+  - frontend/node_modules
+  
+  # 构建产物
+  - runtime
+  - public/static
+  - frontend/dist
+  - frontend/.turbo
+  
+  # 版本控制
+  - .git
+  
+  # IDE 配置
+  - .idea
+  - .vscode
+  
+  # 临时文件
+  - "*.log"
+  - "*.tmp"
+  - "*.cache"
+
+# 语言服务器配置
+language_servers:
+  php:
+    enabled: true
+    # PHP Intelephense 或 PHP Language Server
+  
+  typescript:
+    enabled: true
+    # TypeScript Language Server
+  
+  javascript:
+    enabled: true
+    # JavaScript Language Server
+
+# 代码分析选项
+analysis:
+  max_file_size: 1048576  # 1MB
+  timeout: 30  # 30 秒
+  
+# 缓存配置
+cache:
+  enabled: true
+  directory: .serena/cache

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="dev"/>
+        <env name="DB_TYPE" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_NAME" value="alkaid_sys"/>
+        <env name="DB_USER" value="root"/>
+        <env name="DB_PASS" value="root"/>
+        <env name="DB_PORT" value="3306"/>
+        <!-- Allow runtime DDL in tests for SchemaBuilder -->
+        <env name="ALLOW_RUNTIME_DDL" value="true"/>
+        <!-- Enable RateLimit middleware in tests | 在测试中启用限流中间件 -->
+        <env name="RATELIMIT_ENABLED" value="true"/>
+        <!-- Set high rate limit for testing to avoid interference | 设置较高的限流阈值避免干扰测试 -->
+        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000"/>
+        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60"/>
+        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000"/>
+        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60"/>
+        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000"/>
+        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60"/>
+    </php>
+    <coverage processUncoveredFiles="true">
+        <include>
+            <directory suffix=".php">domain</directory>
+            <directory suffix=".php">infrastructure</directory>
+        </include>
+    </coverage>
+</phpunit>

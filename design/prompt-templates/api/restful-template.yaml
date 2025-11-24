@@ -1,0 +1,63 @@
+name: "api-restful-template"
+description: "RESTful API 注解与资源接口模板"
+category: "api"
+version: "1.0.0"
+
+parameters:
+  - name: "resource_name"
+    type: "string"
+    required: true
+    description: "资源名（PascalCase，如 Product）"
+
+  - name: "base_path"
+    type: "string"
+    required: true
+    default: "/api/v1/products"
+    description: "资源基路径（复数）"
+
+  - name: "fields"
+    type: "object"
+    required: true
+    description: "资源字段定义（JSON 格式）"
+    example: '{"id":"integer","name":"string","price":"number","status":"integer"}'
+
+  - name: "operations"
+    type: "array"
+    required: false
+    default: ["list","detail","create","update","delete"]
+    description: "需要生成的动作"
+
+  - name: "security_bearer"
+    type: "boolean"
+    required: false
+    default: true
+    description: "是否使用 bearerAuth 安全定义"
+
+template: |
+  为资源 {{resource_name}} 生成 RESTful API 注解与控制器骨架，路径为 {{base_path}}。
+
+  ## 字段
+  {{fields}}
+
+  ## 动作
+  {{operations}}
+
+  ## 要求
+  1. 使用 OpenAPI 注解（swagger-php）标注控制器方法
+  2. 若 `security_bearer=true`，在每个接口添加 `security={{{"bearerAuth":[]}}}` 注解
+  3. 统一响应格式参考 10-api-design.md
+
+  ## 路由
+  Route::resource('{{resource_name | lower}}s', 'api\\v1\\controller\\{{resource_name}}Controller');
+
+  ## 生成步骤
+  1. 新建控制器 `app/api/v1/controller/{{resource_name}}Controller.php`
+  2. 根据动作生成对应的方法与注解（index/read/save/update/delete）
+  3. 运行 `php think api:doc` 生成 OpenAPI JSON
+  4. 运行 `npx openapi-typescript public/api-docs.json -o admin/src/api/types.d.ts` 生成 TS 类型
+
+cli_command: "php think api:doc"
+
+related_docs:
+  - "../../03-data-layer/10-api-design.md#-模板驱动的-openapi-注解示例（新增）"
+  - "../../03-data-layer/10-api-design.md#-openapijson-schemasdk-类型生成流水线（新增）"

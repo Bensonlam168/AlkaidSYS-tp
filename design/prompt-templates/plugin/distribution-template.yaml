@@ -1,0 +1,89 @@
+name: "plugin-distribution-template"
+description: "三级分销插件开发模板"
+category: "plugin"
+version: "1.0.0"
+
+parameters:
+  - name: "plugin_name"
+    type: "string"
+    required: true
+    description: "插件名称（英文，如 distribution）"
+
+  - name: "commission_levels"
+    type: "array"
+    required: true
+    default: [0.10, 0.05, 0.02]
+    description: "佣金比例（三级，如 [0.10, 0.05, 0.02]）"
+
+  - name: "hooks"
+    type: "array"
+    required: true
+    default: ["order.paid", "user.register"]
+    description: "监听的 Hook 事件"
+
+  - name: "with_frontend"
+    type: "boolean"
+    required: false
+    default: true
+    description: "是否包含前端页面"
+
+template: |
+  生成一个 {{plugin_name}} 插件，实现三级分销功能。
+
+  ## 功能需求
+  1. 用户成为分销商
+  2. 三级佣金计算（佣金比例：{{commission_levels}}）
+  3. 分销订单管理
+  4. 佣金提现
+
+  ## 技术要求
+  1. 使用 AlkaidSYS 框架的插件系统
+  2. 实现 HookToolProvider 接口
+  3. 监听以下 Hook 事件：{{hooks}}
+  4. 使用 SDK Builder 模式进行数据库操作
+  5. 使用 Provider 模式实现可插拔的佣金计算策略
+  {{#if with_frontend}}
+  6. 包含前端管理页面（Vue 3 + Ant Design Vue）
+  {{/if}}
+
+  ## 数据库设计
+  需要以下数据表：
+  1. distributors（分销商表）
+     - id, user_id, parent_id, status, total_commission, created_at, updated_at
+  2. distribution_orders（分销订单表）
+     - id, order_id, distributor_id, level, commission_amount, status, created_at, updated_at
+  3. commissions（佣金记录表）
+     - id, distributor_id, distribution_order_id, amount, status, paid_at, created_at, updated_at
+
+  ## API 接口
+  需要以下 API 接口：
+  1. GET /api/distribution/distributors - 获取分销商列表
+  2. POST /api/distribution/distributors - 创建分销商
+  3. GET /api/distribution/distributors/:id - 获取分销商详情
+  4. PUT /api/distribution/distributors/:id - 更新分销商
+  5. GET /api/distribution/orders - 获取分销订单列表
+  6. GET /api/distribution/commissions - 获取佣金记录列表
+  7. POST /api/distribution/withdraw - 申请提现
+  8. GET /api/distribution/stats - 获取统计数据
+
+  ## 代码生成步骤
+  1. 使用 CLI 命令生成插件骨架：
+     ```bash
+     alkaid plugin:create {{plugin_name}} --type=distribution --hooks={{hooks}}
+     ```
+  2. 生成数据库迁移文件
+  3. 生成 Model/Service/Controller
+  4. 注册 Hook 与 MCP 工具
+  {{#if with_frontend}}
+  5. 生成前端页面（DistributorList.vue, CommissionList.vue）
+  {{/if}}
+  6. 生成测试代码（DistributorServiceTest, CommissionServiceTest）
+
+cli_command: "alkaid plugin:create {{plugin_name}} --type=distribution --hooks={{hooks}}"
+
+related_docs:
+  - "../../09-lowcode-framework/41-lowcode-overview.md#7.5-提示模板库与入口（新增）"
+  - "../../08-developer-guides/32-plugin-development-guide.md#mcp-工具与-hooktoolprovider-规范（新增）"
+
+examples:
+  - "../../other/AI-ASSISTED-DEVELOPMENT-WORKFLOW.md#3.4-mcp-工具设计"

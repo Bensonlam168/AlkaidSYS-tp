@@ -1,0 +1,67 @@
+name: "crud-basic-template"
+description: "基础 CRUD 代码生成模板"
+category: "crud"
+version: "1.0.0"
+
+parameters:
+  - name: "model_name"
+    type: "string"
+    required: true
+    description: "模型名称（如 Product）"
+
+  - name: "fields"
+    type: "object"
+    required: true
+    description: "字段定义（JSON 格式）"
+    example: '{"name":"string","price":"decimal","stock":"integer"}'
+
+  - name: "with_api"
+    type: "boolean"
+    required: false
+    default: true
+    description: "是否生成 API 接口"
+
+  - name: "with_page"
+    type: "boolean"
+    required: false
+    default: true
+    description: "是否生成前端页面"
+
+template: |
+  生成 {{model_name}} 模型的 CRUD 代码。
+
+  ## 字段定义
+  {{fields}}
+
+  ## 技术要求
+  1. 使用 AlkaidSYS 框架的 BaseModel
+  2. 使用 SDK Builder 模式进行数据库操作
+  3. 遵循 PSR-12 编码规范
+  4. 使用 PHPDoc 注释
+  {{#if with_api}}
+  5. 生成 RESTful API 接口
+  {{/if}}
+  {{#if with_page}}
+  6. 生成前端管理页面（Vue 3 + Ant Design Vue）
+  {{/if}}
+
+  ## 代码生成步骤
+  1. 使用 CLI 命令生成 CRUD 代码：
+     ```bash
+     alkaid make:crud {{model_name}} --fields='{{fields}}' {{#if with_api}}--with-api{{/if}} {{#if with_page}}--with-page{{/if}}
+     ```
+  2. 生成数据库迁移文件
+  3. 生成 Model/Controller/Service
+  {{#if with_api}}
+  4. 生成 API 接口并补充 OpenAPI 注解
+  {{/if}}
+  {{#if with_page}}
+  5. 生成前端页面（列表页 + 表单页）
+  {{/if}}
+  6. 生成测试代码
+
+cli_command: "alkaid make:crud {{model_name}} --fields='{{fields}}' {{#if with_api}}--with-api{{/if}} {{#if with_page}}--with-page{{/if}}"
+
+related_docs:
+  - "../../03-data-layer/10-api-design.md#-openapijson-schemasdk-类型生成流水线（新增）"
+  - "../../05-deployment-testing/16-development-workflow.md#-ai-辅助开发闭环（新增标准）"

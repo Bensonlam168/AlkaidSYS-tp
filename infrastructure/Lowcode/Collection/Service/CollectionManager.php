@@ -1,0 +1,313 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Infrastructure\Lowcode\Collection\Service;
+
+use Domain\Lowcode\Collection\Interfaces\CollectionInterface;
+use Domain\Lowcode\Collection\Interfaces\FieldInterface;
+use Domain\Schema\Interfaces\SchemaBuilderInterface;
+use Infrastructure\Lowcode\Collection\Repository\CollectionRepository;
+use Infrastructure\Lowcode\Collection\Repository\FieldRepository;
+use Infrastructure\Lowcode\Collection\Repository\RelationshipRepository;
+use think\facade\Cache;
+use think\facade\Db;
+use think\facade\Event;
+
+/**
+ * Collection Manager Service | Collection管理服务
+ * 
+ * Manages Collection CRUD operations with physical table creation and caching.
+ * 管理Collection的CRUD操作，包含物理表创建和缓存。
+ * 
+ * @package Infrastructure\Lowcode\Collection\Service
+ */
+class CollectionManager
+{
+    protected SchemaBuilderInterface $schemaBuilder;
+    protected CollectionRepository $collectionRepo;
+    protected FieldRepository $fieldRepo;
+    protected RelationshipRepository $relationshipRepo;
+
+    protected string $cachePrefix = 'lowcode:collection:';
+    protected int $cacheTtl = 3600; // 1 hour | 1小时
+
+    /**
+     * Constructor | 构造函数
+     * 
+     * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
+     * @param CollectionRepository $collectionRepo Collection repository | Collection仓储
+     * @param FieldRepository $fieldRepo Field repository | 字段仓储
+     * @param RelationshipRepository $relationshipRepo Relationship repository | 关系仓储
+     */
+    public function __construct(
+        SchemaBuilderInterface $schemaBuilder,
+        CollectionRepository $collectionRepo,
+        FieldRepository $fieldRepo,
+        RelationshipRepository $relationshipRepo
+    ) {
+        $this->schemaBuilder = $schemaBuilder;
+        $this->collectionRepo = $collectionRepo;
+        $this->fieldRepo = $fieldRepo;
+        $this->relationshipRepo = $relationshipRepo;
+    }
+
+    /**
+     * Create collection | 创建Collection
+     * 
+     * Creates collection metadata and physical database table.
+     * 创建Collection元数据和物理数据库表。
+     * 
+     * @param CollectionInterface $collection Collection to create | 要创建的Collection
+     * @return void
+     * @throws \Exception
+     */
+    public function create(CollectionInterface $collection): void
+    {
+        Db::startTrans();
+        try {
+            // 1. Create physical table | 创建物理表
+            $columns = $this->buildColumns($collection->getFields());
+            $this->schemaBuilder->createTable($collection->getTableName(), $columns);
+
+            // 2. Save collection metadata | 保存Collection元数据
+            $collectionId = $this->collectionRepo->save($collection);
+            $collection->setId($collectionId);
+
+            // 3. Save field metadata | 保存字段元数据
+            foreach ($collection->getFields() as $field) {
+                $this->fieldRepo->save($field, $collectionId);
+            }
+
+            // 4. Save relationship metadata | 保存关系元数据
+            foreach ($collection->getRelationships() as $relationship) {
+                $this->relationshipRepo->save($relationship, $collectionId);
+            }
+
+            // 5. Cache the collection | 缓存Collection
+            $this->cache($collection);
+
+            // 6. Trigger event | 触发事件
+            Event::trigger('lowcode.collection.created', [
+                'collection' => $collection,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            throw $e;
+        }
+    }
+
+    /**
+     * Get collection by name | 按名称获取Collection
+     * 
+     * @param string $name Collection name | Collection名称
+     * @return CollectionInterface|null
+     */
+    public function get(string $name): ?CollectionInterface
+    {
+        // Try cache first | 优先从缓存获取
+        $cacheKey = $this->cachePrefix . $name;
+        $cached = Cache::get($cacheKey);
+        
+        if ($cached !== null && $cached !== false) {
+            return $cached;
+        }
+
+        // Load from database | 从数据库加载
+        $collection = $this->collectionRepo->findByName($name);
+        
+        if (!$collection) {
+            return null;
+        }
+
+        // Load fields | 加载字段
+        $fields = $this->fieldRepo->findByCollectionId($collection->getId());
+        foreach ($fields as $field) {
+            $collection->addField($field);
+        }
+
+        // Load relationships | 加载关系
+        $relationships = $this->relationshipRepo->findByCollectionId($collection->getId());
+        foreach ($relationships as $relName => $relationship) {
+            $collection->addRelationship($relName, $relationship);
+        }
+
+        // Cache the collection | 缓存Collection
+        $this->cache($collection);
+
+        return $collection;
+    }
+
+    /**
+     * Update collection | 更新Collection
+     * 
+     * @param CollectionInterface $collection Collection to update | 要更新的Collection
+     * @return void
+     * @throws \Exception
+     */
+    public function update(CollectionInterface $collection): void
+    {
+        if (!$collection->getId()) {
+            throw new \InvalidArgumentException('Collection ID is required for update');
+        }
+
+        Db::startTrans();
+        try {
+            // 1. Update collection metadata | 更新Collection元数据
+            $this->collectionRepo->save($collection);
+
+            // 2. Update fields (simplified: delete and recreate) | 更新字段（简化：删除后重建）
+            $this->fieldRepo->deleteByCollectionId($collection->getId());
+            foreach ($collection->getFields() as $field) {
+                $this->fieldRepo->save($field, $collection->getId());
+            }
+
+            // 3. Update relationships | 更新关系
+            $this->relationshipRepo->deleteByCollectionId($collection->getId());
+            foreach ($collection->getRelationships() as $relationship) {
+                $this->relationshipRepo->save($relationship, $collection->getId());
+            }
+
+            // 4. Clear cache | 清除缓存
+            $this->clearCache($collection->getName());
+
+            // 5. Trigger event | 触发事件
+            Event::trigger('lowcode.collection.updated', [
+                'collection' => $collection,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            throw $e;
+        }
+    }
+
+    /**
+     * Delete collection | 删除Collection
+     * 
+     * Deletes collection metadata and optionally drops physical table.
+     * 删除Collection元数据并可选择删除物理表。
+     * 
+     * @param string $name Collection name | Collection名称
+     * @param bool $dropTable Drop physical table | 是否删除物理表
+     * @return void
+     * @throws \Exception
+     */
+    public function delete(string $name, bool $dropTable = true): void
+    {
+        $collection = $this->get($name);
+        
+        if (!$collection) {
+            throw new \InvalidArgumentException("Collection not found: {$name}");
+        }
+
+        Db::startTrans();
+        try {
+            $collectionId = $collection->getId();
+
+            // 1. Delete relationships | 删除关系
+            $this->relationshipRepo->deleteByCollectionId($collectionId);
+
+            // 2. Delete fields | 删除字段
+            $this->fieldRepo->deleteByCollectionId($collectionId);
+
+            // 3. Delete collection | 删除Collection
+            $this->collectionRepo->delete($collectionId);
+
+            // 4. Drop physical table if requested | 如果请求则删除物理表
+            if ($dropTable && $this->schemaBuilder->hasTable($collection->getTableName())) {
+                $this->schemaBuilder->dropTable($collection->getTableName());
+            }
+
+            // 5. Clear cache | 清除缓存
+            $this->clearCache($name);
+
+            // 6. Trigger event | 触发事件
+            Event::trigger('lowcode.collection.deleted', [
+                'collection_name' => $name,
+                'collection_id' => $collectionId,
+            ]);
+
+            Db::commit();
+        } catch (\Exception $e) {
+            Db::rollback();
+            throw $e;
+        }
+    }
+
+    /**
+     * List collections | 列出Collections
+     * 
+     * @param array $filters Filters | 筛选条件
+     * @param int $page Page number | 页码
+     * @param int $pageSize Page size | 每页数量
+     * @return array{list: array, total: int, page: int, pageSize: int}
+     */
+    public function list(array $filters = [], int $page = 1, int $pageSize = 20): array
+    {
+        return $this->collectionRepo->list($filters, $page, $pageSize);
+    }
+
+    /**
+     * Build columns array for SchemaBuilder | 为SchemaBuilder构建列数组
+     * 
+     * @param array<string, FieldInterface> $fields Fields | 字段
+     * @return array<string, array>
+     */
+    protected function buildColumns(array $fields): array
+    {
+        $columns = [
+            // Auto-increment primary key | 自增主键
+            'id' => [
+                'type' => 'INT',
+                'primary' => true,
+                'auto_increment' => true,
+                'unsigned' => true,
+            ],
+        ];
+
+        foreach ($fields as $field) {
+            $columns[$field->getName()] = $field->getDbColumn();
+        }
+
+        // Add timestamps | 添加时间戳
+        $columns['created_at'] = [
+            'type' => 'DATETIME',
+            'default' => 'CURRENT_TIMESTAMP',
+        ];
+        $columns['updated_at'] = [
+            'type' => 'DATETIME',
+            'default' => 'CURRENT_TIMESTAMP',
+            'on_update' => 'CURRENT_TIMESTAMP',
+        ];
+
+        return $columns;
+    }
+
+    /**
+     * Cache collection | 缓存Collection
+     * 
+     * @param CollectionInterface $collection Collection to cache | 要缓存的Collection
+     * @return void
+     */
+    protected function cache(CollectionInterface $collection): void
+    {
+        $cacheKey = $this->cachePrefix . $collection->getName();
+        Cache::set($cacheKey, $collection, $this->cacheTtl);
+    }
+
+    /**
+     * Clear cache | 清除缓存
+     * 
+     * @param string $name Collection name | Collection名称
+     * @return void
+     */
+    public function clearCache(string $name): void
+    {
+        $cacheKey = $this->cachePrefix . $name;
+        Cache::delete($cacheKey);
+    }
+}

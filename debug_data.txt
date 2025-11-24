@@ -1,0 +1,48 @@
+Array
+(
+    [id] => 1
+    [name] => John Doe
+    [age] => 30
+    [created_at] => 2025-11-19 20:18:35
+    [updated_at] => 2025-11-19 20:18:35
+)
+Array
+(
+    [id] => 1
+    [name] => John Doe
+    [age] => 30
+    [created_at] => 2025-11-19 20:19:51
+    [updated_at] => 2025-11-19 20:19:51
+)
+Array
+(
+    [id] => 1
+    [name] => John Doe
+    [age] => 30
+    [created_at] => 2025-11-19 20:20:15
+    [updated_at] => 2025-11-19 20:20:15
+)
+Array
+(
+    [id] => 1
+    [name] => John Doe
+    [age] => 30
+    [created_at] => 2025-11-19 20:20:38
+    [updated_at] => 2025-11-19 20:20:38
+)
+Array
+(
+    [id] => 1
+    [name] => John Doe
+    [age] => 30
+    [created_at] => 2025-11-19 20:21:21
+    [updated_at] => 2025-11-19 20:21:21
+)
+Array
+(
+    [id] => 1
+    [name] => John Doe
+    [age] => 30
+    [created_at] => 2025-11-19 20:21:48
+    [updated_at] => 2025-11-19 20:21:48
+)

@@ -1,0 +1,74 @@
+{
+    "name": "topthink/think",
+    "description": "the new thinkphp framework",
+    "type": "project",
+    "keywords": [
+        "framework",
+        "thinkphp",
+        "ORM"
+    ],
+    "homepage": "https://www.thinkphp.cn/",
+    "license": "Apache-2.0",
+    "authors": [
+        {
+            "name": "liu21st",
+            "email": "liu21st@gmail.com"
+        },
+        {
+            "name": "yunwuxin",
+            "email": "448901948@qq.com"
+        }
+    ],
+    "require": {
+        "php": ">=8.0.0",
+        "topthink/framework": "^8.0",
+        "topthink/think-orm": "^3.0|^4.0",
+        "topthink/think-filesystem": "^2.0|^3.0",
+        "topthink/think-swoole": "^4.1",
+        "topthink/think-queue": "^3.0",
+        "firebase/php-jwt": "^6.11",
+        "ramsey/uuid": "^4.9",
+        "nesbot/carbon": "^3.10",
+        "guzzlehttp/guzzle": "^7.10",
+        "league/flysystem": "^3.30",
+        "predis/predis": "^3.2",
+        "php-amqplib/php-amqplib": "^3.7",
+        "symfony/validator": "^7.3",
+        "symfony/serializer": "^7.3",
+        "monolog/monolog": "^3.9",
+        "topthink/think-migration": "^3.1"
+    },
+    "require-dev": {
+        "topthink/think-dumper": "^1.0",
+        "topthink/think-trace": "^2.0",
+        "phpunit/phpunit": "^11.5",
+        "mockery/mockery": "^1.6",
+        "phpstan/phpstan": "^2.1",
+        "friendsofphp/php-cs-fixer": "^3.89",
+        "fakerphp/faker": "^1.24"
+    },
+    "autoload": {
+        "psr-4": {
+            "app\\": "app",
+            "Domain\\": "domain",
+            "Infrastructure\\": "infrastructure"
+        },
+        "psr-0": {
+            "": "extend/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "preferred-install": "dist"
+    },
+    "scripts": {
+        "post-autoload-dump": [
+            "@php think service:discover",
+            "@php think vendor:publish"
+        ]
+    }
+}

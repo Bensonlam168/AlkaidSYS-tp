@@ -1,0 +1,142 @@
+# Auggie Command: 初始化低代码环境
+# 用于快速初始化 AlkaidSYS 低代码开发环境
+
+name: lowcode-init
+version: 1.0.0
+description: 初始化 AlkaidSYS 低代码开发环境，包括数据库迁移、种子数据和示例 Collection
+
+# 命令别名
+aliases:
+  - lc-init
+  - init-lowcode
+
+# 命令参数
+parameters:
+  - name: with_examples
+    type: boolean
+    required: false
+    default: true
+    description: 是否创建示例 Collection
+
+  - name: skip_migration
+    type: boolean
+    required: false
+    default: false
+    description: 是否跳过数据库迁移
+
+# 执行步骤
+steps:
+  - name: check_environment
+    description: 检查环境配置
+    actions:
+      - 检查 PHP 版本 >= 8.2
+      - 检查 MySQL 连接
+      - 检查 Redis 连接
+      - 检查必要的 PHP 扩展
+    on_error: 提示缺少的依赖并退出
+
+  - name: run_migrations
+    description: 运行数据库迁移
+    condition: skip_migration == false
+    actions:
+      - 运行命令：php think migrate:run
+      - 创建低代码相关表：
+        - lowcode_collections
+        - lowcode_fields
+        - lowcode_relationships
+        - lowcode_forms
+        - lowcode_workflows
+    on_error: 回滚迁移并提示错误
+
+  - name: seed_data
+    description: 填充初始数据
+    actions:
+      - 运行命令：php think seed:run
+      - 创建默认租户
+      - 创建管理员用户
+      - 创建默认角色和权限
+
+  - name: create_examples
+    description: 创建示例 Collection
+    condition: with_examples == true
+    actions:
+      - 创建 Product Collection（商品）
+        - 字段：name, price, stock, status, description
+      - 创建 Category Collection（分类）
+        - 字段：name, parent_id, sort_order
+      - 创建 Order Collection（订单）
+        - 字段：order_no, user_id, total_amount, status
+      - 建立关系：
+        - Product belongsTo Category
+        - Order hasMany OrderItem
+
+  - name: setup_cache
+    description: 初始化缓存
+    actions:
+      - 清空 Redis 缓存
+      - 预热 Collection Schema 缓存
+      - 预热权限缓存
+
+  - name: verify_installation
+    description: 验证安装
+    actions:
+      - 测试 Collection 查询
+      - 测试 API 端点
+      - 生成安装报告
+
+# 输出信息
+outputs:
+  success_message: |
+    ✅ AlkaidSYS 低代码环境初始化成功！
+
+    📊 数据库迁移：已完成
+    👤 默认管理员：admin / admin123
+    📦 示例 Collection：已创建 3 个
+
+    🚀 下一步：
+    1. 启动开发服务器：php think run
+    2. 访问管理后台：http://localhost:8000/admin
+    3. 查看 API 文档：http://localhost:8000/api/docs
+
+    📚 文档：
+    - 低代码框架：design/09-lowcode-framework/
+    - API 设计：design/03-data-layer/10-api-design.md
+    - 开发指南：design/08-developer-guides/
+
+  error_message: |
+    ❌ 初始化失败！
+
+    请检查：
+    1. 数据库连接配置（.env 文件）
+    2. Redis 连接配置
+    3. 文件权限（runtime/ 目录）
+
+    详细错误信息：{error_details}
+
+# 使用示例
+examples:
+  - description: 完整初始化（包含示例）
+    command: auggie --print "运行 lowcode-init 命令"
+
+  - description: 初始化但不创建示例
+    command: auggie --print "运行 lowcode-init 命令，with_examples=false"
+
+  - description: 跳过数据库迁移
+    command: auggie --print "运行 lowcode-init 命令，skip_migration=true"
+
+# 依赖检查
+dependencies:
+  - php: ">=8.2"
+  - mysql: ">=8.0"
+  - redis: ">=6.0"
+  - composer_packages:
+      - topthink/framework: "^8.0"
+      - topthink/think-migration: "^3.1"
+
+# 回滚支持
+rollback:
+  enabled: true
+  steps:
+    - 回滚数据库迁移：php think migrate:rollback
+    - 清空缓存：php think cache:clear
+    - 删除示例数据

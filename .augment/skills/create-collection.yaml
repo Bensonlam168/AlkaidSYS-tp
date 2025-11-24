@@ -1,0 +1,148 @@
+# Skill: 创建 Collection（低代码数据模型）
+# 用于快速创建符合 AlkaidSYS 规范的 Collection
+
+name: create-collection
+version: 1.0.0
+description: 创建一个新的 Collection（低代码数据模型），包括领域模型、服务层、数据库迁移和测试
+
+# 输入参数
+parameters:
+  - name: collection_name
+    type: string
+    required: true
+    description: Collection 名称（如：Product、Order）
+    example: Product
+  
+  - name: table_name
+    type: string
+    required: false
+    description: 数据库表名（默认为 snake_case 的 collection_name）
+    example: products
+  
+  - name: title
+    type: string
+    required: true
+    description: Collection 显示标题
+    example: 商品
+  
+  - name: description
+    type: string
+    required: false
+    description: Collection 描述
+    example: 商品数据模型
+  
+  - name: fields
+    type: array
+    required: true
+    description: 字段定义列表
+    example:
+      - name: name
+        type: string
+        title: 商品名称
+        required: true
+      - name: price
+        type: decimal
+        title: 价格
+        required: true
+      - name: stock
+        type: integer
+        title: 库存
+        default: 0
+
+# 执行步骤
+steps:
+  - name: validate_input
+    description: 验证输入参数
+    actions:
+      - 检查 collection_name 是否符合命名规范（PascalCase）
+      - 检查字段定义是否完整
+      - 检查是否存在同名 Collection
+  
+  - name: create_migration
+    description: 创建数据库迁移文件
+    actions:
+      - 生成迁移文件：database/migrations/YYYYMMDDHHMMSS_create_{table_name}_table.php
+      - 定义表结构（包含 tenant_id、site_id 等多租户字段）
+      - 添加索引和外键约束
+  
+  - name: create_domain_model
+    description: 创建领域模型（可选，如果需要自定义逻辑）
+    actions:
+      - 创建文件：domain/Lowcode/Collection/Model/{CollectionName}.php
+      - 继承 Collection 基类
+      - 添加自定义业务逻辑
+  
+  - name: register_collection
+    description: 注册 Collection 到系统
+    actions:
+      - 在 lowcode_collections 表中插入元数据
+      - 缓存 Collection Schema
+  
+  - name: create_test
+    description: 创建测试用例
+    actions:
+      - 创建文件：tests/Unit/Lowcode/Collection/{CollectionName}Test.php
+      - 测试 Collection 创建
+      - 测试字段添加和删除
+      - 测试数据 CRUD 操作
+  
+  - name: run_migration
+    description: 运行数据库迁移
+    command: php think migrate:run
+  
+  - name: run_tests
+    description: 运行测试验证
+    command: php think test tests/Unit/Lowcode/Collection/{CollectionName}Test.php
+
+# 输出
+outputs:
+  - migration_file: database/migrations/YYYYMMDDHHMMSS_create_{table_name}_table.php
+  - domain_model: domain/Lowcode/Collection/Model/{CollectionName}.php (可选)
+  - test_file: tests/Unit/Lowcode/Collection/{CollectionName}Test.php
+  - collection_id: 创建的 Collection ID
+
+# 使用示例
+examples:
+  - description: 创建商品 Collection
+    command: |
+      auggie --print "使用 create-collection skill 创建 Product Collection，
+      包含字段：name(string)、price(decimal)、stock(integer)、status(select)"
+    
+  - description: 通过 YAML 配置创建
+    config: |
+      collection_name: Product
+      title: 商品
+      description: 商品数据模型
+      fields:
+        - name: name
+          type: string
+          title: 商品名称
+          required: true
+        - name: price
+          type: decimal
+          title: 价格
+          required: true
+        - name: stock
+          type: integer
+          title: 库存
+          default: 0
+        - name: status
+          type: select
+          title: 状态
+          options:
+            - { value: 1, label: 上架 }
+            - { value: 0, label: 下架 }
+
+# 依赖的文件和服务
+dependencies:
+  - Infrastructure\Lowcode\Collection\Service\CollectionManager
+  - Infrastructure\Schema\SchemaBuilder
+  - Domain\Lowcode\Collection\Model\Collection
+  - Domain\Lowcode\Collection\Interfaces\CollectionInterface
+
+# 错误处理
+error_handling:
+  - Collection 名称已存在：提示用户选择其他名称
+  - 字段类型不支持：列出支持的字段类型
+  - 数据库迁移失败：回滚并提示错误信息
+

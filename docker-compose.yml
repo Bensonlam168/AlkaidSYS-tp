@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # MySQL Service
+  mysql:
+    image: mysql:8.0
+    container_name: alkaid-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: alkaid_sys
+      MYSQL_USER: alkaid
+      MYSQL_PASSWORD: alkaid123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  # Redis Service
+  redis:
+    image: redis:7.2-alpine
+    container_name: alkaid-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  # RabbitMQ Service
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: alkaid-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: alkaid
+      RABBITMQ_DEFAULT_PASS: alkaid123
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+
+  # PHP Backend Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alkaid-backend
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    ports:
+      - "9501:9501"
+    volumes:
+      - .:/var/www/html
+    environment:
+      APP_ENV: dev
+      DB_HOST: mysql
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+
+
+  # Nginx 网关服务（dev/local 验证用）
+  nginx:
+    image: nginx:1.24-alpine
+    container_name: alkaid-nginx
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/alkaid.api.conf:/etc/nginx/conf.d/default.conf:ro
+      - .:/var/www/alkaid:ro
+      # 可选：挂载本地证书目录，替换 alkaid.api.conf 中的证书路径
+      # - ./deploy/nginx/certs:/etc/nginx/ssl:ro
+
+
+volumes:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:

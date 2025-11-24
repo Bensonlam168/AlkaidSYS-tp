@@ -1,0 +1,77 @@
+# Augment 忽略文件
+# 指定哪些文件和目录不应该被 Augment 索引
+
+# 依赖目录
+node_modules/
+vendor/
+frontend/node_modules/
+
+# 构建产物
+runtime/
+public/static/
+frontend/dist/
+frontend/.turbo/
+
+# 日志文件
+*.log
+runtime/log/
+
+# 缓存文件
+runtime/cache/
+.phpunit.result.cache
+
+# 环境配置
+.env
+.env.local
+.env.*.local
+
+# IDE 配置
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+*.bak
+
+# 大型二进制文件
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# 数据库文件
+*.sql
+*.sqlite
+*.db
+
+# 编译文件
+*.o
+*.so
+*.dylib
+*.dll
+
+# 测试覆盖率报告
+coverage/
+.coverage
+htmlcov/
+
+# 文档构建产物
+docs/_build/
+docs/.doctrees/
+
+# 特定的大型设计文件（如果不需要索引）
+# design/reference-project-analysis/
+
+# 调试文件
+debug_*.txt
+debug_*.php
+debug_*.html
+
