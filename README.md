@@ -424,9 +424,9 @@ php think lowcode:generate crud Product
 
 ## 👥 联系我们
 
-- **项目主页**: https://github.com/your-org/AlkaidSYS-tp
-- **问题反馈**: [GitHub Issues](https://github.com/your-org/AlkaidSYS-tp/issues)
-- **讨论区**: [GitHub Discussions](https://github.com/your-org/AlkaidSYS-tp/discussions)
+- **项目主页**: https://github.com/Bensonlam168/AlkaidSYS-tp
+- **问题反馈**: [GitHub Issues](https://github.com/Bensonlam168/AlkaidSYS-tp/issues)
+- **讨论区**: [GitHub Discussions](https://github.com/Bensonlam168/AlkaidSYS-tp/discussions)
 - **文档网站**: https://docs.alkaidsys.com (建设中)
 
 ---
