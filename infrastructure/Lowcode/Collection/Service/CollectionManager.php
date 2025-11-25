@@ -102,21 +102,24 @@ class CollectionManager
     /**
      * Get collection by name | 按名称获取Collection
      *
-     * @param string $name Collection name | Collection名称
+     * @param string   $name     Collection name | Collection名称
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
      * @return CollectionInterface|null
      */
-    public function get(string $name): ?CollectionInterface
+    public function get(string $name, ?int $tenantId = null): ?CollectionInterface
     {
+        $effectiveTenantId = $tenantId ?? 0;
+
         // Try cache first | 优先从缓存获取
-        $cacheKey = $this->cachePrefix . $name;
+        $cacheKey = $this->buildCacheKey($name, $effectiveTenantId);
         $cached = Cache::get($cacheKey);
 
         if ($cached !== null && $cached !== false) {
             return $cached;
         }
 
-        // Load from database | 从数据库加载
-        $collection = $this->collectionRepo->findByName($name);
+        // Load from database (tenant-scoped) | 从数据库按租户范围加载
+        $collection = $this->collectionRepo->findByName($name, $effectiveTenantId);
 
         if (!$collection) {
             return null;
@@ -134,8 +137,8 @@ class CollectionManager
             $collection->addRelationship($relName, $relationship);
         }
 
-        // Cache the collection | 缓存Collection
-        $this->cache($collection);
+        // Cache the collection (tenant-scoped) | 缓存Collection（按租户隔离）
+        $this->cache($collection, $effectiveTenantId);
 
         return $collection;
     }
@@ -191,14 +194,16 @@ class CollectionManager
      * Deletes collection metadata and optionally drops physical table.
      * 删除Collection元数据并可选择删除物理表。
      *
-     * @param string $name Collection name | Collection名称
-     * @param bool $dropTable Drop physical table | 是否删除物理表
+     * @param string      $name      Collection name | Collection名称
+     * @param bool        $dropTable Drop physical table | 是否删除物理表
+     * @param int|null    $tenantId  Tenant ID (reserved for future multi-tenant support)
+     *                               租户ID（预留多租户支持，当前仍使用全局表）
      * @return void
      * @throws \Exception
      */
-    public function delete(string $name, bool $dropTable = true): void
+    public function delete(string $name, bool $dropTable = true, ?int $tenantId = null): void
     {
-        $collection = $this->get($name);
+        $collection = $this->get($name, $tenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$name}");
@@ -223,7 +228,7 @@ class CollectionManager
             }
 
             // 5. Clear cache | 清除缓存
-            $this->clearCache($name);
+            $this->clearCache($name, $tenantId);
 
             // 6. Trigger event | 触发事件
             Event::trigger('lowcode.collection.deleted', [
@@ -241,14 +246,16 @@ class CollectionManager
     /**
      * List collections | 列出Collections
      *
-     * @param array $filters Filters | 筛选条件
-     * @param int $page Page number | 页码
-     * @param int $pageSize Page size | 每页数量
+     * @param int   $tenantId Tenant ID | 租户ID
+     * @param array $filters  Filters | 筛选条件
+     * @param int   $page     Page number | 页码
+     * @param int   $pageSize Page size | 每页数量
      * @return array{list: array, total: int, page: int, pageSize: int}
      */
-    public function list(array $filters = [], int $page = 1, int $pageSize = 20): array
+    public function list(int $tenantId, array $filters = [], int $page = 1, int $pageSize = 20): array
     {
-        return $this->collectionRepo->list($filters, $page, $pageSize);
+        // NOTE(T-002: lowcode-collections-tenant): P1 起在 Repository/DB 层按 tenant_id 强隔离。
+        return $this->collectionRepo->list($filters, $page, $pageSize, $tenantId);
     }
 
     /**
@@ -291,23 +298,42 @@ class CollectionManager
      * Cache collection | 缓存Collection
      *
      * @param CollectionInterface $collection Collection to cache | 要缓存的Collection
+     * @param int                 $tenantId   Tenant ID for cache key (default: 0 system template)
+     *                                       缓存使用的租户ID（默认 0 = 系统模板）
      * @return void
      */
-    protected function cache(CollectionInterface $collection): void
+    protected function cache(CollectionInterface $collection, int $tenantId = 0): void
     {
-        $cacheKey = $this->cachePrefix . $collection->getName();
+        // NOTE(T-002): 当前阶段 Collection 实体尚未包含租户信息，默认将 $tenantId 视为 0（系统模板）。
+        // 未来当 Domain Collection 支持 getTenantId() 时，可在此优先从实体读取租户ID。
+        $cacheKey = $this->buildCacheKey($collection->getName(), $tenantId);
         Cache::set($cacheKey, $collection, $this->cacheTtl);
+    }
+
+    /**
+     * Build cache key with tenant scope | 构建带租户维度的缓存键
+     *
+     * @param string $name     Collection name | Collection名称
+     * @param int    $tenantId Tenant ID | 租户ID
+     * @return string
+     */
+    protected function buildCacheKey(string $name, int $tenantId): string
+    {
+        return $this->cachePrefix . $tenantId . ':' . $name;
     }
 
     /**
      * Clear cache | 清除缓存
      *
-     * @param string $name Collection name | Collection名称
+     * @param string   $name     Collection name | Collection名称
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
      * @return void
      */
-    public function clearCache(string $name): void
+    public function clearCache(string $name, ?int $tenantId = null): void
     {
-        $cacheKey = $this->cachePrefix . $name;
+        // NOTE(T-002): 多租户场景下建议调用方显式传入 tenantId；未传入时视为系统模板租户 0。
+        $effectiveTenantId = $tenantId ?? 0;
+        $cacheKey = $this->buildCacheKey($name, $effectiveTenantId);
         Cache::delete($cacheKey);
     }
 }
