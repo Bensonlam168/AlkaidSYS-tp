@@ -6,8 +6,7 @@ namespace app\middleware;
 
 use Closure;
 use think\Request;
-use Infrastructure\User\Repository\UserRepository;
-use think\facade\Db;
+use Infrastructure\Permission\Service\PermissionService;
 
 /**
  * Permission Middleware | 权限校验中间件
@@ -17,14 +16,19 @@ use think\facade\Db;
  * 
  * @package app\middleware
  */
-class Permission
-{
-    protected UserRepository $userRepository;
-
-    public function __construct()
+    class Permission
     {
-        $this->userRepository = new UserRepository();
-    }
+        /**
+         * Permission service for RBAC checks | 权限服务（用于 RBAC 校验）
+         */
+        protected PermissionService $permissionService;
+
+        public function __construct()
+        {
+            // Use dedicated PermissionService as the single source of truth
+            // 使用专门的 PermissionService 作为权限校验的单一入口
+            $this->permissionService = new PermissionService();
+        }
 
     /**
      * Handle request | 处理请求
@@ -98,34 +102,14 @@ class Permission
      * Check if user has permission | 检查用户是否有权限
      * 
      * @param int $userId User ID | 用户ID
-     * @param string $permission Permission slug | 权限标识符
+     * @param string $permission Permission code in `resource:action` format | `resource:action` 格式的权限码
      * @return bool
      */
     protected function checkUserPermission(int $userId, string $permission): bool
     {
-        // Get user's role IDs | 获取用户的角色ID
-        $roleIds = $this->userRepository->getRoleIds($userId);
-
-        if (empty($roleIds)) {
-            return false;
-        }
-
-        // Get permission ID by slug | 通过slug获取权限ID
-        $permissionId = Db::name('permissions')
-            ->where('slug', $permission)
-            ->value('id');
-
-        if (!$permissionId) {
-            return false;
-        }
-
-        // Check if any of user's roles have this permission | 检查用户的任一角色是否有此权限
-        $count = Db::name('role_permissions')
-            ->whereIn('role_id', $roleIds)
-            ->where('permission_id', $permissionId)
-            ->count();
-
-        return $count > 0;
+        // Delegate to PermissionService to enforce a single permission model
+        // 委托给 PermissionService，以确保权限模型的一致性和可维护性
+        return $this->permissionService->hasPermission($userId, $permission);
     }
 
     /**

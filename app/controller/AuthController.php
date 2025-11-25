@@ -96,7 +96,8 @@ class AuthController extends ApiController
                 'user' => $user->toArray(),
             ], 'Login successful');
         } catch (\Exception $e) {
-            return $this->error('Login failed: ' . $e->getMessage());
+            // Handle unexpected internal error | 处理未预期的内部异常
+            return $this->handleInternalError($e, 'auth.login');
         }
     }
 
@@ -165,7 +166,8 @@ class AuthController extends ApiController
                 'user' => $user->toArray(),
             ], 'Registration successful');
         } catch (\Exception $e) {
-            return $this->error('Registration failed: ' . $e->getMessage());
+            // Handle unexpected internal error | 处理未预期的内部异常
+            return $this->handleInternalError($e, 'auth.register');
         }
     }
 
@@ -308,7 +310,8 @@ class AuthController extends ApiController
                 'permissions' => $permissions,  // New field | 新增字段
             ]);
         } catch (\Exception $e) {
-            return $this->error('Failed to get user info: ' . $e->getMessage());
+            // Handle unexpected internal error | 处理未预期的内部异常
+            return $this->handleInternalError($e, 'auth.me');
         }
     }
 
@@ -341,7 +344,35 @@ class AuthController extends ApiController
 
             return $this->success($permissions);
         } catch (\Exception $e) {
-            return $this->error('Failed to get permission codes: ' . $e->getMessage());
+            // Handle unexpected internal error | 处理未预期的内部异常
+            return $this->handleInternalError($e, 'auth.codes');
         }
     }
+
+    /**
+     * Handle unexpected internal errors in auth flows | 处理认证流程中的内部异常
+     *
+     * Hides internal exception details from clients and logs full context
+     * (including trace_id) for observability.
+     * 对外隐藏内部异常细节，仅返回通用错误消息，并记录包含 trace_id 的详细日志。
+     *
+     * @param \Throwable $e Exception instance | 异常实例
+     * @param string $scene Logical scene identifier (e.g. auth.login) | 逻辑场景标识
+     * @return Response
+     */
+    protected function handleInternalError(\Throwable $e, string $scene): Response
+    {
+        $traceId = $this->getTraceId();
+
+        Log::error('Internal error in AuthController', [
+            'scene'     => $scene,
+            'message'   => $e->getMessage(),
+            'exception' => $e,
+            'trace_id'  => $traceId,
+        ]);
+
+        // Generic internal error response | 通用内部错误响应
+        return $this->error('Internal server error', 5000, [], 500);
+    }
 }
+
