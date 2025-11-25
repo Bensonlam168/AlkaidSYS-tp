@@ -585,23 +585,109 @@ Trace 中间件负责在整个请求生命周期中维护统一的 `trace_id`，
 
 ### Casbin 模型配置
 
+**实际实现**：使用 RBAC with Domains 模型，支持多租户隔离。
+
 ```ini
 # /config/casbin-model.conf
 
 [request_definition]
-r = sub, obj, act
+r = sub, dom, obj, act
 
 [policy_definition]
-p = sub, obj, act
+p = sub, dom, obj, act
 
 [role_definition]
-g = _, _
+g = _, _, _
 
 [policy_effect]
 e = some(where (p.eft == allow))
 
 [matchers]
-m = g(r.sub, p.sub) && r.obj == p.obj && r.act == p.act
+m = g(r.sub, p.sub, r.dom) && r.dom == p.dom && r.obj == p.obj && r.act == p.act
+```
+
+**模型说明**：
+- `sub`：主体（用户），格式：`user:{userId}`
+- `dom`：域（租户），格式：`tenant:{tenantId}`，用于多租户隔离
+- `obj`：对象（资源），格式：`{resource}`（如 `forms`）
+- `act`：操作（动作），格式：`{action}`（如 `view`）
+
+**策略示例**：
+```ini
+# 角色分配（g 策略）
+g, user:1, role:1, tenant:1
+
+# 权限分配（p 策略）
+p, role:1, tenant:1, forms, view
+p, role:1, tenant:1, forms, create
+```
+
+**权限检查示例**：
+```php
+// 检查用户 1 在租户 1 中是否有 forms.view 权限
+$enforcer->enforce('user:1', 'tenant:1', 'forms', 'view');
+```
+
+### Casbin 运行模式
+
+**实际实现**：支持三种运行模式，便于灰度发布和性能对比。
+
+#### 1. DB_ONLY 模式（向后兼容模式）
+
+**说明**：仅使用数据库查询进行权限检查，不使用 Casbin 引擎。
+
+**使用场景**：
+- 保持向后兼容
+- Casbin 引擎出现问题时的降级方案
+- 性能对比基准
+
+**配置**：
+```env
+CASBIN_MODE=DB_ONLY
+```
+
+#### 2. CASBIN_ONLY 模式（最终目标模式）
+
+**说明**：仅使用 Casbin 引擎进行权限检查，不使用数据库查询。
+
+**使用场景**：
+- 最终目标架构
+- 性能最优
+- 策略管理集中化
+
+**配置**：
+```env
+CASBIN_MODE=CASBIN_ONLY
+```
+
+#### 3. DUAL_MODE 模式（灰度发布模式）
+
+**说明**：同时使用数据库查询和 Casbin 引擎进行权限检查，两者结果必须一致。
+
+**使用场景**：
+- 灰度发布阶段
+- 验证 Casbin 引擎的正确性
+- 发现数据不一致问题
+
+**配置**：
+```env
+CASBIN_MODE=DUAL_MODE
+```
+
+**行为**：
+- 同时调用数据库查询和 Casbin 引擎
+- 如果结果不一致，记录 WARNING 日志
+- 返回数据库查询的结果（保守策略）
+
+**配置文件示例**：
+```php
+// config/casbin.php
+return [
+    // 运行模式：DB_ONLY, CASBIN_ONLY, DUAL_MODE
+    'mode' => env('CASBIN_MODE', 'CASBIN_ONLY'),
+
+    // 其他配置...
+];
 ```
 
 ### 授权服务
@@ -670,6 +756,80 @@ class PermissionService extends BaseService
         return $this->enforcer->getPermissionsForUser("user:{$userId}");
     }
 }
+```
+
+### 性能优化措施
+
+**实际实现**：实施了多项性能优化措施，提升权限检查性能。
+
+#### 1. 权限检查结果缓存
+
+**说明**：将权限检查结果缓存到 Redis，避免重复计算。
+
+**缓存策略**：
+- 缓存键：`casbin:check:{userId}:{tenantId}:{resource}:{action}`
+- 缓存 TTL：可配置（默认 300 秒）
+- 缓存值：`true` 或 `false`
+
+**性能提升**：
+- 缓存命中时：< 1ms（~90% 性能提升）
+- 缓存未命中时：7-8ms
+
+**配置**：
+```php
+// config/casbin.php
+return [
+    'cache_enabled' => env('CASBIN_CACHE_ENABLED', true),
+    'cache_ttl' => env('CASBIN_CACHE_TTL', 300), // 秒
+];
+```
+
+#### 2. 策略缓存机制
+
+**说明**：将完整策略缓存到 Redis，减少数据库查询。
+
+**缓存策略**：
+- 缓存键：`casbin:policy:full`
+- 缓存 TTL：与 reload_ttl 一致
+- 策略刷新时自动清除
+
+**性能提升**：
+- 策略加载时间：50-60ms（无缓存）→ < 10ms（缓存命中）
+- 性能提升：~80%
+
+**配置**：
+```php
+// config/casbin.php
+return [
+    'reload_ttl' => env('CASBIN_RELOAD_TTL', 300), // 秒
+];
+```
+
+#### 3. 性能基准测试和退化检测
+
+**说明**：自动记录性能基准数据，检测性能退化。
+
+**功能**：
+- 记录每次测试的执行时间和内存使用
+- 对比历史基准数据
+- 检测性能退化（默认阈值 20%）
+- 生成性能趋势报告
+
+**使用**：
+```bash
+# 运行性能测试
+vendor/bin/phpunit -c phpunit.performance.xml
+
+# 查看性能报告
+cat docs/report/casbin-performance-benchmark-*.md
+```
+
+**配置**：
+```php
+// 在测试中使用
+$benchmark = new PerformanceBenchmark();
+$benchmark->record('test_name', $executionTime, $memoryUsage);
+$regression = $benchmark->detectRegression('test_name', $executionTime);
 ```
 
 ### 授权中间件
