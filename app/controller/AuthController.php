@@ -7,6 +7,7 @@ namespace app\controller;
 use app\controller\ApiController;
 use Infrastructure\Auth\JwtService;
 use Infrastructure\User\Repository\UserRepository;
+use Infrastructure\Permission\Service\PermissionService;
 use Domain\User\Model\User;
 use think\Response;
 use think\facade\Log;
@@ -23,12 +24,14 @@ class AuthController extends ApiController
 {
     protected JwtService $jwtService;
     protected UserRepository $userRepository;
+    protected PermissionService $permissionService;
 
     public function __construct(\think\App $app)
     {
         parent::__construct($app);
         $this->jwtService = new JwtService();
         $this->userRepository = new UserRepository();
+        $this->permissionService = new PermissionService();
     }
 
     /**
@@ -269,9 +272,12 @@ class AuthController extends ApiController
 
     /**
      * Get current user info | 获取当前用户信息
-     * 
+     *
      * GET /v1/auth/me
-     * 
+     *
+     * Returns user information including permissions in `resource:action` format.
+     * 返回用户信息，包括 `resource:action` 格式的权限。
+     *
      * @param \think\Request $request
      * @return Response
      */
@@ -293,12 +299,49 @@ class AuthController extends ApiController
             // Get user roles | 获取用户角色
             $roleIds = $this->userRepository->getRoleIds($userId);
 
+            // Get user permissions in resource:action format | 获取用户权限（resource:action 格式）
+            $permissions = $this->permissionService->getUserPermissions($userId);
+
             return $this->success([
                 'user' => $user->toArray(),
                 'roles' => $roleIds,
+                'permissions' => $permissions,  // New field | 新增字段
             ]);
         } catch (\Exception $e) {
             return $this->error('Failed to get user info: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get user permission codes | 获取用户权限码
+     *
+     * GET /v1/auth/codes
+     *
+     * Returns an array of permission codes in `resource:action` format.
+     * This is a thin wrapper around /v1/auth/me.permissions for clients
+     * that only need the permission codes.
+     *
+     * 返回 `resource:action` 格式的权限码数组。
+     * 这是 /v1/auth/me.permissions 的瘦包装，供只需要权限码的客户端使用。
+     *
+     * @param \think\Request $request
+     * @return Response
+     */
+    public function codes(\think\Request $request): Response
+    {
+        $userId = $request->userId();
+
+        if (!$userId) {
+            return $this->error('Unauthorized', 401);
+        }
+
+        try {
+            // Get user permissions in resource:action format | 获取用户权限（resource:action 格式）
+            $permissions = $this->permissionService->getUserPermissions($userId);
+
+            return $this->success($permissions);
+        } catch (\Exception $e) {
+            return $this->error('Failed to get permission codes: ' . $e->getMessage());
         }
     }
 }
