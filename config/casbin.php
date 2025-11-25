@@ -5,11 +5,11 @@ declare(strict_types=1);
 /**
  * Casbin 授权引擎配置
  * Casbin Authorization Engine Configuration
- * 
+ *
  * 本配置文件定义了 Casbin 授权引擎的各项参数，包括模型路径、适配器、缓存等。
  * This configuration file defines the parameters for Casbin authorization engine,
  * including model path, adapter, cache, etc.
- * 
+ *
  * @see https://casbin.org/
  * @see https://github.com/php-casbin/php-casbin
  */
@@ -46,7 +46,7 @@ return [
     'adapter' => [
         // 适配器类型 | Adapter type
         'type' => 'database',
-        
+
         // 适配器类 | Adapter class
         'class' => \Infrastructure\Permission\Casbin\DatabaseAdapter::class,
     ],
@@ -80,9 +80,13 @@ return [
     |
     */
     'cache_enabled' => env('CASBIN_CACHE_ENABLED', true),
-    
+
     // 缓存过期时间（秒）| Cache TTL (seconds)
     'cache_ttl' => env('CASBIN_CACHE_TTL', 3600),
+
+    // 策略缓存配置 | Policy cache configuration
+    // 是否启用策略缓存（将完整策略缓存到 Redis）| Enable policy cache (cache full policies to Redis)
+    'policy_cache_enabled' => env('CASBIN_POLICY_CACHE_ENABLED', false),
 
     /*
     |--------------------------------------------------------------------------
@@ -135,4 +139,3 @@ return [
     */
     'enabled' => env('CASBIN_ENABLED', false),
 ];
-
