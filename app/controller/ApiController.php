@@ -46,7 +46,10 @@ class ApiController extends BaseController
 
     /**
      * Return paginated response | 返回分页响应
-     * 
+     *
+     * Response structure: { list, total, page, page_size, total_pages }
+     * 响应结构：{ list, total, page, page_size, total_pages }
+     *
      * @param array $list Data list | 数据列表
      * @param int $total Total count | 总数
      * @param int $page Current page | 当前页
@@ -60,7 +63,8 @@ class ApiController extends BaseController
             'list' => $list,
             'total' => $total,
             'page' => $page,
-            'pageSize' => $pageSize,
+            'page_size' => $pageSize,  // Unified field name (snake_case) | 统一字段名（下划线命名）
+            'total_pages' => (int)ceil($total / max($pageSize, 1)),  // Calculate total pages | 计算总页数
         ];
 
         return $this->success($data, $message);
