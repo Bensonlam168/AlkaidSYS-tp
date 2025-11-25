@@ -2,8 +2,8 @@
 
 **生成日期**: 2025-11-23
 **基于文档**:
-- `docs/todo/refactoring-plan.md`
-- `docs/todo/code-review-issues-2025-11-23.md`
+- `docs/todo/archive/refactoring-plan.md`
+- `docs/todo/archive/code-review-issues-2025-11-23.md`
 - `docs/report/backend-implementation-vs-design-analysis.md` (v1.0 + v2)
 
 **复核方法**: 三份文档逐条对照当前代码、配置与测试结果（通过 `view`/`codebase-retrieval` 完成验证），每条任务均给出来源与代码层证据。
@@ -73,17 +73,34 @@
 
 
 
-- [ ] **[P0] [Backend][Frontend] 前后端权限集成（PermissionService + /v1/auth/me + Auth Store）**
+- [x] **[P0] [Backend] 前后端权限集成 - 后端部分（PermissionService + /v1/auth/me + /v1/auth/codes）** ✅ 已完成
   - 来源: vben-permission-integration-decision §3.1–3.3, §5–§6；`docs/todo/vben-backend-integration-plan.md` 第三、七部分
-  - 当前状态: 后端 `PermissionService` 与 `/v1/auth/me.permissions`、`/v1/auth/codes` 均未实现；前端 `getUserInfoApi` 未处理 `permissions`，`Auth Store` 仍仅通过 `getAccessCodesApi` 从 mock `/auth/codes` 加载权限。
-  - 证据: `route/auth.php` 仅有 login/register/refresh/me；`app/controller/AuthController.php` 无 `codes()` 且 `me()` 不返回 `permissions`；`database/seeds/CorePlatformSeed.php` 仅提供 `slug/resource/action`；`frontend/apps/web-antd/src/api/core/auth.ts` 与 `src/store/auth.ts` 存在但未按集成方案实现。
-  - 预估工时: 2–3 天（后端 1–1.5 天，前端 1–1.5 天）。
+  - 完成状态:
+    - ✅ 后端 `PermissionService` 已实现（`Infrastructure/Permission/Service/PermissionService.php`）
+    - ✅ `/v1/auth/me` 已扩展，返回 `permissions` 字段（`resource:action` 格式）
+    - ✅ `/v1/auth/codes` 已实现（`GET /v1/auth/codes`）
+    - ✅ 路由已添加并修正为完整类名（`route/auth.php`）
+    - ✅ 单元测试已完成（8/8 通过，133 断言）
+    - ✅ 集成测试已完成（8/8 通过，139 断言）
+  - 提交信息:
+    - Commit: `51b23f7a0721088818d1ad4d4049874ab1da7b1c`
+    - Message: `feat(auth): add permission integration for backend API`
+    - Date: 2025-01-24
+    - Files: 5 个（3 新增，2 修改）
+    - Lines: +491, -7
+    - Tests: 16/16 passed (272 assertions)
+    - Review: 98/100
+  - 预估工时: 1–1.5 天（已完成）
+
+- [ ] **[P0] [Frontend] 前后端权限集成 - 前端部分（getUserInfoApi + Auth Store）** ⏳ 待开始
+  - 依赖: 后端部分已完成 ✅
+  - 当前状态: 前端 `getUserInfoApi` 未处理 `permissions`，`Auth Store` 仍使用 mock 数据
+  - 预估工时: 1–1.5 天
   - 实施建议:
-    - [Backend-P0] 实现 `PermissionService::getUserPermissions(int $userId): string[]`，基于 `user_roles`、`role_permissions`、`permissions` 计算并返回 `resource:action` 权限码数组（内部仍以 `slug = resource.action` 为主键）。
-    - [Backend-P0] 扩展 `GET /v1/auth/me`，在 data 中增加 `permissions: string[]` 字段（`resource:action`），并在文档中将其标记为权限码主通道。
-    - [Frontend-P0] 调整 `src/api/core/user.ts` 中的 `getUserInfoApi()` 处理 `permissions` 字段；在 `src/api/core/auth.ts` 中实现 `getAccessCodesFromMe()`；调整 `src/store/auth.ts` 登录/刷新流程，在获取用户信息后调用 `accessStore.setAccessCodes(permissions)`。
-    - [Backend-P1-可选] 在 `route/auth.php` 注册 `GET /v1/auth/codes`，在 `AuthController::codes()` 中复用 `PermissionService`，返回与 `/v1/auth/me.permissions` 完全一致的 `string[]`。
-    - [Test-P1] 为 `PermissionService`、`/v1/auth/me` 与（若实现）`/v1/auth/codes` 编写单元测试与集成测试，覆盖典型 RBAC 场景与 403 权限不足路径。
+    - [Frontend-P0] 调整 `src/api/core/user.ts` 中的 `getUserInfoApi()` 处理 `permissions` 字段
+    - [Frontend-P0] 在 `src/api/core/auth.ts` 中实现 `getAccessCodesFromMe()`
+    - [Frontend-P0] 调整 `src/store/auth.ts` 登录/刷新流程，在获取用户信息后调用 `accessStore.setAccessCodes(permissions)`
+    - [Test-P1] E2E 测试验证权限控制生效
 
 ---
 
