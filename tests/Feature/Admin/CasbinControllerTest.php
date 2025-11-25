@@ -7,6 +7,11 @@ namespace Tests\Feature\Admin;
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
 
+// Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
+if (!function_exists('json')) {
+    require_once __DIR__ . '/../../../vendor/topthink/framework/src/helper.php';
+}
+
 /**
  * Casbin 管理控制器测试
  * Casbin Admin Controller Test
@@ -24,15 +29,6 @@ class CasbinControllerTest extends ThinkPHPTestCase
     protected function setUp(): void
     {
         parent::setUp();
-
-        // Ensure app\Request is bound to think\Request
-        $this->app()->bind(\think\Request::class, \app\Request::class);
-
-        // Load admin routes
-        $routeFile = $this->app()->getRootPath() . 'route/admin.php';
-        if (file_exists($routeFile)) {
-            include_once $routeFile;
-        }
 
         // 准备测试数据
         // Prepare test data
@@ -81,17 +77,22 @@ class CasbinControllerTest extends ThinkPHPTestCase
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
 
-        // 创建测试权限
-        // Create test permission
-        Db::table('permissions')->insert([
-            'id' => $this->testPermissionId,
-            'name' => 'Casbin Manage',
-            'slug' => 'casbin.manage',
-            'resource' => 'casbin',
-            'action' => 'manage',
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
-        ]);
+        // 获取或创建测试权限
+        // Get or create test permission
+        $permission = Db::table('permissions')->where('slug', 'casbin.manage')->find();
+        if (!$permission) {
+            Db::table('permissions')->insert([
+                'id' => $this->testPermissionId,
+                'name' => 'Casbin Manage',
+                'slug' => 'casbin.manage',
+                'resource' => 'casbin',
+                'action' => 'manage',
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        } else {
+            $this->testPermissionId = $permission['id'];
+        }
 
         // 分配角色给用户
         // Assign role to user
@@ -118,7 +119,8 @@ class CasbinControllerTest extends ThinkPHPTestCase
     {
         Db::table('role_permissions')->where('role_id', $this->testRoleId)->delete();
         Db::table('user_roles')->where('user_id', $this->testUserId)->delete();
-        Db::table('permissions')->where('id', $this->testPermissionId)->delete();
+        // 不删除 casbin.manage 权限，因为它是系统权限
+        // Don't delete casbin.manage permission as it's a system permission
         Db::table('roles')->where('id', $this->testRoleId)->delete();
         Db::table('users')->where('id', $this->testUserId)->delete();
     }
@@ -134,37 +136,6 @@ class CasbinControllerTest extends ThinkPHPTestCase
     }
 
     /**
-     * Helper to make POST request
-     */
-    protected function post(string $uri, array $data = [], array $headers = [])
-    {
-        return $this->request('POST', $uri, $data, $headers);
-    }
-
-    /**
-     * Core request helper
-     */
-    protected function request(string $method, string $uri, array $data = [], array $headers = [])
-    {
-        $request = $this->app()->make(\think\Request::class);
-        $request->setMethod($method);
-        $request->setPathinfo($uri);
-
-        // Set request data
-        if ($method === 'GET') {
-            $request->withGet($data);
-        } elseif ($method === 'POST') {
-            $request->withPost($data);
-            $request->withInput(json_encode($data));
-        }
-
-        // Set headers
-        $request = $request->withHeader($headers);
-
-        return $this->runHttp($request);
-    }
-
-    /**
      * 测试手动刷新策略成功
      * Test manual policy reload success
      */
@@ -175,17 +146,31 @@ class CasbinControllerTest extends ThinkPHPTestCase
         $casbinService = new \Infrastructure\Permission\Service\CasbinService();
         $controller = new \app\controller\admin\CasbinController($this->app(), $casbinService);
 
-        // 创建模拟请求
-        // Create mock request
-        $request = $this->app()->make(\think\Request::class);
+        // 创建模拟请求（使用 app\Request）
+        // Create mock request (using app\Request)
+        $request = new \app\Request();
         $request->withHeader([
             'X-Trace-Id' => 'test-trace-id-123',
         ]);
 
+        // 模拟用户上下文
+        // Mock user context
+        $reflection = new \ReflectionClass($request);
+        if ($reflection->hasProperty('userId')) {
+            $userIdProperty = $reflection->getProperty('userId');
+            $userIdProperty->setAccessible(true);
+            $userIdProperty->setValue($request, $this->testUserId);
+        }
+        if ($reflection->hasProperty('tenantId')) {
+            $tenantIdProperty = $reflection->getProperty('tenantId');
+            $tenantIdProperty->setAccessible(true);
+            $tenantIdProperty->setValue($request, 1);
+        }
+
         // 使用反射设置 request 属性
         // Use reflection to set request property
-        $reflection = new \ReflectionClass($controller);
-        $requestProperty = $reflection->getProperty('request');
+        $controllerReflection = new \ReflectionClass($controller);
+        $requestProperty = $controllerReflection->getProperty('request');
         $requestProperty->setAccessible(true);
         $requestProperty->setValue($controller, $request);
 
