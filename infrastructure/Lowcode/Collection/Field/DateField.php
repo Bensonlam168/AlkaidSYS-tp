@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Date Field Type | 日期字段类型
- * 
+ *
  * Represents a DATE field for date values (YYYY-MM-DD).
  * 表示用于日期值的DATE字段(YYYY-MM-DD)。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class DateField extends AbstractField
@@ -47,7 +47,7 @@ class DateField extends AbstractField
         // Verify it's a valid date | 验证是否为有效日期
         $dateFormat = 'Y-m-d';
         $dateObj = \DateTime::createFromFormat($dateFormat, $value);
-        
+
         return $dateObj && $dateObj->format($dateFormat) === $value;
     }
 }

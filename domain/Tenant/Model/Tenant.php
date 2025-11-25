@@ -8,10 +8,10 @@ use Domain\Tenant\Interfaces\TenantInterface;
 
 /**
  * Tenant Model | 租户模型
- * 
+ *
  * Represents a tenant in the multi-tenant system.
  * 表示多租户系统中的租户。
- * 
+ *
  * @package Domain\Tenant\Model
  */
 class Tenant implements TenantInterface
@@ -228,8 +228,8 @@ class Tenant implements TenantInterface
             $this->status = $data['status'];
         }
         if (isset($data['config'])) {
-            $this->config = is_array($data['config']) 
-                ? $data['config'] 
+            $this->config = is_array($data['config'])
+                ? $data['config']
                 : json_decode($data['config'], true);
         }
         if (isset($data['max_sites'])) {

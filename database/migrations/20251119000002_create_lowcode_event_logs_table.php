@@ -1,11 +1,10 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 /**
  * Create lowcode_event_logs table migration | 创建lowcode_event_logs表的迁移
- * 
+ *
  * This migration creates the table for storing event execution logs.
  * 此迁移创建用于存储事件执行日志的表。
  */

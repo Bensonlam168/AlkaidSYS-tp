@@ -1,11 +1,10 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 /**
  * Create lowcode_collections table migration | 创建lowcode_collections表的迁移
- * 
+ *
  * This migration creates the metadata table for storing collection definitions.
  * 此迁移创建用于存储集合定义的元数据表。
  */

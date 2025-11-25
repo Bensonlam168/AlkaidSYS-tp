@@ -23,7 +23,6 @@ if (!function_exists('env')) {
  */
 class ValidationErrorCodeTest extends ThinkPHPTestCase
 {
-
     /**
      * Test ValidateException returns code=422 | 测试 ValidateException 返回 code=422
      */
@@ -75,7 +74,7 @@ class ValidationErrorCodeTest extends ThinkPHPTestCase
     public function testApiControllerValidationErrorReturnsCode422(): void
     {
         // Create a test controller instance with App | 使用 App 创建测试控制器实例
-        $controller = new class($this->app()) extends \app\controller\ApiController {
+        $controller = new class ($this->app()) extends \app\controller\ApiController {
             public function testValidation()
             {
                 return $this->validationError([
@@ -121,7 +120,7 @@ class ValidationErrorCodeTest extends ThinkPHPTestCase
         $data1 = json_decode($response1->getContent(), true);
 
         // Get response from ApiController | 获取 ApiController 的响应
-        $controller = new class($this->app()) extends \app\controller\ApiController {
+        $controller = new class ($this->app()) extends \app\controller\ApiController {
             public function testValidation()
             {
                 return $this->validationError(['name' => 'Name is required']);
@@ -206,4 +205,3 @@ class ValidationErrorCodeTest extends ThinkPHPTestCase
         $this->assertNotEmpty($data['data']['errors']);
     }
 }
-

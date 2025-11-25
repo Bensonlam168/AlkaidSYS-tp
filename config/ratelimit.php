@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-use think\facade\Cache;
-
 /**
  * RateLimit 配置 | 应用层限流配置
  *
@@ -116,6 +114,39 @@ return [
                 'period' => (int) env('RATELIMIT_ROUTE_LOWCODE_TENANT_PERIOD', 60),
             ],
         ],
+
+        // 权限查询接口：不参与应用层限流，避免影响认证/权限集成测试与前端权限拉取
+        // - /v1/auth/me    返回当前用户信息及权限列表
+        // - /v1/auth/codes 返回权限码列表（resource:action）
+        // 通过在 routes 维度显式关闭所有 scope（user/tenant/ip/route），保证始终放行。
+        '/v1/auth/me' => [
+            'user' => [
+                'enabled' => false,
+            ],
+            'tenant' => [
+                'enabled' => false,
+            ],
+            'ip' => [
+                'enabled' => false,
+            ],
+            'route' => [
+                'enabled' => false,
+            ],
+        ],
+        '/v1/auth/codes' => [
+            'user' => [
+                'enabled' => false,
+            ],
+            'tenant' => [
+                'enabled' => false,
+            ],
+            'ip' => [
+                'enabled' => false,
+            ],
+            'route' => [
+                'enabled' => false,
+            ],
+        ],
     ],
 
     // ------------------------------------------------------------------
@@ -136,4 +167,3 @@ return [
         'tenants' => [],
     ],
 ];
-

@@ -6,7 +6,7 @@ namespace Domain\Tenant\Interfaces;
 
 /**
  * Tenant Interface | 租户接口
- * 
+ *
  * @package Domain\Tenant\Interfaces
  */
 interface TenantInterface

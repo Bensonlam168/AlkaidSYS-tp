@@ -1,5 +1,6 @@
 <?php
-declare (strict_types = 1);
+
+declare (strict_types=1);
 
 namespace app;
 
@@ -52,7 +53,8 @@ abstract class BaseController
 
     // 初始化
     protected function initialize()
-    {}
+    {
+    }
 
     /**
      * 验证数据

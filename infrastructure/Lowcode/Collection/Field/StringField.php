@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * String Field Type | 字符串字段类型
- * 
+ *
  * Represents a VARCHAR field for short text strings.
  * 表示用于短文本字符串的VARCHAR字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class StringField extends AbstractField

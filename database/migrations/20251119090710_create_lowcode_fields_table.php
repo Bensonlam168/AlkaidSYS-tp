@@ -1,13 +1,12 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 class CreateLowcodeFieldsTable extends Migrator
 {
     /**
      * Create lowcode_fields table | 创建低代码字段元数据表
-     * 
+     *
      * Stores field metadata for dynamic collections.
      * 存储动态集合的字段元数据。
      */

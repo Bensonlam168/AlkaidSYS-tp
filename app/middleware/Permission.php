@@ -5,30 +5,31 @@ declare(strict_types=1);
 namespace app\middleware;
 
 use Closure;
-use think\Request;
 use Infrastructure\Permission\Service\PermissionService;
+use think\Request;
+use think\facade\Log;
 
 /**
  * Permission Middleware | 权限校验中间件
- * 
+ *
  * Checks if user has required permission.
  * 检查用户是否具有所需权限。
- * 
+ *
  * @package app\middleware
  */
-    class Permission
-    {
-        /**
-         * Permission service for RBAC checks | 权限服务（用于 RBAC 校验）
-         */
-        protected PermissionService $permissionService;
+class Permission
+{
+    /**
+     * Permission service for RBAC checks | 权限服务（用于 RBAC 校验）
+     */
+    protected PermissionService $permissionService;
 
-        public function __construct()
-        {
-            // Use dedicated PermissionService as the single source of truth
-            // 使用专门的 PermissionService 作为权限校验的单一入口
-            $this->permissionService = new PermissionService();
-        }
+    public function __construct()
+    {
+        // Use dedicated PermissionService as the single source of truth
+        // 使用专门的 PermissionService 作为权限校验的单一入口
+        $this->permissionService = new PermissionService();
+    }
 
     /**
      * Handle request | 处理请求
@@ -86,12 +87,24 @@ use Infrastructure\Permission\Service\PermissionService;
 
             return $next($request);
         } catch (\Exception $e) {
-            // Get trace_id for observability | 获取 trace_id 用于可观测性
+            // Get trace_id for observability and log internal error
+            // 获取 trace_id 并记录内部错误日志
             $traceId = $this->getTraceId($request);
 
+            Log::error('Internal error in Permission middleware', [
+                'message'     => $e->getMessage(),
+                'exception'   => $e,
+                'trace_id'    => $traceId,
+                'user_id'     => $userId,
+                'permission'  => $permission,
+                'request_uri' => $request->url(),
+                'ip'          => $request->ip(),
+            ]);
+
+            // Return generic internal error response to client | 对客户端仅返回通用内部错误响应
             return ResponseHelper::jsonError(
                 5000,
-                'Permission check failed: ' . $e->getMessage(),
+                'Internal server error',
                 500,
                 $traceId
             );
@@ -100,7 +113,7 @@ use Infrastructure\Permission\Service\PermissionService;
 
     /**
      * Check if user has permission | 检查用户是否有权限
-     * 
+     *
      * @param int $userId User ID | 用户ID
      * @param string $permission Permission code in `resource:action` format | `resource:action` 格式的权限码
      * @return bool

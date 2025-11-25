@@ -109,7 +109,7 @@ class ApiController extends BaseController
 
     /**
      * Return validation error response | 返回验证错误响应
-     * 
+     *
      * @param array $errors Validation errors | 验证错误
      * @param string $message Error message | 错误消息
      * @return Response
@@ -121,7 +121,7 @@ class ApiController extends BaseController
 
     /**
      * Return not found response | 返回未找到响应
-     * 
+     *
      * @param string $message Error message | 错误消息
      * @return Response
      */
@@ -132,7 +132,7 @@ class ApiController extends BaseController
 
     /**
      * Return unauthorized response | 返回未授权响应
-     * 
+     *
      * @param string $message Error message | 错误消息
      * @return Response
      */

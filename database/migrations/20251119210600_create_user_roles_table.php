@@ -4,7 +4,7 @@ use think\migration\Migrator;
 
 /**
  * Create User Roles Table Migration | 创建用户角色关联表迁移
- * 
+ *
  * Creates the user_roles pivot table.
  * 创建用户角色中间表。
  */

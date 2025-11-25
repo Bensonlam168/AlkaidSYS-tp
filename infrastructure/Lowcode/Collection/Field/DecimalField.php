@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Decimal Field Type | 小数字段类型
- * 
+ *
  * Represents a DECIMAL field for precise decimal numbers.
  * 表示用于精确小数的DECIMAL字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class DecimalField extends AbstractField

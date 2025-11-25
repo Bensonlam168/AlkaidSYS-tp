@@ -6,7 +6,7 @@ namespace Domain\User\Interfaces;
 
 /**
  * User Interface | 用户接口
- * 
+ *
  * @package Domain\User\Interfaces
  */
 interface UserInterface

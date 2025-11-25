@@ -8,10 +8,10 @@ use think\App;
 
 /**
  * Dependency Manager | 依赖管理器
- * 
+ *
  * Manages dynamic registration of service providers for plugins.
  * 管理插件服务提供者的动态注册。
- * 
+ *
  * @package Infrastructure\DI
  */
 class DependencyManager

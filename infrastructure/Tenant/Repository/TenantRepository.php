@@ -9,7 +9,7 @@ use think\facade\Db;
 
 /**
  * Tenant Repository | 租户仓储
- * 
+ *
  * @package Infrastructure\Tenant\Repository
  */
 class TenantRepository
@@ -39,7 +39,9 @@ class TenantRepository
     public function findById(int $id): ?Tenant
     {
         $data = Db::name($this->table)->where('id', $id)->find();
-        if (!$data) return null;
+        if (!$data) {
+            return null;
+        }
 
         $tenant = new Tenant($data['name'], $data['slug']);
         $tenant->fromArray($data);
@@ -49,7 +51,9 @@ class TenantRepository
     public function findBySlug(string $slug): ?Tenant
     {
         $data = Db::name($this->table)->where('slug', $slug)->find();
-        if (!$data) return null;
+        if (!$data) {
+            return null;
+        }
 
         $tenant = new Tenant($data['name'], $data['slug']);
         $tenant->fromArray($data);

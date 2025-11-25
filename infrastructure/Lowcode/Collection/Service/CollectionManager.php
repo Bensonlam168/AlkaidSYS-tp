@@ -16,10 +16,10 @@ use think\facade\Event;
 
 /**
  * Collection Manager Service | Collection管理服务
- * 
+ *
  * Manages Collection CRUD operations with physical table creation and caching.
  * 管理Collection的CRUD操作，包含物理表创建和缓存。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Service
  */
 class CollectionManager
@@ -34,7 +34,7 @@ class CollectionManager
 
     /**
      * Constructor | 构造函数
-     * 
+     *
      * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
      * @param CollectionRepository $collectionRepo Collection repository | Collection仓储
      * @param FieldRepository $fieldRepo Field repository | 字段仓储
@@ -54,10 +54,10 @@ class CollectionManager
 
     /**
      * Create collection | 创建Collection
-     * 
+     *
      * Creates collection metadata and physical database table.
      * 创建Collection元数据和物理数据库表。
-     * 
+     *
      * @param CollectionInterface $collection Collection to create | 要创建的Collection
      * @return void
      * @throws \Exception
@@ -101,7 +101,7 @@ class CollectionManager
 
     /**
      * Get collection by name | 按名称获取Collection
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @return CollectionInterface|null
      */
@@ -110,14 +110,14 @@ class CollectionManager
         // Try cache first | 优先从缓存获取
         $cacheKey = $this->cachePrefix . $name;
         $cached = Cache::get($cacheKey);
-        
+
         if ($cached !== null && $cached !== false) {
             return $cached;
         }
 
         // Load from database | 从数据库加载
         $collection = $this->collectionRepo->findByName($name);
-        
+
         if (!$collection) {
             return null;
         }
@@ -142,7 +142,7 @@ class CollectionManager
 
     /**
      * Update collection | 更新Collection
-     * 
+     *
      * @param CollectionInterface $collection Collection to update | 要更新的Collection
      * @return void
      * @throws \Exception
@@ -187,10 +187,10 @@ class CollectionManager
 
     /**
      * Delete collection | 删除Collection
-     * 
+     *
      * Deletes collection metadata and optionally drops physical table.
      * 删除Collection元数据并可选择删除物理表。
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @param bool $dropTable Drop physical table | 是否删除物理表
      * @return void
@@ -199,7 +199,7 @@ class CollectionManager
     public function delete(string $name, bool $dropTable = true): void
     {
         $collection = $this->get($name);
-        
+
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$name}");
         }
@@ -240,7 +240,7 @@ class CollectionManager
 
     /**
      * List collections | 列出Collections
-     * 
+     *
      * @param array $filters Filters | 筛选条件
      * @param int $page Page number | 页码
      * @param int $pageSize Page size | 每页数量
@@ -253,7 +253,7 @@ class CollectionManager
 
     /**
      * Build columns array for SchemaBuilder | 为SchemaBuilder构建列数组
-     * 
+     *
      * @param array<string, FieldInterface> $fields Fields | 字段
      * @return array<string, array>
      */
@@ -289,7 +289,7 @@ class CollectionManager
 
     /**
      * Cache collection | 缓存Collection
-     * 
+     *
      * @param CollectionInterface $collection Collection to cache | 要缓存的Collection
      * @return void
      */
@@ -301,7 +301,7 @@ class CollectionManager
 
     /**
      * Clear cache | 清除缓存
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @return void
      */

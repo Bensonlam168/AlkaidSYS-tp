@@ -83,23 +83,23 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
         // Debug: print response if not 200
         if ($response->getCode() !== 200) {
             echo "\nResponse Code: " . $response->getCode() . "\n";
-            echo "Response Content: " . $response->getContent() . "\n";
+            echo 'Response Content: ' . $response->getContent() . "\n";
         }
 
         // Assert HTTP status code is 200 | 断言 HTTP 状态码为 200
         $this->assertEquals(200, $response->getCode());
-        
+
         // Parse JSON response | 解析 JSON 响应
         $data = json_decode($response->getContent(), true);
-        
+
         // Assert response structure | 断言响应结构
         $this->assertArrayHasKey('code', $data);
         $this->assertArrayHasKey('data', $data);
         $this->assertEquals(0, $data['code']);
-        
+
         // Assert permissions field exists | 断言 permissions 字段存在
         $this->assertArrayHasKey('permissions', $data['data']);
-        
+
         // Assert permissions is an array | 断言 permissions 是数组
         $this->assertIsArray($data['data']['permissions']);
         $this->assertNotEmpty($data['data']['permissions']);
@@ -115,15 +115,15 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
         $response = $this->get('v1/auth/me', [
             'Authorization' => 'Bearer ' . $token
         ]);
-        
+
         $data = json_decode($response->getContent(), true);
         $permissions = $data['data']['permissions'];
-        
+
         // Check each permission format | 检查每个权限的格式
         foreach ($permissions as $permission) {
             $this->assertIsString($permission);
             $this->assertStringContainsString(':', $permission);
-            
+
             // Split and verify format | 分割并验证格式
             $parts = explode(':', $permission);
             $this->assertCount(2, $parts);
@@ -142,10 +142,10 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
         $response = $this->get('v1/auth/me', [
             'Authorization' => 'Bearer ' . $token
         ]);
-        
+
         $data = json_decode($response->getContent(), true);
         $permissions = $data['data']['permissions'];
-        
+
         // Admin should have forms permissions | 管理员应该有 forms 权限
         $this->assertContains('forms:view', $permissions);
         $this->assertContains('forms:create', $permissions);
@@ -160,10 +160,10 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
     {
         // Make request without token | 不带 token 请求
         $response = $this->get('v1/auth/me');
-        
+
         // Should return 401 | 应该返回 401
         $this->assertEquals(401, $response->getCode());
-        
+
         $data = json_decode($response->getContent(), true);
         $this->assertEquals(2001, $data['code']);
     }
@@ -179,18 +179,18 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
         $response = $this->get('v1/auth/codes', [
             'Authorization' => 'Bearer ' . $token
         ]);
-        
+
         // Assert HTTP status code is 200 | 断言 HTTP 状态码为 200
         $this->assertEquals(200, $response->getCode());
-        
+
         // Parse JSON response | 解析 JSON 响应
         $data = json_decode($response->getContent(), true);
-        
+
         // Assert response structure | 断言响应结构
         $this->assertArrayHasKey('code', $data);
         $this->assertArrayHasKey('data', $data);
         $this->assertEquals(0, $data['code']);
-        
+
         // Assert data is an array of permission codes | 断言 data 是权限码数组
         $this->assertIsArray($data['data']);
         $this->assertNotEmpty($data['data']);
@@ -216,7 +216,7 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
         ]);
         $codesData = json_decode($codesResponse->getContent(), true);
         $codesPermissions = $codesData['data'];
-        
+
         // Should be identical | 应该完全一致
         sort($mePermissions);
         sort($codesPermissions);
@@ -230,10 +230,10 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
     {
         // Make request without token | 不带 token 请求
         $response = $this->get('v1/auth/codes');
-        
+
         // Should return 401 | 应该返回 401
         $this->assertEquals(401, $response->getCode());
-        
+
         $data = json_decode($response->getContent(), true);
         $this->assertEquals(2001, $data['code']);
     }
@@ -250,12 +250,11 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
             'Authorization' => 'Bearer ' . $token,
             'X-Trace-Id' => 'test-trace-id-permissions'
         ]);
-        
+
         $data = json_decode($response->getContent(), true);
-        
+
         // Should include trace_id | 应该包含 trace_id
         $this->assertArrayHasKey('trace_id', $data);
         $this->assertEquals('test-trace-id-permissions', $data['trace_id']);
     }
 }
-

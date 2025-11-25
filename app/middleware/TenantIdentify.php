@@ -9,10 +9,10 @@ use think\Request;
 
 /**
  * Tenant Identify Middleware | 租户识别中间件
- * 
+ *
  * Identifies and validates the tenant from the request.
  * 从请求中识别并验证租户。
- * 
+ *
  * @package app\middleware
  */
 class TenantIdentify

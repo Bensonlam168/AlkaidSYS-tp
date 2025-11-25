@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace app\controller;
 
-use app\controller\ApiController;
 use Infrastructure\Auth\JwtService;
 use Infrastructure\User\Repository\UserRepository;
 use Infrastructure\Permission\Service\PermissionService;
@@ -14,10 +13,10 @@ use think\facade\Log;
 
 /**
  * Auth Controller | 认证控制器
- * 
+ *
  * Handles user authentication endpoints.
  * 处理用户认证端点。
- * 
+ *
  * @package app\controller
  */
 class AuthController extends ApiController
@@ -26,19 +25,35 @@ class AuthController extends ApiController
     protected UserRepository $userRepository;
     protected PermissionService $permissionService;
 
-    public function __construct(\think\App $app)
-    {
+    /**
+     * Constructor with dependency injection | [0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m
+     *
+     * Use ThinkPHP container to inject dependencies instead of manual instantiation.
+     * [0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m
+     *
+     * [0m[38;5;244m[48;5;236m@param \think\App $app Application instance | [0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m应用实例
+     * @param JwtService $jwtService JWT service | JWT 服务
+     * @param UserRepository $userRepository User repository | 用户仓储
+     * @param PermissionService $permissionService Permission service | 权限服务
+     */
+    public function __construct(
+        \think\App $app,
+        JwtService $jwtService,
+        UserRepository $userRepository,
+        PermissionService $permissionService
+    ) {
         parent::__construct($app);
-        $this->jwtService = new JwtService();
-        $this->userRepository = new UserRepository();
-        $this->permissionService = new PermissionService();
+
+        $this->jwtService = $jwtService;
+        $this->userRepository = $userRepository;
+        $this->permissionService = $permissionService;
     }
 
     /**
      * User login | 用户登录
-     * 
+     *
      * POST /v1/auth/login
-     * 
+     *
      * @param \think\Request $request
      * @return Response
      */
@@ -103,9 +118,9 @@ class AuthController extends ApiController
 
     /**
      * User registration | 用户注册
-     * 
+     *
      * POST /v1/auth/register
-     * 
+     *
      * @param \think\Request $request
      * @return Response
      */
@@ -173,16 +188,16 @@ class AuthController extends ApiController
 
     /**
      * Refresh token | 刷新令牌
-     * 
+     *
      * POST /v1/auth/refresh
-     * 
+     *
      * @param \think\Request $request
      * @return Response
      */
     public function refresh(\think\Request $request): Response
     {
         $token = $request->header('Authorization', '');
-        
+
         if (strpos($token, 'Bearer ') === 0) {
             $token = substr($token, 7);
         }
@@ -375,4 +390,3 @@ class AuthController extends ApiController
         return $this->error('Internal server error', 5000, [], 500);
     }
 }
-

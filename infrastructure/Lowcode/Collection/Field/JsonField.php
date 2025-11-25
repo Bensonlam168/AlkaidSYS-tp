@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * JSON Field Type | JSON字段类型
- * 
+ *
  * Represents a JSON field for structured data.
  * 表示用于结构化数据的JSON字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class JsonField extends AbstractField

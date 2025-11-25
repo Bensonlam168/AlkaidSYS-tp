@@ -55,7 +55,7 @@ class Collection extends Model
         $this->table = $config['table_name'] ?? $this->getDefaultTableName();
         $this->fields = $config['fields'] ?? [];
         $this->relationships = $config['relationships'] ?? [];
-        
+
         parent::__construct();
     }
 
@@ -167,7 +167,7 @@ class Collection extends Model
         return [
             'name' => $this->name,
             'table_name' => $this->table,
-            'fields' => array_map(fn($field) => $field->toArray(), $this->fields),
+            'fields' => array_map(fn ($field) => $field->toArray(), $this->fields),
             'relationships' => $this->relationships,
         ];
     }

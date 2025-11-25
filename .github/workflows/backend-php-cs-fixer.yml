@@ -1,0 +1,35 @@
+name: Backend PHP-CS-Fixer
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'releases/*'
+
+jobs:
+  php-cs-fixer:
+    name: PHP Code Style Check (PSR-12)
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image
+        run: |
+          docker compose build alkaid-backend
+
+      - name: Start backend services
+        run: |
+          docker compose up -d alkaid-backend
+
+      - name: PHP-CS-Fixer dry-run (backend)
+        run: |
+          docker exec alkaid-backend ./vendor/bin/php-cs-fixer fix --dry-run --diff

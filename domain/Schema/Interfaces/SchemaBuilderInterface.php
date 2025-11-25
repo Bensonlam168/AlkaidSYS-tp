@@ -6,10 +6,10 @@ namespace Domain\Schema\Interfaces;
 
 /**
  * Schema Builder Interface | Schema构建器接口
- * 
+ *
  * Defines the contract for runtime DDL operations on database tables.
  * 定义数据库表运行时DDL操作的契约。
- * 
+ *
  * @package Domain\Schema\Interfaces
  */
 interface SchemaBuilderInterface

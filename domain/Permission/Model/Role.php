@@ -6,7 +6,7 @@ namespace Domain\Permission\Model;
 
 /**
  * Role Model | 角色模型
- * 
+ *
  * @package Domain\Permission\Model
  */
 class Role
@@ -26,12 +26,28 @@ class Role
         $this->slug = $slug;
     }
 
-    public function getId(): ?int { return $this->id; }
-    public function setId(int $id): self { $this->id = $id; return $this; }
-    public function getName(): string { return $this->name; }
-    public function getSlug(): string { return $this->slug; }
-    public function isSystem(): bool { return $this->isSystem; }
-    
+    public function getId(): ?int
+    {
+        return $this->id;
+    }
+    public function setId(int $id): self
+    {
+        $this->id = $id;
+        return $this;
+    }
+    public function getName(): string
+    {
+        return $this->name;
+    }
+    public function getSlug(): string
+    {
+        return $this->slug;
+    }
+    public function isSystem(): bool
+    {
+        return $this->isSystem;
+    }
+
     public function assignPermission(int $permissionId): self
     {
         if (!in_array($permissionId, $this->permissions)) {
@@ -59,9 +75,15 @@ class Role
 
     public function fromArray(array $data): self
     {
-        if (isset($data['id'])) $this->id = (int)$data['id'];
-        if (isset($data['description'])) $this->description = $data['description'];
-        if (isset($data['is_system'])) $this->isSystem = (bool)$data['is_system'];
+        if (isset($data['id'])) {
+            $this->id = (int)$data['id'];
+        }
+        if (isset($data['description'])) {
+            $this->description = $data['description'];
+        }
+        if (isset($data['is_system'])) {
+            $this->isSystem = (bool)$data['is_system'];
+        }
         return $this;
     }
 }

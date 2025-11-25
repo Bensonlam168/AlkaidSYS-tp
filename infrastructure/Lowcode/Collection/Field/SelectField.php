@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Select Field Type | 下拉选择字段类型
- * 
+ *
  * Represents a VARCHAR field for single select dropdown.
  * 表示用于单选下拉菜单的VARCHAR字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class SelectField extends AbstractField

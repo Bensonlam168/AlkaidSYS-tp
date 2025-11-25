@@ -8,10 +8,10 @@ use think\facade\Db;
 
 /**
  * Event Logger | 事件日志记录器
- * 
+ *
  * Records event execution history for debugging and auditing.
  * 记录事件执行历史，用于调试和审计。
- * 
+ *
  * @package Domain\Event
  */
 class EventLogger

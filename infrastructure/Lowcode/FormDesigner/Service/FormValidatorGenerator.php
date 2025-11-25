@@ -8,19 +8,19 @@ use think\Validate;
 
 /**
  * Form Validator Generator | 表单验证器生成器
- * 
+ *
  * Generates ThinkPHP validators from JSON Schema.
  * 从JSON Schema生成ThinkPHP验证器。
- * 
+ *
  * Based on design: 09-lowcode-framework/43-lowcode-form-designer.md lines 583-718
- * 
+ *
  * @package Infrastructure\Lowcode\FormDesigner\Service
  */
 class FormValidatorGenerator
 {
     /**
      * Generate validator from Schema | 从Schema生成验证器
-     * 
+     *
      * @param array $schema JSON Schema | JSON Schema
      * @return Validate ThinkPHP Validate instance | ThinkPHP验证器实例
      */
@@ -47,7 +47,7 @@ class FormValidatorGenerator
 
     /**
      * Generate field validation rules | 生成字段验证规则
-     * 
+     *
      * @param string $field Field name | 字段名
      * @param array $config Field configuration | 字段配置
      * @param array $schema Complete schema | 完整schema
@@ -121,7 +121,7 @@ class FormValidatorGenerator
 
     /**
      * Generate field error messages | 生成字段错误消息
-     * 
+     *
      * @param string $field Field name | 字段名
      * @param array $config Field configuration | 字段配置
      * @return array Error messages | 错误消息

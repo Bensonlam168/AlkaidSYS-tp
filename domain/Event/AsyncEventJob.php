@@ -9,10 +9,10 @@ use think\queue\Job;
 
 /**
  * Async Event Job | 异步事件任务
- * 
+ *
  * Queue job for handling asynchronous event dispatching.
  * 用于处理异步事件分发的队列任务。
- * 
+ *
  * @package Domain\Event
  */
 class AsyncEventJob

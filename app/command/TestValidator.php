@@ -1,5 +1,6 @@
 <?php
-declare (strict_types = 1);
+
+declare (strict_types=1);
 
 namespace app\command;
 
@@ -20,7 +21,7 @@ class TestValidator extends Command
     protected function execute(Input $input, Output $output)
     {
         $generator = new JsonSchemaValidatorGenerator();
-        $output->writeln("Testing JsonSchemaValidatorGenerator...");
+        $output->writeln('Testing JsonSchemaValidatorGenerator...');
 
         $schema = [
             'type' => 'object',
@@ -47,28 +48,28 @@ class TestValidator extends Command
             ]
         ];
 
-        $output->writeln("Input Schema: " . json_encode($schema, JSON_PRETTY_PRINT));
-        
+        $output->writeln('Input Schema: ' . json_encode($schema, JSON_PRETTY_PRINT));
+
         $rules = $generator->generateRules($schema);
-        
-        $output->writeln("Generated Rules:");
+
+        $output->writeln('Generated Rules:');
         foreach ($rules as $field => $rule) {
             $output->writeln("  {$field}: {$rule}");
         }
 
         // Basic assertions
         if (str_contains($rules['name'], 'require') && str_contains($rules['name'], 'min:2')) {
-            $output->writeln("<info>Name rules correct.</info>");
+            $output->writeln('<info>Name rules correct.</info>');
         } else {
-            $output->writeln("<error>Name rules incorrect.</error>");
+            $output->writeln('<error>Name rules incorrect.</error>');
         }
 
         if (str_contains($rules['age'], 'integer') && str_contains($rules['age'], 'egt:18')) {
-            $output->writeln("<info>Age rules correct.</info>");
+            $output->writeln('<info>Age rules correct.</info>');
         } else {
-            $output->writeln("<error>Age rules incorrect.</error>");
+            $output->writeln('<error>Age rules incorrect.</error>');
         }
-        
-        $output->writeln("Test complete.");
+
+        $output->writeln('Test complete.');
     }
 }

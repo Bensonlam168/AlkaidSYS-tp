@@ -1,7 +1,6 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 class CreateLowcodeFormsTable extends Migrator
 {
@@ -28,7 +27,7 @@ class CreateLowcodeFormsTable extends Migrator
      */
     /**
      * Create lowcode_forms table | 创建lowcode_forms表
-     * 
+     *
      * Schema from design/09-lowcode-framework/43-lowcode-form-designer.md line 1121-1138
      */
     public function change()

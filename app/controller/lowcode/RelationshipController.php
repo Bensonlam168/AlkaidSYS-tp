@@ -13,10 +13,10 @@ use think\Response;
 
 /**
  * Relationship API Controller | 关系API控制器
- * 
+ *
  * RESTful API for Relationship management.
  * 关系管理的RESTful API。
- * 
+ *
  * @package app\controller\lowcode
  */
 class RelationshipController extends ApiController
@@ -37,9 +37,9 @@ class RelationshipController extends ApiController
 
     /**
      * Add relationship to collection | 添加关系到Collection
-     * 
+     *
      * POST /api/lowcode/collections/{collectionName}/relationships
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @return Response
      */
@@ -90,9 +90,9 @@ class RelationshipController extends ApiController
 
     /**
      * Remove relationship from collection | 从Collection移除关系
-     * 
+     *
      * DELETE /api/lowcode/collections/{collectionName}/relationships/{relationshipName}
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param string $relationshipName Relationship name | 关系名称
      * @return Response

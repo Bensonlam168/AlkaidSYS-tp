@@ -7,7 +7,6 @@ namespace Tests\Feature;
 use Tests\ThinkPHPTestCase;
 use think\facade\Cache;
 
-
 class RateLimitMiddlewareTest extends ThinkPHPTestCase
 {
     public function test_requests_under_limit_are_not_rate_limited(): void
@@ -82,4 +81,3 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
         $this->assertTrue($foundRateLimited, 'Expected at least one rate_limited=true entry in access log');
     }
 }
-

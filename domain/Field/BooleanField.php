@@ -6,10 +6,10 @@ namespace Domain\Field;
 
 /**
  * Boolean Field | 布尔字段
- * 
+ *
  * Represents a boolean type field with validation.
  * 表示带验证的布尔类型字段。
- * 
+ *
  * @package Domain\Field
  */
 class BooleanField extends AbstractField
@@ -22,7 +22,7 @@ class BooleanField extends AbstractField
 
     /**
      * {@inheritDoc}
-     * 
+     *
      * Validates if value is a boolean or null (if nullable).
      * 验证值是否为布尔值或null（如果可为空）。
      */

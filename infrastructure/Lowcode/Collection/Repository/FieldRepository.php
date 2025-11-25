@@ -10,10 +10,10 @@ use think\facade\Db;
 
 /**
  * Field Repository | 字段仓储
- * 
+ *
  * Handles persistence of Field entities.
  * 处理字段实体的持久化。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Repository
  */
 class FieldRepository
@@ -22,7 +22,7 @@ class FieldRepository
 
     /**
      * Save field | 保存字段
-     * 
+     *
      * @param FieldInterface $field Field to save | 要保存的字段
      * @param int $collectionId Collection ID | Collection ID
      * @return int Field ID | 字段ID
@@ -60,7 +60,7 @@ class FieldRepository
 
     /**
      * Find fields by collection ID | 按Collection ID查找字段
-     * 
+     *
      * @param int $collectionId Collection ID | Collection ID
      * @return array<string, FieldInterface>
      */
@@ -84,7 +84,7 @@ class FieldRepository
 
     /**
      * Delete field | 删除字段
-     * 
+     *
      * @param int $collectionId Collection ID | Collection ID
      * @param string $fieldName Field name | 字段名称
      * @return bool
@@ -99,7 +99,7 @@ class FieldRepository
 
     /**
      * Delete all fields by collection ID | 按Collection ID删除所有字段
-     * 
+     *
      * @param int $collectionId Collection ID | Collection ID
      * @return bool
      */
@@ -112,7 +112,7 @@ class FieldRepository
 
     /**
      * Hydrate field from database row | 从数据库行填充字段
-     * 
+     *
      * @param array $data Database row | 数据库行
      * @return FieldInterface
      */

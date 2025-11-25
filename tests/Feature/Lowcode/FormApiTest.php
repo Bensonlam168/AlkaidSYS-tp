@@ -182,7 +182,7 @@ class FormApiTest extends ThinkPHPTestCase
             $controller = $this->app()->make(\app\controller\lowcode\FormSchemaController::class);
             $this->assertInstanceOf(\app\controller\lowcode\FormSchemaController::class, $controller);
         } catch (\Throwable $e) {
-            echo "Controller Instantiation Failed: " . $e->getMessage() . "\n";
+            echo 'Controller Instantiation Failed: ' . $e->getMessage() . "\n";
             throw $e;
         }
     }
@@ -196,7 +196,7 @@ class FormApiTest extends ThinkPHPTestCase
             $manager = $this->app()->make(\Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager::class);
             $this->assertInstanceOf(\Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager::class, $manager);
         } catch (\Throwable $e) {
-            echo "Manager Instantiation Failed: " . $e->getMessage() . "\n";
+            echo 'Manager Instantiation Failed: ' . $e->getMessage() . "\n";
             throw $e;
         }
     }
@@ -218,7 +218,7 @@ class FormApiTest extends ThinkPHPTestCase
             ],
             'collection_name' => 'test_collection'
         ]);
-        
+
         if ($response->getCode() !== 200) {
             file_put_contents('error_create.html', $response->getContent());
             echo "Create Form Failed. See error_create.html\n";
@@ -269,7 +269,7 @@ class FormApiTest extends ThinkPHPTestCase
             ]
         ]);
         if ($response->getCode() !== 200) {
-            echo "Create Collection Failed (Code " . $response->getCode() . "): " . strip_tags($response->getContent()) . "\n";
+            echo 'Create Collection Failed (Code ' . $response->getCode() . '): ' . strip_tags($response->getContent()) . "\n";
         }
         $this->assertEquals(200, $response->getCode());
 

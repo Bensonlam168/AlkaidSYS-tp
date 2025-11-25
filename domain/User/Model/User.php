@@ -8,10 +8,10 @@ use Domain\User\Interfaces\UserInterface;
 
 /**
  * User Model | 用户模型
- * 
+ *
  * Represents a user in the system.
  * 表示系统中的用户。
- * 
+ *
  * @package Domain\User\Model
  */
 class User implements UserInterface
@@ -145,7 +145,7 @@ class User implements UserInterface
 
     public function removeRole(int $roleId): self
     {
-        $this->roles = array_filter($this->roles, fn($id) => $id !== $roleId);
+        $this->roles = array_filter($this->roles, fn ($id) => $id !== $roleId);
         return $this;
     }
 
@@ -180,16 +180,36 @@ class User implements UserInterface
 
     public function fromArray(array $data): self
     {
-        if (isset($data['id'])) $this->id = (int)$data['id'];
-        if (isset($data['name'])) $this->name = $data['name'];
-        if (isset($data['avatar'])) $this->avatar = $data['avatar'];
-        if (isset($data['phone'])) $this->phone = $data['phone'];
-        if (isset($data['status'])) $this->status = $data['status'];
-        if (isset($data['email_verified_at'])) $this->emailVerifiedAt = $data['email_verified_at'];
-        if (isset($data['last_login_at'])) $this->lastLoginAt = $data['last_login_at'];
-        if (isset($data['last_login_ip'])) $this->lastLoginIp = $data['last_login_ip'];
-        if (isset($data['created_at'])) $this->createdAt = $data['created_at'];
-        if (isset($data['updated_at'])) $this->updatedAt = $data['updated_at'];
+        if (isset($data['id'])) {
+            $this->id = (int)$data['id'];
+        }
+        if (isset($data['name'])) {
+            $this->name = $data['name'];
+        }
+        if (isset($data['avatar'])) {
+            $this->avatar = $data['avatar'];
+        }
+        if (isset($data['phone'])) {
+            $this->phone = $data['phone'];
+        }
+        if (isset($data['status'])) {
+            $this->status = $data['status'];
+        }
+        if (isset($data['email_verified_at'])) {
+            $this->emailVerifiedAt = $data['email_verified_at'];
+        }
+        if (isset($data['last_login_at'])) {
+            $this->lastLoginAt = $data['last_login_at'];
+        }
+        if (isset($data['last_login_ip'])) {
+            $this->lastLoginIp = $data['last_login_ip'];
+        }
+        if (isset($data['created_at'])) {
+            $this->createdAt = $data['created_at'];
+        }
+        if (isset($data['updated_at'])) {
+            $this->updatedAt = $data['updated_at'];
+        }
 
         return $this;
     }

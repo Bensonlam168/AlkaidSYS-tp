@@ -10,10 +10,10 @@ use think\Request;
 
 /**
  * Authentication Helper for Tests | 测试认证辅助工具
- * 
+ *
  * Provides utilities for generating JWT tokens and authenticated requests in test environment.
  * 为测试环境提供生成 JWT token 和已认证请求的工具。
- * 
+ *
  * @package tests\Helpers
  */
 class AuthHelper
@@ -28,7 +28,7 @@ class AuthHelper
      * @param int $tenantId Tenant ID | 租户ID (default: 1)
      * @param int $siteId Site ID | 站点ID (default: 0)
      * @return string JWT access token | JWT access token
-     * 
+     *
      * @example
      * ```php
      * $token = AuthHelper::generateTestToken();
@@ -55,7 +55,7 @@ class AuthHelper
      * @param int $tenantId Tenant ID | 租户ID (default: 1)
      * @param int $siteId Site ID | 站点ID (default: 0)
      * @return Request Authenticated request instance | 已认证的请求实例
-     * 
+     *
      * @example
      * ```php
      * $request = AuthHelper::createAuthenticatedRequest($this->app());
@@ -69,7 +69,7 @@ class AuthHelper
         int $siteId = 0
     ): Request {
         $token = self::generateTestToken($userId, $tenantId, $siteId);
-        
+
         return $app->make(Request::class)
             ->withHeader('Authorization', 'Bearer ' . $token);
     }
@@ -84,7 +84,7 @@ class AuthHelper
      * @param int $tenantId Tenant ID | 租户ID (default: 1)
      * @param int $siteId Site ID | 站点ID (default: 0)
      * @return string JWT refresh token | JWT refresh token
-     * 
+     *
      * @example
      * ```php
      * $refreshToken = AuthHelper::generateTestRefreshToken();
@@ -111,7 +111,7 @@ class AuthHelper
      * @param int $tenantId Tenant ID for token generation | 用于生成 token 的租户ID (default: 1)
      * @param int $siteId Site ID for token generation | 用于生成 token 的站点ID (default: 0)
      * @return Request Request instance with custom headers | 带自定义 headers 的请求实例
-     * 
+     *
      * @example
      * ```php
      * $request = AuthHelper::createRequestWithHeaders($this->app(), [
@@ -128,15 +128,14 @@ class AuthHelper
         int $siteId = 0
     ): Request {
         $token = self::generateTestToken($userId, $tenantId, $siteId);
-        
+
         $request = $app->make(Request::class)
             ->withHeader('Authorization', 'Bearer ' . $token);
-        
+
         foreach ($headers as $name => $value) {
             $request = $request->withHeader($name, $value);
         }
-        
+
         return $request;
     }
 }
-

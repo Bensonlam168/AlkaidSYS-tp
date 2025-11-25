@@ -10,10 +10,10 @@ use Domain\Lowcode\Collection\Interfaces\RelationshipInterface;
 
 /**
  * Collection Model | Collection模型
- * 
+ *
  * Represents a dynamic data collection (table) in the lowcode system.
  * 表示低代码系统中的动态数据集合（表）。
- * 
+ *
  * @package Domain\Lowcode\Collection\Model
  */
 class Collection implements CollectionInterface
@@ -31,13 +31,13 @@ class Collection implements CollectionInterface
 
     /**
      * Constructor | 构造函数
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @param array $config Configuration array | 配置数组
      */
     public function __construct(string $name, array $config = [])
     {
-       $this->name = $name;
+        $this->name = $name;
         $this->tableName = $config['table_name'] ?? $this->generateTableName($name);
         $this->title = $config['title'] ?? $name;
         $this->description = $config['description'] ?? '';
@@ -66,7 +66,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set collection ID | 设置Collection ID
-     * 
+     *
      * @param int $id
      * @return self
      */
@@ -94,7 +94,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set table name | 设置表名
-     * 
+     *
      * @param string $tableName
      * @return self
      */
@@ -114,7 +114,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set title | 设置标题
-     * 
+     *
      * @param string $title
      * @return self
      */
@@ -134,7 +134,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set description | 设置描述
-     * 
+     *
      * @param string $description
      * @return self
      */
@@ -213,7 +213,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set options | 设置选项
-     * 
+     *
      * @param array $options
      * @return self
      */
@@ -225,7 +225,7 @@ class Collection implements CollectionInterface
 
     /**
      * Get created timestamp | 获取创建时间
-     * 
+     *
      * @return string|null
      */
     public function getCreatedAt(): ?string
@@ -235,7 +235,7 @@ class Collection implements CollectionInterface
 
     /**
      * Get updated timestamp | 获取更新时间
-     * 
+     *
      * @return string|null
      */
     public function getUpdatedAt(): ?string
@@ -254,8 +254,8 @@ class Collection implements CollectionInterface
             'table_name' => $this->tableName,
             'title' => $this->title,
             'description' => $this->description,
-            'fields' => array_map(fn($field) => $field->toArray(), $this->fields),
-            'relationships' => array_map(fn($rel) => $rel->toArray(), $this->relationships),
+            'fields' => array_map(fn ($field) => $field->toArray(), $this->fields),
+            'relationships' => array_map(fn ($rel) => $rel->toArray(), $this->relationships),
             'options' => $this->options,
             'created_at' => $this->createdAt,
             'updated_at' => $this->updatedAt,
@@ -300,7 +300,7 @@ class Collection implements CollectionInterface
 
     /**
      * Generate default table name | 生成默认表名
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @return string Table name | 表名
      */

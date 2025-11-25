@@ -11,10 +11,10 @@ use think\Response;
 
 /**
  * Form Schema Controller | 表单Schema控制器
- * 
+ *
  * Manages form schemas via RESTful API.
  * 通过RESTful API管理表单Schema。
- * 
+ *
  * @package app\controller\lowcode
  */
 class FormSchemaController extends ApiController
@@ -28,7 +28,7 @@ class FormSchemaController extends ApiController
 
     /**
      * List form schemas | 列出表单Schema
-     * 
+     *
      * @param Request $request
      * @return Response
      */
@@ -62,7 +62,7 @@ class FormSchemaController extends ApiController
 
     /**
      * Get form schema | 获取表单Schema
-     * 
+     *
      * @param string $name
      * @param Request $request
      * @return Response
@@ -106,7 +106,7 @@ class FormSchemaController extends ApiController
 
     /**
      * Update form | 更新表单
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param Request $request
      * @return Response
@@ -127,10 +127,10 @@ class FormSchemaController extends ApiController
         if (!$existing) {
             return $this->notFound('Form not found');
         }
-        
+
         // Extract ID for update
         $id = $existing['id'];
-        
+
         // Prepare update data (don't include id, tenant_id, site_id as they're separate params)
         // 准备更新数据（id、tenant_id、site_id作为独立参数，不放在data中）
         unset($data['name']); // Name cannot be changed via update
@@ -148,7 +148,7 @@ class FormSchemaController extends ApiController
 
     /**
      * Delete form | 删除表单
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param Request $request
      * @return Response
@@ -175,7 +175,7 @@ class FormSchemaController extends ApiController
 
     /**
      * Duplicate form | 复制表单
-     * 
+     *
      * @param string $name Source form name | 源表单名称
      * @param Request $request
      * @return Response

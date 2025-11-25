@@ -10,10 +10,10 @@ use Infrastructure\Auth\JwtService;
 
 /**
  * Auth Middleware | 认证中间件
- * 
+ *
  * Validates JWT token and authenticates the user.
  * 验证JWT令牌并认证用户。
- * 
+ *
  * @package app\middleware
  */
 class Auth
@@ -85,14 +85,14 @@ class Auth
 
     /**
      * Get token from request | 从请求获取token
-     * 
+     *
      * @param \think\Request $request
      * @return string|null
      */
     protected function getTokenFromRequest($request): ?string
     {
         $authorization = $request->header('Authorization', '');
-        
+
         if (empty($authorization)) {
             return null;
         }

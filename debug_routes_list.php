@@ -1,4 +1,5 @@
 <?php
+
 namespace think;
 
 require __DIR__ . '/vendor/autoload.php';
@@ -20,5 +21,5 @@ foreach ($rules as $rule) {
     } elseif (is_array($route)) {
         $route = json_encode($route);
     }
-    echo "Rule: " . $rule['rule'] . " -> " . $route . "\n";
+    echo 'Rule: ' . $rule['rule'] . ' -> ' . $route . "\n";
 }

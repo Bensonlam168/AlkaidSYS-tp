@@ -8,20 +8,20 @@ use think\Response;
 
 /**
  * Response Helper for Middleware | 中间件响应辅助类
- * 
+ *
  * Provides unified JSON error response construction for middleware.
  * 为中间件提供统一的 JSON 错误响应构造。
- * 
+ *
  * All error responses should include trace_id for observability.
  * 所有错误响应都应包含 trace_id 以便可观测性。
- * 
+ *
  * @package app\middleware
  */
 class ResponseHelper
 {
     /**
      * Create a JSON error response with trace_id | 创建包含 trace_id 的 JSON 错误响应
-     * 
+     *
      * @param int $code Business error code | 业务错误码
      * @param string $message Error message | 错误消息
      * @param int $httpCode HTTP status code | HTTP 状态码
@@ -42,13 +42,12 @@ class ResponseHelper
             'data' => $data,
             'timestamp' => time(),
         ];
-        
+
         // Add trace_id for observability | 添加 trace_id 用于可观测性
         if ($traceId !== null) {
             $response['trace_id'] = $traceId;
         }
-        
+
         return json($response, $httpCode);
     }
 }
-

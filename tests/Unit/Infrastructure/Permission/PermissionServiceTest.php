@@ -15,10 +15,10 @@ if (!function_exists('env')) {
 
 /**
  * Permission Service Test | 权限服务测试
- * 
+ *
  * Tests the PermissionService class.
  * 测试 PermissionService 类。
- * 
+ *
  * @package Tests\Unit\Infrastructure\Permission
  */
 class PermissionServiceTest extends ThinkPHPTestCase
@@ -38,9 +38,9 @@ class PermissionServiceTest extends ThinkPHPTestCase
     {
         // Create a user with no roles | 创建一个没有角色的用户
         $userId = 999;  // Non-existent user | 不存在的用户
-        
+
         $permissions = $this->permissionService->getUserPermissions($userId);
-        
+
         // Should return empty array | 应该返回空数组
         $this->assertIsArray($permissions);
         $this->assertEmpty($permissions);
@@ -53,18 +53,18 @@ class PermissionServiceTest extends ThinkPHPTestCase
     {
         // Use the default admin user (ID: 1) from seed data | 使用种子数据中的默认管理员用户
         $userId = 1;
-        
+
         $permissions = $this->permissionService->getUserPermissions($userId);
-        
+
         // Should return array of permissions | 应该返回权限数组
         $this->assertIsArray($permissions);
         $this->assertNotEmpty($permissions);
-        
+
         // Check format: resource:action | 检查格式：resource:action
         foreach ($permissions as $permission) {
             $this->assertIsString($permission);
             $this->assertStringContainsString(':', $permission);
-            
+
             // Split and verify format | 分割并验证格式
             $parts = explode(':', $permission);
             $this->assertCount(2, $parts);
@@ -80,9 +80,9 @@ class PermissionServiceTest extends ThinkPHPTestCase
     {
         // Use the default admin user | 使用默认管理员用户
         $userId = 1;
-        
+
         $permissions = $this->permissionService->getUserPermissions($userId);
-        
+
         // Admin should have forms.view permission in DB | 管理员应该有 forms.view 权限（数据库中）
         // It should be converted to forms:view | 应该转换为 forms:view
         $this->assertContains('forms:view', $permissions);
@@ -115,10 +115,10 @@ class PermissionServiceTest extends ThinkPHPTestCase
     public function testHasPermission(): void
     {
         $userId = 1;  // Admin user | 管理员用户
-        
+
         // Admin should have forms:view permission | 管理员应该有 forms:view 权限
         $this->assertTrue($this->permissionService->hasPermission($userId, 'forms:view'));
-        
+
         // Admin should not have non-existent permission | 管理员不应该有不存在的权限
         $this->assertFalse($this->permissionService->hasPermission($userId, 'nonexistent:permission'));
     }
@@ -129,13 +129,13 @@ class PermissionServiceTest extends ThinkPHPTestCase
     public function testHasAnyPermission(): void
     {
         $userId = 1;  // Admin user | 管理员用户
-        
+
         // Should return true if user has any of the permissions | 如果用户有任一权限应返回 true
         $this->assertTrue($this->permissionService->hasAnyPermission($userId, [
             'forms:view',
             'nonexistent:permission'
         ]));
-        
+
         // Should return false if user has none of the permissions | 如果用户没有任何权限应返回 false
         $this->assertFalse($this->permissionService->hasAnyPermission($userId, [
             'nonexistent:permission1',
@@ -149,13 +149,13 @@ class PermissionServiceTest extends ThinkPHPTestCase
     public function testHasAllPermissions(): void
     {
         $userId = 1;  // Admin user | 管理员用户
-        
+
         // Should return true if user has all permissions | 如果用户有所有权限应返回 true
         $this->assertTrue($this->permissionService->hasAllPermissions($userId, [
             'forms:view',
             'forms:create'
         ]));
-        
+
         // Should return false if user is missing any permission | 如果用户缺少任何权限应返回 false
         $this->assertFalse($this->permissionService->hasAllPermissions($userId, [
             'forms:view',
@@ -169,9 +169,9 @@ class PermissionServiceTest extends ThinkPHPTestCase
     public function testPermissionDeduplication(): void
     {
         $userId = 1;  // Admin user | 管理员用户
-        
+
         $permissions = $this->permissionService->getUserPermissions($userId);
-        
+
         // Should not have duplicates | 不应该有重复
         $this->assertEquals(count($permissions), count(array_unique($permissions)));
     }
@@ -209,7 +209,7 @@ class PermissionServiceTest extends ThinkPHPTestCase
             'tenant_id'  => $secondTenantId,
             'name'       => 'Cross Tenant Role',
             'slug'       => 'cross-tenant-role-' . uniqid(),
-            'description'=> 'Role from another tenant used for isolation tests',
+            'description' => 'Role from another tenant used for isolation tests',
             'is_system'  => false,
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
@@ -253,4 +253,3 @@ class PermissionServiceTest extends ThinkPHPTestCase
         $this->assertNotContains($crossTenantCode, $permissions);
     }
 }
-

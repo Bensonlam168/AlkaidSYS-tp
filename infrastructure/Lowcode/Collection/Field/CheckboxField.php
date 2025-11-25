@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Checkbox Field Type | 复选框字段类型
- * 
+ *
  * Represents a JSON field for multiple checkbox selections.
  * 表示用于多选复选框的JSON字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class CheckboxField extends AbstractField

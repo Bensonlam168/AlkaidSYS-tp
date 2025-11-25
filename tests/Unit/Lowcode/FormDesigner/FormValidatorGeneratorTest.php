@@ -11,10 +11,10 @@ use think\Validate;
 
 /**
  * Form Validator Generator Test | 表单验证器生成器测试
- * 
+ *
  * Tests FormValidatorGenerator service.
  * 测试FormValidatorGenerator服务。
- * 
+ *
  * @package Tests\Unit\Lowcode\FormDesigner
  */
 class FormValidatorGeneratorTest extends ThinkPHPTestCase
@@ -48,7 +48,7 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
         $validator = $this->generator->generate($schema);
 
         $this->assertInstanceOf(Validate::class, $validator);
-        
+
         $rules = $this->getValidatorRules($validator);
         $this->assertArrayHasKey('name', $rules);
         $this->assertStringContainsString('require', $rules['name']);
@@ -97,7 +97,7 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
 
         $rules = $this->getValidatorRules($validator);
         $messages = $this->getValidatorMessages($validator);
-        
+
         $this->assertStringContainsString('min:3', $rules['username']);
         $this->assertStringContainsString('max:20', $rules['username']);
         $this->assertEquals('用户名长度不能少于3个字符', $messages['username.min']);
@@ -125,7 +125,7 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
 
         $rules = $this->getValidatorRules($validator);
         $messages = $this->getValidatorMessages($validator);
-        
+
         $this->assertStringContainsString('number', $rules['age']);
         $this->assertStringContainsString('egt:18', $rules['age']);
         $this->assertStringContainsString('elt:100', $rules['age']);
@@ -153,7 +153,7 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
 
         $rules = $this->getValidatorRules($validator);
         $messages = $this->getValidatorMessages($validator);
-        
+
         $this->assertStringContainsString('in:draft,published,archived', $rules['status']);
         $this->assertStringContainsString('draft、published、archived', $messages['status.in']);
     }
@@ -187,7 +187,7 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
         $validator = $this->generator->generate($schema);
 
         $rules = $this->getValidatorRules($validator);
-        
+
         $this->assertStringContainsString('email', $rules['email']);
         $this->assertStringContainsString('url', $rules['website']);
         $this->assertStringContainsString('date', $rules['birthday']);
@@ -309,7 +309,7 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
 
         // First call - should generate and cache | 第一次调用 - 应生成并缓存
         $validator1 = $this->manager->getValidator($schema, 'test_form');
-        
+
         // Second call - should retrieve from cache | 第二次调用 - 应从缓存获取
         $validator2 = $this->manager->getValidator($schema, 'test_form');
 

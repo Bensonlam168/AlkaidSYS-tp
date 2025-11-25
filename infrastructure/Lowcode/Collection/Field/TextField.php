@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Text Field Type | 文本字段类型
- * 
+ *
  * Represents a TEXT field for long text content.
  * 表示用于长文本内容的TEXT字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class TextField extends AbstractField

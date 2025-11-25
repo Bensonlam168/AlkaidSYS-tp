@@ -115,4 +115,3 @@ class TestLowcodeCollection extends Command
         }
     }
 }
-

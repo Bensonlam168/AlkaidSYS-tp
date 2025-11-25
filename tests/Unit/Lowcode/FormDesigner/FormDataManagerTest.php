@@ -17,10 +17,10 @@ use Mockery;
 
 /**
  * Form Data Manager Test | 表单数据管理器测试
- * 
+ *
  * Tests FormDataManager service.
  * 测试FormDataManager服务。
- * 
+ *
  * @package Tests\Unit\Lowcode\FormDesigner
  */
 class FormDataManagerTest extends ThinkPHPTestCase
@@ -29,24 +29,24 @@ class FormDataManagerTest extends ThinkPHPTestCase
     protected $schemaManager;
     protected $validatorManager;
     protected $collectionManager;
-    
+
     protected string $testTableName = 'lowcode_test_product';
 
     protected function setUp(): void
     {
         parent::setUp();
-        
+
         // Mock dependencies | Mock依赖
         $this->schemaManager = Mockery::mock(FormSchemaManager::class);
         $this->validatorManager = Mockery::mock(FormValidatorManager::class);
         $this->collectionManager = Mockery::mock(CollectionManager::class);
-        
+
         $this->manager = new FormDataManager(
             $this->schemaManager,
             $this->validatorManager,
             $this->collectionManager
         );
-        
+
         // Create test table | 创建测试表
         $this->createTestTable();
     }
@@ -82,14 +82,14 @@ class FormDataManagerTest extends ThinkPHPTestCase
         $formName = 'product_form';
         $data = ['name' => 'Test Product', 'price' => 100];
         $tenantId = 1;
-        
+
         // Mock expectations | Mock预期
         $this->mockDependencies($formName, $tenantId);
-        
+
         $id = $this->manager->save($formName, $data, $tenantId);
-        
+
         $this->assertIsNumeric($id);
-        
+
         // Verify DB | 验证数据库
         $saved = Db::table($this->testTableName)->find($id);
         $this->assertEquals('Test Product', $saved['name']);
@@ -109,18 +109,18 @@ class FormDataManagerTest extends ThinkPHPTestCase
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
-        
+
         $formName = 'product_form';
         $data = ['id' => $id, 'name' => 'New Name', 'price' => 200];
         $tenantId = 1;
-        
+
         // Mock expectations | Mock预期
         $this->mockDependencies($formName, $tenantId);
-        
+
         $resultId = $this->manager->save($formName, $data, $tenantId);
-        
+
         $this->assertEquals($id, $resultId);
-        
+
         // Verify DB | 验证数据库
         $saved = Db::table($this->testTableName)->find($id);
         $this->assertEquals('New Name', $saved['name']);
@@ -137,14 +137,14 @@ class FormDataManagerTest extends ThinkPHPTestCase
             'name' => 'Test Item',
             'price' => 99,
         ]);
-        
+
         $formName = 'product_form';
         $tenantId = 1;
-        
+
         $this->mockDependencies($formName, $tenantId);
-        
+
         $result = $this->manager->get($formName, (int)$id, $tenantId);
-        
+
         $this->assertNotNull($result);
         $this->assertEquals('Test Item', $result['name']);
     }
@@ -159,16 +159,16 @@ class FormDataManagerTest extends ThinkPHPTestCase
             'name' => 'To Delete',
             'price' => 10,
         ]);
-        
+
         $formName = 'product_form';
         $tenantId = 1;
-        
+
         $this->mockDependencies($formName, $tenantId);
-        
+
         $result = $this->manager->delete($formName, (int)$id, $tenantId);
-        
+
         $this->assertTrue($result);
-        
+
         // Verify DB | 验证数据库
         $check = Db::table($this->testTableName)->find($id);
         $this->assertNull($check);
@@ -185,17 +185,17 @@ class FormDataManagerTest extends ThinkPHPTestCase
             ['name' => 'Item 2', 'price' => 20],
             ['name' => 'Item 3', 'price' => 30],
         ]);
-        
+
         $formName = 'product_form';
         $tenantId = 1;
-        
+
         $this->mockDependencies($formName, $tenantId);
-        
+
         // Test list all | 测试列出所有
         $result = $this->manager->list($formName, [], 1, 10, $tenantId);
         $this->assertEquals(3, $result['total']);
         $this->assertCount(3, $result['list']);
-        
+
         // Test filter | 测试筛选
         $resultFilter = $this->manager->list($formName, ['price' => 20], 1, 10, $tenantId);
         $this->assertEquals(1, $resultFilter['total']);
@@ -209,21 +209,21 @@ class FormDataManagerTest extends ThinkPHPTestCase
     {
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage('Validation failed');
-        
+
         $formName = 'product_form';
         $data = ['name' => 'Invalid'];
         $tenantId = 1;
-        
+
         $this->schemaManager->shouldReceive('get')
             ->with($formName, $tenantId, 0)
             ->andReturn([
                 'schema' => [],
                 'collection_name' => 'test_collection'
             ]);
-            
+
         $this->validatorManager->shouldReceive('validate')
             ->andReturn('Name is required'); // Simulate failure
-            
+
         $this->manager->save($formName, $data, $tenantId);
     }
 
@@ -239,21 +239,21 @@ class FormDataManagerTest extends ThinkPHPTestCase
                 'schema' => ['some' => 'schema'],
                 'collection_name' => 'test_collection'
             ]);
-            
+
         // Mock Validator Manager
         $this->validatorManager->shouldReceive('validate')
             ->andReturn(true);
-            
+
         // Mock Collection Manager & Collection
         $collection = Mockery::mock(Collection::class);
         $collection->shouldReceive('getTableName')->andReturn($this->testTableName);
-        
+
         // Mock Fields
         $field1 = new StringField('name');
         $field2 = new IntegerField('price');
-        
+
         $collection->shouldReceive('getFields')->andReturn([$field1, $field2]);
-        
+
         $this->collectionManager->shouldReceive('get')
             ->with('test_collection')
             ->andReturn($collection);

@@ -12,10 +12,10 @@ use think\Response;
 
 /**
  * Field API Controller | 字段API控制器
- * 
+ *
  * RESTful API for Field management.
  * 字段管理的RESTful API。
- * 
+ *
  * @package app\controller\lowcode
  */
 class FieldController extends ApiController
@@ -36,9 +36,9 @@ class FieldController extends ApiController
 
     /**
      * Add field to collection | 添加字段到Collection
-     * 
+     *
      * POST /api/lowcode/collections/{collectionName}/fields
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @return Response
      */
@@ -75,9 +75,9 @@ class FieldController extends ApiController
 
     /**
      * Remove field from collection | 从Collection移除字段
-     * 
+     *
      * DELETE /api/lowcode/collections/{collectionName}/fields/{fieldName}
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param string $fieldName Field name | 字段名称
      * @return Response

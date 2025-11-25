@@ -10,10 +10,10 @@ use think\facade\Db;
 
 /**
  * Collection Repository | Collection仓储
- * 
+ *
  * Handles persistence of Collection entities.
  * 处理Collection实体的持久化。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Repository
  */
 class CollectionRepository
@@ -22,7 +22,7 @@ class CollectionRepository
 
     /**
      * Save collection | 保存Collection
-     * 
+     *
      * @param CollectionInterface $collection Collection to save | 要保存的Collection
      * @return int Collection ID | Collection ID
      */
@@ -52,7 +52,7 @@ class CollectionRepository
 
     /**
      * Find by name | 按名称查找
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @return CollectionInterface|null
      */
@@ -71,7 +71,7 @@ class CollectionRepository
 
     /**
      * Find by ID | 按ID查找
-     * 
+     *
      * @param int $id Collection ID | Collection ID
      * @return CollectionInterface|null
      */
@@ -90,7 +90,7 @@ class CollectionRepository
 
     /**
      * Delete collection | 删除Collection
-     * 
+     *
      * @param int $id Collection ID | Collection ID
      * @return bool
      */
@@ -103,7 +103,7 @@ class CollectionRepository
 
     /**
      * List collections | 列出Collections
-     * 
+     *
      * @param array $filters Filters | 筛选条件
      * @param int $page Page number | 页码
      * @param int $pageSize Page size | 每页数量
@@ -127,7 +127,7 @@ class CollectionRepository
             ->select()
             ->toArray();
 
-        $collections = array_map(fn($data) => $this->hydrate($data), $list);
+        $collections = array_map(fn ($data) => $this->hydrate($data), $list);
 
         return [
             'list' => $collections,
@@ -139,7 +139,7 @@ class CollectionRepository
 
     /**
      * Hydrate collection from database row | 从数据库行填充Collection
-     * 
+     *
      * @param array $data Database row | 数据库行
      * @return CollectionInterface
      */

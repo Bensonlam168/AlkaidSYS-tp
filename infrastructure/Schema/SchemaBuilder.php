@@ -13,17 +13,17 @@ use think\exception\HttpResponseException;
 
 /**
  * Schema Builder Implementation | Schema构建器实现
- * 
+ *
  * Implements runtime DDL operations using raw SQL for maximum flexibility.
  * 使用原始SQL实现运行时DDL操作，以获得最大的灵活性。
- * 
+ *
  * @package Infrastructure\Schema
  */
 class SchemaBuilder implements SchemaBuilderInterface
 {
     /**
      * {@inheritDoc}
-     * 
+     *
      * Creates table using raw SQL for runtime execution.
      * 使用原始SQL创建表，用于运行时执行。
      */
@@ -346,4 +346,3 @@ class SchemaBuilder implements SchemaBuilderInterface
         return null;
     }
 }
-

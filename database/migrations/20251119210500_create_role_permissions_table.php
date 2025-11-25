@@ -4,7 +4,7 @@ use think\migration\Migrator;
 
 /**
  * Create Role Permissions Table Migration | 创建角色权限关联表迁移
- * 
+ *
  * Creates the role_permissions pivot table.
  * 创建角色权限中间表。
  */

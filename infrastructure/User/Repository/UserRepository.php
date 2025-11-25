@@ -9,7 +9,7 @@ use think\facade\Db;
 
 /**
  * User Repository | 用户仓储
- * 
+ *
  * @package Infrastructure\User\Repository
  */
 class UserRepository
@@ -37,7 +37,9 @@ class UserRepository
     public function findById(int $id): ?User
     {
         $data = Db::name($this->table)->where('id', $id)->find();
-        if (!$data) return null;
+        if (!$data) {
+            return null;
+        }
 
         $user = new User($data['tenant_id'], $data['username'], $data['email'], $data['password']);
         $user->fromArray($data);
@@ -50,7 +52,9 @@ class UserRepository
             ->where('tenant_id', $tenantId)
             ->where('email', $email)
             ->find();
-        if (!$data) return null;
+        if (!$data) {
+            return null;
+        }
 
         $user = new User($data['tenant_id'], $data['username'], $data['email'], $data['password']);
         $user->fromArray($data);
@@ -63,7 +67,7 @@ class UserRepository
             ->where('user_id', $userId)
             ->where('role_id', $roleId)
             ->find();
-            
+
         if (!$exists) {
             Db::name('user_roles')->insert([
                 'user_id' => $userId,

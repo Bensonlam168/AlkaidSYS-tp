@@ -8,10 +8,10 @@ use Domain\Lowcode\Collection\Interfaces\CollectionInterface;
 
 /**
  * Migration Manager Service | 迁移管理服务
- * 
+ *
  * Auto-generates migration files for collections.
  * 自动为集合生成迁移文件。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Service
  */
 class MigrationManager
@@ -28,7 +28,7 @@ class MigrationManager
 
     /**
      * Generate migration file for collection | 为Collection生成迁移文件
-     * 
+     *
      * @param CollectionInterface $collection Collection | Collection
      * @return string Migration file path | 迁移文件路径
      */
@@ -48,7 +48,7 @@ class MigrationManager
 
     /**
      * Build migration file content | 构建迁移文件内容
-     * 
+     *
      * @param CollectionInterface $collection Collection | Collection
      * @param string $className Class name | 类名
      * @return string Migration file content | 迁移文件内容
@@ -109,7 +109,7 @@ PHP;
 
     /**
      * Build fields code for migration | 为迁移构建字段代码
-     * 
+     *
      * @param CollectionInterface $collection Collection | Collection
      * @return string Fields code | 字段代码
      */
@@ -136,7 +136,7 @@ PHP;
 
     /**
      * Map database type to migration type | 映射数据库类型到迁移类型
-     * 
+     *
      * @param string $dbType Database type | 数据库类型
      * @return string Migration type | 迁移类型
      */

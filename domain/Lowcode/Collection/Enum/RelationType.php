@@ -6,10 +6,10 @@ namespace Domain\Lowcode\Collection\Enum;
 
 /**
  * Relationship Type Enum | 关系类型枚举
- * 
+ *
  * Defines supported relationship types.
  * 定义支持的关系类型。
- * 
+ *
  * @package Domain\Lowcode\Collection\Enum
  */
 class RelationType
@@ -36,7 +36,7 @@ class RelationType
 
     /**
      * Get all relation types | 获取所有关系类型
-     * 
+     *
      * @return array<string>
      */
     public static function all(): array
@@ -51,7 +51,7 @@ class RelationType
 
     /**
      * Check if type is valid | 检查类型是否有效
-     * 
+     *
      * @param string $type Type to check | 要检查的类型
      * @return bool
      */

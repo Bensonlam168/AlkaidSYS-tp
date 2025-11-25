@@ -1,4 +1,5 @@
 <?php
+
 // 全局中间件定义文件
 return [
     // Trace 必须放在最前用于生成 trace_id

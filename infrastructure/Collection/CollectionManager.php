@@ -69,7 +69,7 @@ class CollectionManager
     {
         // 1. Create physical table | 创建物理表
         $columns = [];
-        
+
         // Add primary key first | 首先添加主键
         $columns['id'] = [
             'type' => 'INT',
@@ -77,7 +77,7 @@ class CollectionManager
             'auto_increment' => true,
             'comment' => 'Primary key | 主键'
         ];
-        
+
         foreach ($collection->getFieldDefinitions() as $field) {
             $fieldArray = $field->toArray();
             $columns[$field->getName()] = [

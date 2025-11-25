@@ -298,4 +298,3 @@ class RateLimit
         return $next($request);
     }
 }
-

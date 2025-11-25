@@ -8,10 +8,10 @@ use think\facade\Event;
 
 /**
  * Event Service | 事件服务
- * 
+ *
  * Provides event listening with priority support and asynchronous processing.
  * 提供带优先级支持和异步处理的事件监听。
- * 
+ *
  * @package Domain\Event
  */
 class EventService
@@ -30,7 +30,7 @@ class EventService
 
     /**
      * Register event listener with priority | 注册带优先级的事件监听器
-     * 
+     *
      * Lower priority number means higher execution priority.
      * 优先级数字越小，执行优先级越高。
      *
@@ -43,12 +43,12 @@ class EventService
     {
         // Store priority | 存储优先级
         $listenerKey = $this->getListenerKey($listener);
-        
+
         if (!isset($this->priorities[$event])) {
             $this->priorities[$event] = [];
         }
         $this->priorities[$event][$listenerKey] = $priority;
-        
+
         // Store the actual listener | 存储实际的监听器
         if (!isset($this->priorityListeners[$event])) {
             $this->priorityListeners[$event] = [];
@@ -70,7 +70,7 @@ class EventService
             // Get sorted listener keys | 获取排序后的监听器键
             $sortedKeys = $this->priorities[$event];
             asort($sortedKeys); // Sort by value (priority) ascending | 按值（优先级）升序排序
-            
+
             // Trigger each listener in priority order | 按优先级顺序触发每个监听器
             foreach (array_keys($sortedKeys) as $listenerKey) {
                 if (isset($this->priorityListeners[$event][$listenerKey])) {
@@ -80,10 +80,10 @@ class EventService
                     }
                 }
             }
-            
+
             return true;
         }
-        
+
         // Also trigger through ThinkPHP's event system for non-priority listeners
         // 同时通过ThinkPHP事件系统触发非优先级监听器
         return Event::trigger($event, $params);
@@ -117,18 +117,18 @@ class EventService
         if (is_string($listener)) {
             return $listener;
         }
-        
+
         if ($listener instanceof \Closure) {
             return spl_object_hash($listener);
         }
-        
+
         if (is_array($listener)) {
             if (is_object($listener[0])) {
                 return spl_object_hash($listener[0]) . '::' . $listener[1];
             }
             return $listener[0] . '::' . $listener[1];
         }
-        
+
         return spl_object_hash($listener);
     }
 }

@@ -9,10 +9,10 @@ use think\Request;
 
 /**
  * Site Identify Middleware | 站点识别中间件
- * 
+ *
  * Identifies and validates the site from the request.
  * 从请求中识别并验证站点。
- * 
+ *
  * @package app\middleware
  */
 class SiteIdentify
