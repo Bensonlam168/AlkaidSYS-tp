@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/topthink/framework/src/helper.php"
+         colors="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         cacheDirectory=".phpunit.cache">
+    <testsuites>
+        <testsuite name="Performance">
+            <directory>tests/Performance</directory>
+        </testsuite>
+        <testsuite name="Benchmark">
+            <directory>tests/Performance/Benchmark</directory>
+        </testsuite>
+        <testsuite name="Load">
+            <directory>tests/Performance/Load</directory>
+        </testsuite>
+        <testsuite name="Stress">
+            <directory>tests/Performance/Stress</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+            <directory>Infrastructure</directory>
+            <directory>Domain</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_DEBUG" value="false"/>
+        <env name="PERFORMANCE_TEST" value="true"/>
+    </php>
+</phpunit>
+

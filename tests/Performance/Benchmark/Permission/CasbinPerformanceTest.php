@@ -2,10 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Tests\Performance\Permission;
+namespace Tests\Performance\Benchmark\Permission;
 
 use Infrastructure\Permission\Service\CasbinService;
 use Infrastructure\Permission\Service\PermissionService;
+use Tests\Performance\Support\PerformanceBenchmark;
+use Tests\Performance\Support\PerformanceReporter;
 use Tests\ThinkPHPTestCase;
 use think\facade\Config;
 use think\facade\Db;
@@ -22,20 +24,27 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
     protected CasbinService $casbinService;
     protected PermissionService $permissionService;
     protected array $performanceReport = [];
+    protected PerformanceBenchmark $benchmark;
+    protected PerformanceReporter $reporter;
 
     protected function setUp(): void
     {
         parent::setUp();
-        
+
+        // 创建基准管理器和报告生成器
+        // Create benchmark manager and reporter
+        $this->benchmark = new PerformanceBenchmark();
+        $this->reporter = new PerformanceReporter($this->benchmark);
+
         // 创建服务实例
         // Create service instances
         $this->casbinService = new CasbinService();
         $this->permissionService = new PermissionService($this->casbinService);
-        
+
         // 准备性能测试数据
         // Prepare performance test data
         $this->preparePerformanceTestData();
-        
+
         // 重新加载策略
         // Reload policy
         $this->casbinService->reloadPolicy();
@@ -46,11 +55,12 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         // 清理测试数据
         // Clean up test data
         $this->cleanupTestData();
-        
-        // 生成性能报告
-        // Generate performance report
-        $this->generatePerformanceReport();
-        
+
+        // 生成性能报告（使用新的报告生成器）
+        // Generate performance report (using new reporter)
+        $reportFile = $this->reporter->generate('casbin-performance-benchmark-' . date('Y-m-d') . '.md');
+        echo "\nPerformance report generated: {$reportFile}\n";
+
         parent::tearDown();
     }
 
@@ -199,15 +209,26 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         $maxTime = max($times);
         $minTime = min($times);
         
-        // 记录性能数据
-        // Record performance data
-        $this->performanceReport['single_check'] = [
-            'avg_time_ms' => round($avgTime, 2),
-            'max_time_ms' => round($maxTime, 2),
-            'min_time_ms' => round($minTime, 2),
-            'iterations' => 100,
-        ];
-        
+        // 记录性能数据到基准
+        // Record performance data to benchmark
+        $this->benchmark->record(
+            'single_permission_check',
+            $avgTime,
+            memory_get_peak_usage(),
+            [
+                'iterations' => 100,
+                'max_time_ms' => round($maxTime, 2),
+                'min_time_ms' => round($minTime, 2),
+            ]
+        );
+
+        // 检测性能退化
+        // Detect performance regression
+        $regression = $this->benchmark->detectRegression('single_permission_check', $avgTime);
+        if ($regression['has_regression']) {
+            $this->markTestIncomplete($regression['message']);
+        }
+
         // 验证性能目标：< 10ms
         // Verify performance target: < 10ms
         $this->assertLessThan(10, $avgTime, "Average permission check time should be < 10ms, got {$avgTime}ms");
@@ -360,34 +381,6 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         $this->assertArrayHasKey('DB_ONLY', $results, 'DB_ONLY results should exist');
         $this->assertArrayHasKey('CASBIN_ONLY', $results, 'CASBIN_ONLY results should exist');
         $this->assertArrayHasKey('DUAL_MODE', $results, 'DUAL_MODE results should exist');
-    }
-
-    /**
-     * 生成性能报告
-     * Generate performance report
-     */
-    protected function generatePerformanceReport(): void
-    {
-        if (empty($this->performanceReport)) {
-            return;
-        }
-        
-        $report = "# Casbin Performance Benchmark Report\n\n";
-        $report .= "**Date**: " . date('Y-m-d H:i:s') . "\n\n";
-        
-        foreach ($this->performanceReport as $testName => $data) {
-            $report .= "## " . ucfirst(str_replace('_', ' ', $testName)) . "\n\n";
-            $report .= "```\n";
-            $report .= json_encode($data, JSON_PRETTY_PRINT);
-            $report .= "\n```\n\n";
-        }
-        
-        // 保存报告
-        // Save report
-        file_put_contents(
-            __DIR__ . '/../../../docs/report/casbin-performance-report-' . date('Y-m-d') . '.md',
-            $report
-        );
     }
 }
 
