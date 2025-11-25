@@ -58,15 +58,13 @@ class FormSchemaManager
             $this->validateSchema($data['schema']);
         }
 
-        // If linked to collection, verify it exists | 如果关联到Collection，验证它存在
-        if (isset($data['collection_name']) && $this->collectionManager) {
-            $collection = $this->collectionManager->get($data['collection_name']);
-            if (!$collection) {
-                throw new \InvalidArgumentException(
-                    "Collection not found: {$data['collection_name']}"
-                );
-            }
-        }
+        // NOTE:
+        //  - Form metadata is allowed to reference a collection_name that does not yet exist.
+        //  - The actual runtime data access path (FormDataManager) will resolve the collection
+        //    with tenant context and throw a clear error if it is still missing when data APIs
+        //    are invoked.
+        //  - Therefore we intentionally do not enforce a strict existence check here to keep
+        //    creation flexible and to avoid unnecessary hard coupling to CollectionManager.
 
         // Save to database | 保存到数据库
         $formId = $this->repository->save($data);

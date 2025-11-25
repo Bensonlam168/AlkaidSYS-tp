@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Lowcode;
 
+use Infrastructure\Lowcode\Collection\Service\CollectionManager;
 use Tests\ThinkPHPTestCase;
 use Tests\Helpers\AuthHelper;
 use think\facade\Db;
@@ -16,18 +17,11 @@ use think\facade\Db;
  *
  * @package Tests\Feature\Lowcode
  */
-class FormApiTest extends ThinkPHPTestCase
-{
-    protected function setUp(): void
+    class FormApiTest extends ThinkPHPTestCase
     {
-        // Force debug ON to see errors
-        putenv('APP_DEBUG=1');
-        parent::setUp();
-
-        if ($this->app()) {
-            $this->app()->debug(true);
-            $this->app()->config->set(['type' => 'html'], 'trace');
-        }
+        protected function setUp(): void
+        {
+            parent::setUp();
 
         // Clean up before tests
         Db::execute('TRUNCATE TABLE lowcode_forms');
@@ -49,7 +43,15 @@ class FormApiTest extends ThinkPHPTestCase
         }
 
         // Bind SchemaBuilderInterface
-        $this->app()->bind(\Domain\Schema\Interfaces\SchemaBuilderInterface::class, \Infrastructure\Schema\SchemaBuilder::class);
+        $this->app()->bind(
+            \Domain\Schema\Interfaces\SchemaBuilderInterface::class,
+            \Infrastructure\Schema\SchemaBuilder::class
+        );
+
+        // Ensure Form API tests always use the real CollectionManager implementation
+        // 确保表单 API 测试始终使用真实的 CollectionManager 实现
+        $this->app()->delete(CollectionManager::class);
+        $this->app()->bind(CollectionManager::class, CollectionManager::class);
     }
 
     protected function tearDown(): void
