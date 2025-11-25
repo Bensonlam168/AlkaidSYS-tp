@@ -18,6 +18,8 @@
 - ✅ **实时策略加载**：从现有数据库表动态加载权限策略
 - ✅ **自动策略刷新**：可配置的策略刷新机制
 - ✅ **高性能**：Casbin 内部优化，权限检查性能优异
+- ✅ **详细日志记录**：完整的错误日志和性能指标记录
+- ✅ **性能基准测试**：自动化性能测试和报告生成
 
 ### 快速开始
 
@@ -276,6 +278,46 @@ CASBIN_MODE=DB_ONLY
 - ✅ 无需代码修改
 - ✅ 立即生效
 - ✅ 完全向后兼容
+
+#### 7. 如何查看日志和性能指标？
+
+**启用日志**：
+```env
+CASBIN_LOG_ENABLED=true
+```
+
+**日志内容**：
+- 权限检查请求和结果（INFO/WARNING）
+- 错误信息和堆栈跟踪（ERROR）
+- 执行时间（ms）
+- trace_id 用于请求追踪
+
+**查看日志**：
+```bash
+# 查看应用日志
+tail -f runtime/log/app.log
+
+# 查看错误日志
+tail -f runtime/log/error.log
+
+# 搜索特定 trace_id
+grep "trace_id_xxx" runtime/log/*.log
+```
+
+**性能测试**：
+```bash
+# 运行性能基准测试
+docker exec alkaid-backend vendor/bin/phpunit tests/Performance/Permission/CasbinPerformanceTest.php
+
+# 查看性能报告
+cat docs/report/casbin-performance-report-*.md
+```
+
+**性能指标**：
+- 单次权限检查：< 10ms
+- 批量权限检查（1000次）：< 10s
+- 策略加载：< 100ms
+- CASBIN_ONLY 性能优于 DB_ONLY
 
 ### 相关文档
 
