@@ -31,8 +31,10 @@
     - 缓存升级：CollectionManager 从全局 key `lowcode:collection:{name}` 升级为租户维度 key `lowcode:collection:{tenantId}:{name}`
     - 测试覆盖：新增 Repository/Manager 层多租户单元测试，并通过与 T-001 P0 相关 Feature/Unit Test 的兼容性回归
   - deps: T-001
-- [T-003] (P2, 状态: NOT_STARTED) 动态业务数据表多租户隔离（由 Collection 驱动的业务表 schema 与访问路径必须包含 tenant_id/site_id 并做隔离校验）
-  - 代码证据：FormDataManager 已按 tenant/site 选取 schema，但 Collection 元数据与二级表结构尚未多租户化
+- [T-003] (P2, 状态: PARTIAL) 动态业务数据表多租户隔离（由 Collection 驱动的业务表 schema 与访问路径必须包含 tenant_id/site_id 并做隔离校验）
+  - 已完成 Phase A：动态表/访问路径现状审计与模型梳理（docs/report/t003-dynamic-table-tenant-audit.md）
+  - 已完成 Phase B：动态表 schema 多租户化（CollectionManager::buildColumns/buildIndexes 新增 tenant_id/site_id + idx_tenant_id_id；迁移 20251125001000_add_tenant_and_site_to_dynamic_lowcode_tables.php 已执行）
+  - 代码证据：FormDataManager 已按 tenant/site 选取 schema，但运行时访问路径仍缺少 tenant_id/site_id 过滤（计划在 Phase C 中改造）
   - deps: T-002
 - [T-004] (P1, 状态: NOT_STARTED) 前端多租户上下文管理与请求头集成（统一 Tenant Store，自动注入 X-Tenant-ID/X-Site-ID 请求头）
   - 代码证据：frontend/** 中未发现 X-Tenant-ID 或 useTenantStore 等实现，当前仅后端测试手动设置该头部

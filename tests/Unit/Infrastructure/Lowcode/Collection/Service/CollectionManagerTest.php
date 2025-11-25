@@ -143,4 +143,30 @@ class CollectionManagerTest extends ThinkPHPTestCase
 
         $this->assertSame('lowcode:collection:42:example', $key);
     }
+
+    public function testBuildColumnsAndIndexesIncludeTenantAndSite(): void
+    {
+        $schemaBuilder = $this->createMock(SchemaBuilderInterface::class);
+        $repo = $this->createMock(CollectionRepository::class);
+        $fieldRepo = $this->createMock(FieldRepository::class);
+        $relRepo = $this->createMock(RelationshipRepository::class);
+
+        $manager = new CollectionManager($schemaBuilder, $repo, $fieldRepo, $relRepo);
+
+        $refBuildColumns = new \ReflectionMethod(CollectionManager::class, 'buildColumns');
+        $refBuildColumns->setAccessible(true);
+        $columns = $refBuildColumns->invoke($manager, []);
+
+        $this->assertArrayHasKey('tenant_id', $columns);
+        $this->assertArrayHasKey('site_id', $columns);
+        $this->assertSame(0, $columns['tenant_id']['default']);
+        $this->assertSame(0, $columns['site_id']['default']);
+
+        $refBuildIndexes = new \ReflectionMethod(CollectionManager::class, 'buildIndexes');
+        $refBuildIndexes->setAccessible(true);
+        $indexes = $refBuildIndexes->invoke($manager);
+
+        $this->assertArrayHasKey('idx_tenant_id_id', $indexes);
+        $this->assertSame(['tenant_id', 'id'], $indexes['idx_tenant_id_id']['columns']);
+    }
 }

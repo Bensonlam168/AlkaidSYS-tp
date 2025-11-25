@@ -68,7 +68,8 @@ class CollectionManager
         try {
             // 1. Create physical table | 创建物理表
             $columns = $this->buildColumns($collection->getFields());
-            $this->schemaBuilder->createTable($collection->getTableName(), $columns);
+            $indexes = $this->buildIndexes();
+            $this->schemaBuilder->createTable($collection->getTableName(), $columns, $indexes);
 
             // 2. Save collection metadata | 保存Collection元数据
             $collectionId = $this->collectionRepo->save($collection);
@@ -274,6 +275,20 @@ class CollectionManager
                 'auto_increment' => true,
                 'unsigned' => true,
             ],
+            // Tenant scope | 租户维度（0 = 系统模板空间）
+            'tenant_id' => [
+                'type' => 'INT',
+                'length' => 11,
+                'nullable' => false,
+                'default' => 0,
+            ],
+            // Site scope | 站点维度（0 = 默认站点）
+            'site_id' => [
+                'type' => 'INT',
+                'length' => 11,
+                'nullable' => false,
+                'default' => 0,
+            ],
         ];
 
         foreach ($fields as $field) {
@@ -292,6 +307,22 @@ class CollectionManager
         ];
 
         return $columns;
+    }
+
+    /**
+     * Build default indexes for dynamic table | 为动态表构建默认索引
+     *
+     * @return array<string, array>
+     */
+    protected function buildIndexes(): array
+    {
+        return [
+            // Main lookup index: tenant-scoped primary key access | 主查询索引：按租户范围的主键访问
+            'idx_tenant_id_id' => [
+                'columns' => ['tenant_id', 'id'],
+                'unique' => false,
+            ],
+        ];
     }
 
     /**
