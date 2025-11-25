@@ -36,7 +36,8 @@
         "symfony/validator": "^7.3",
         "symfony/serializer": "^7.3",
         "monolog/monolog": "^3.9",
-        "topthink/think-migration": "^3.1"
+        "topthink/think-migration": "^3.1",
+        "casbin/casbin": "^3.0"
     },
     "require-dev": {
         "topthink/think-dumper": "^1.0",
