@@ -43,12 +43,15 @@ class Auth
         $token = $this->getTokenFromRequest($request);
 
         if (!$token) {
-            return json([
-                'code'      => 2001,
-                'message'   => 'Unauthorized: Token is missing, invalid, or expired',
-                'data'      => null,
-                'timestamp' => time(),
-            ], 401);
+            // Get trace_id for observability | 获取 trace_id 用于可观测性
+            $traceId = $this->getTraceId($request);
+
+            return ResponseHelper::jsonError(
+                2001,
+                'Unauthorized: Token is missing, invalid, or expired',
+                401,
+                $traceId
+            );
         }
 
         try {
@@ -68,12 +71,15 @@ class Auth
 
             return $next($request);
         } catch (\Exception $e) {
-            return json([
-                'code'      => 2001,
-                'message'   => 'Unauthorized: Token is missing, invalid, or expired',
-                'data'      => null,
-                'timestamp' => time(),
-            ], 401);
+            // Get trace_id for observability | 获取 trace_id 用于可观测性
+            $traceId = $this->getTraceId($request);
+
+            return ResponseHelper::jsonError(
+                2001,
+                'Unauthorized: Token is missing, invalid, or expired',
+                401,
+                $traceId
+            );
         }
     }
 
@@ -94,6 +100,33 @@ class Auth
         // Extract Bearer token | 提取Bearer token
         if (strpos($authorization, 'Bearer ') === 0) {
             return substr($authorization, 7);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get trace ID from request | 从请求中获取 trace ID
+     *
+     * @param Request $request Request instance | 请求实例
+     * @return string|null Trace ID or null | Trace ID 或 null
+     */
+    protected function getTraceId(Request $request): ?string
+    {
+        // Priority 1: Get from Request object (injected by Trace middleware)
+        // 优先级 1：从 Request 对象获取（由 Trace 中间件注入）
+        if (method_exists($request, 'getTraceId')) {
+            $traceId = $request->getTraceId();
+            if (is_string($traceId) && $traceId !== '') {
+                return $traceId;
+            }
+        }
+
+        // Priority 2: Fallback to request header
+        // 优先级 2：降级到请求头
+        $traceId = $request->header('X-Trace-Id');
+        if (is_string($traceId) && $traceId !== '') {
+            return $traceId;
         }
 
         return null;

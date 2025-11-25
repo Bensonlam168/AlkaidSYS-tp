@@ -48,12 +48,15 @@ class Permission
         }
 
         if (!$userId) {
-            return json([
-                'code'      => 2001,
-                'message'   => 'Unauthorized: Token is missing, invalid, or expired',
-                'data'      => null,
-                'timestamp' => time(),
-            ], 401);
+            // Get trace_id for observability | 获取 trace_id 用于可观测性
+            $traceId = $this->getTraceId($request);
+
+            return ResponseHelper::jsonError(
+                2001,
+                'Unauthorized: Token is missing, invalid, or expired',
+                401,
+                $traceId
+            );
         }
 
         // If no specific permission required, just check authentication | 如果不需要特定权限，仅检查认证
@@ -66,31 +69,28 @@ class Permission
             $hasPermission = $this->checkUserPermission($userId, $permission);
 
             if (!$hasPermission) {
-                return json([
-                    'code'      => 2002,
-                    'message'   => 'Forbidden: Insufficient permissions',
-                    'data'      => null,
-                    'timestamp' => time(),
-                ], 403);
+                // Get trace_id for observability | 获取 trace_id 用于可观测性
+                $traceId = $this->getTraceId($request);
+
+                return ResponseHelper::jsonError(
+                    2002,
+                    'Forbidden: Insufficient permissions',
+                    403,
+                    $traceId
+                );
             }
 
             return $next($request);
         } catch (\Exception $e) {
-            // Use unified error response structure and standard internal error code
-            $traceId = method_exists($request, 'traceId') ? $request->traceId() : null;
+            // Get trace_id for observability | 获取 trace_id 用于可观测性
+            $traceId = $this->getTraceId($request);
 
-            $response = [
-                'code'      => 5000,
-                'message'   => 'Permission check failed: ' . $e->getMessage(),
-                'data'      => null,
-                'timestamp' => time(),
-            ];
-
-            if ($traceId !== null) {
-                $response['trace_id'] = $traceId;
-            }
-
-            return json($response, 500);
+            return ResponseHelper::jsonError(
+                5000,
+                'Permission check failed: ' . $e->getMessage(),
+                500,
+                $traceId
+            );
         }
     }
 
@@ -126,5 +126,32 @@ class Permission
             ->count();
 
         return $count > 0;
+    }
+
+    /**
+     * Get trace ID from request | 从请求中获取 trace ID
+     *
+     * @param Request $request Request instance | 请求实例
+     * @return string|null Trace ID or null | Trace ID 或 null
+     */
+    protected function getTraceId(Request $request): ?string
+    {
+        // Priority 1: Get from Request object (injected by Trace middleware)
+        // 优先级 1：从 Request 对象获取（由 Trace 中间件注入）
+        if (method_exists($request, 'getTraceId')) {
+            $traceId = $request->getTraceId();
+            if (is_string($traceId) && $traceId !== '') {
+                return $traceId;
+            }
+        }
+
+        // Priority 2: Fallback to request header
+        // 优先级 2：降级到请求头
+        $traceId = $request->header('X-Trace-Id');
+        if (is_string($traceId) && $traceId !== '') {
+            return $traceId;
+        }
+
+        return null;
     }
 }

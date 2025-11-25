@@ -25,7 +25,7 @@ class ApiController extends BaseController
 {
     /**
      * Return successful response | 返回成功响应
-     * 
+     *
      * @param mixed $data Response data | 响应数据
      * @param string $message Success message | 成功消息
      * @param int $code Business status code (0 for success) | 业务状态码（0表示成功）
@@ -40,6 +40,12 @@ class ApiController extends BaseController
             'data' => $data,
             'timestamp' => time(),
         ];
+
+        // Add trace_id for observability | 添加 trace_id 用于可观测性
+        $traceId = $this->getTraceId();
+        if ($traceId !== null) {
+            $response['trace_id'] = $traceId;
+        }
 
         return json($response, $httpCode);
     }
@@ -90,6 +96,12 @@ class ApiController extends BaseController
 
         if (!empty($errors)) {
             $response['data'] = ['errors' => $errors];
+        }
+
+        // Add trace_id for observability | 添加 trace_id 用于可观测性
+        $traceId = $this->getTraceId();
+        if ($traceId !== null) {
+            $response['trace_id'] = $traceId;
         }
 
         return json($response, $httpCode);
@@ -188,5 +200,36 @@ class ApiController extends BaseController
             'valid' => empty($errors),
             'errors' => $errors,
         ];
+    }
+
+    /**
+     * Get trace ID from request | 从请求中获取 trace ID
+     *
+     * Retrieves the trace ID that was injected by the Trace middleware.
+     * 获取由 Trace 中间件注入的 trace ID。
+     *
+     * @return string|null Trace ID or null if not available | Trace ID 或 null（如果不可用）
+     */
+    protected function getTraceId(): ?string
+    {
+        $request = $this->request;
+
+        // Priority 1: Get from Request object (injected by Trace middleware)
+        // 优先级 1：从 Request 对象获取（由 Trace 中间件注入）
+        if (method_exists($request, 'getTraceId')) {
+            $traceId = $request->getTraceId();
+            if (is_string($traceId) && $traceId !== '') {
+                return $traceId;
+            }
+        }
+
+        // Priority 2: Fallback to request header
+        // 优先级 2：降级到请求头
+        $traceId = $request->header('X-Trace-Id');
+        if (is_string($traceId) && $traceId !== '') {
+            return $traceId;
+        }
+
+        return null;
     }
 }
