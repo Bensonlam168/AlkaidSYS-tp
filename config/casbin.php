@@ -90,6 +90,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | 缓存降级配置
+    | Cache Degradation Configuration
+    |--------------------------------------------------------------------------
+    |
+    | 当 Redis 缓存故障时，自动降级到直接调用 Casbin 引擎。
+    | 降级机制确保系统在缓存故障时仍能正常工作。
+    |
+    | When Redis cache fails, automatically degrade to direct Casbin engine call.
+    | Degradation mechanism ensures system works normally when cache fails.
+    |
+    */
+    // 是否启用缓存降级 | Enable cache degradation
+    'cache_degradation_enabled' => env('CASBIN_CACHE_DEGRADATION_ENABLED', true),
+
+    // 是否记录降级日志 | Enable degradation logging
+    'cache_degradation_log_enabled' => env('CASBIN_CACHE_DEGRADATION_LOG_ENABLED', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | 策略刷新配置
     | Policy Reload Configuration
     |--------------------------------------------------------------------------
