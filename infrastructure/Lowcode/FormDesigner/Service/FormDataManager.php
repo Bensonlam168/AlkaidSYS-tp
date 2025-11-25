@@ -42,10 +42,12 @@ class FormDataManager
      * Save form data | 保存表单数据
      *
      * @param string $formName Form name | 表单名称
-     * @param array $data Form data | 表单数据
-     * @param int $tenantId Tenant ID | 租户ID
-     * @param int $siteId Site ID | 站点ID
+     * @param array  $data     Form data | 表单数据
+     * @param int    $tenantId Tenant ID | 租户ID
+     * @param int    $siteId   Site ID | 站点ID
+     *
      * @return int|string Saved ID | 保存的ID
+     *
      * @throws \Exception
      */
     public function save(string $formName, array $data, int $tenantId, int $siteId = 0)
@@ -67,7 +69,9 @@ class FormDataManager
             throw new \RuntimeException('Form is not bound to a collection');
         }
 
-        $collection = $this->collectionManager->get($form['collection_name']);
+        // NOTE(P0: lowcode-collections-tenant): pass tenantId to collection manager for future
+        // per-tenant collection resolution. Under current P0 phase, collections are still global.
+        $collection = $this->collectionManager->get($form['collection_name'], $tenantId);
         if (!$collection) {
             throw new \RuntimeException("Collection not found: {$form['collection_name']}");
         }
@@ -86,15 +90,25 @@ class FormDataManager
             }
         }
 
+        // 强制注入多租户字段，防止客户端伪造或越权访问
+        $saveData['tenant_id'] = $tenantId;
+        $saveData['site_id'] = $siteId;
+
         if (isset($data['id']) && !empty($data['id'])) {
             // Update | 更新
             $saveData['updated_at'] = date('Y-m-d H:i:s');
-            Db::table($tableName)->where('id', $data['id'])->update($saveData);
+            Db::table($tableName)
+                ->where('id', $data['id'])
+                ->where('tenant_id', $tenantId)
+                ->where('site_id', $siteId)
+                ->update($saveData);
+
             return $data['id'];
         } else {
             // Insert | 插入
             $saveData['created_at'] = date('Y-m-d H:i:s');
             $saveData['updated_at'] = date('Y-m-d H:i:s');
+
             return Db::table($tableName)->insertGetId($saveData);
         }
     }
@@ -111,7 +125,10 @@ class FormDataManager
     public function get(string $formName, int $id, int $tenantId, int $siteId = 0): ?array
     {
         $tableName = $this->getTableName($formName, $tenantId, $siteId);
-        return Db::table($tableName)->find($id);
+        return Db::table($tableName)
+            ->where('tenant_id', $tenantId)
+            ->where('site_id', $siteId)
+            ->find($id);
     }
 
     /**
@@ -126,25 +143,33 @@ class FormDataManager
     public function delete(string $formName, int $id, int $tenantId, int $siteId = 0): bool
     {
         $tableName = $this->getTableName($formName, $tenantId, $siteId);
-        return (bool) Db::table($tableName)->delete($id);
+        $deleted = Db::table($tableName)
+            ->where('id', $id)
+            ->where('tenant_id', $tenantId)
+            ->where('site_id', $siteId)
+            ->delete();
+
+        return (bool) $deleted;
     }
 
     /**
      * List form data | 列出表单数据
      *
      * @param string $formName Form name | 表单名称
-     * @param array $filters Filters | 筛选条件
-     * @param int $page Page number | 页码
-     * @param int $pageSize Page size | 每页数量
-     * @param int $tenantId Tenant ID | 租户ID
-     * @param int $siteId Site ID | 站点ID
+     * @param array $filters  Filters | 筛选条件
+     * @param int   $page     Page number | 页码
+     * @param int   $pageSize Page size | 每页数量
+     * @param int   $tenantId Tenant ID | 租户ID
+     * @param int   $siteId   Site ID | 站点ID
      * @return array{list: array, total: int, page: int, pageSize: int}
      */
-    public function list(string $formName, array $filters = [], int $page = 1, int $pageSize = 20, int $tenantId = 1, int $siteId = 0): array
+    public function list(string $formName, array $filters = [], int $page = 1, int $pageSize = 20, int $tenantId, int $siteId = 0): array
     {
         $tableName = $this->getTableName($formName, $tenantId, $siteId);
 
-        $query = Db::table($tableName);
+        $query = Db::table($tableName)
+            ->where('tenant_id', $tenantId)
+            ->where('site_id', $siteId);
 
         // Apply filters | 应用筛选
         foreach ($filters as $key => $value) {
@@ -184,7 +209,8 @@ class FormDataManager
             throw new \RuntimeException('Form is not bound to a collection');
         }
 
-        $collection = $this->collectionManager->get($form['collection_name']);
+        // NOTE(P0: lowcode-collections-tenant): pass tenantId to collection manager here as well.
+        $collection = $this->collectionManager->get($form['collection_name'], $tenantId);
         if (!$collection) {
             throw new \RuntimeException("Collection not found: {$form['collection_name']}");
         }

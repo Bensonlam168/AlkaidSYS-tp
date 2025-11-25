@@ -65,11 +65,14 @@ class FormDataManagerTest extends ThinkPHPTestCase
         Db::execute("
             CREATE TABLE `{$this->testTableName}` (
                 `id` int(10) unsigned NOT NULL AUTO_INCREMENT,
+                `tenant_id` bigint(20) unsigned NOT NULL DEFAULT 0,
+                `site_id` bigint(20) unsigned NOT NULL DEFAULT 0,
                 `name` varchar(255) NOT NULL,
                 `price` int(10) NOT NULL,
                 `created_at` datetime DEFAULT NULL,
                 `updated_at` datetime DEFAULT NULL,
-                PRIMARY KEY (`id`)
+                PRIMARY KEY (`id`),
+                KEY `idx_tenant_site` (`tenant_id`, `site_id`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ");
     }
@@ -104,6 +107,8 @@ class FormDataManagerTest extends ThinkPHPTestCase
     {
         // Insert initial data | 插入初始数据
         $id = Db::table($this->testTableName)->insertGetId([
+            'tenant_id' => 1,
+            'site_id' => 0,
             'name' => 'Old Name',
             'price' => 50,
             'created_at' => date('Y-m-d H:i:s'),
@@ -134,6 +139,8 @@ class FormDataManagerTest extends ThinkPHPTestCase
     {
         // Insert data | 插入数据
         $id = Db::table($this->testTableName)->insertGetId([
+            'tenant_id' => 1,
+            'site_id' => 0,
             'name' => 'Test Item',
             'price' => 99,
         ]);
@@ -156,6 +163,8 @@ class FormDataManagerTest extends ThinkPHPTestCase
     {
         // Insert data | 插入数据
         $id = Db::table($this->testTableName)->insertGetId([
+            'tenant_id' => 1,
+            'site_id' => 0,
             'name' => 'To Delete',
             'price' => 10,
         ]);
@@ -181,9 +190,9 @@ class FormDataManagerTest extends ThinkPHPTestCase
     {
         // Insert multiple rows | 插入多行
         Db::table($this->testTableName)->insertAll([
-            ['name' => 'Item 1', 'price' => 10],
-            ['name' => 'Item 2', 'price' => 20],
-            ['name' => 'Item 3', 'price' => 30],
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Item 1', 'price' => 10],
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Item 2', 'price' => 20],
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Item 3', 'price' => 30],
         ]);
 
         $formName = 'product_form';
@@ -200,6 +209,65 @@ class FormDataManagerTest extends ThinkPHPTestCase
         $resultFilter = $this->manager->list($formName, ['price' => 20], 1, 10, $tenantId);
         $this->assertEquals(1, $resultFilter['total']);
         $this->assertEquals('Item 2', $resultFilter['list'][0]['name']);
+    }
+
+    /**
+     * Test that list data is tenant scoped | 测试列表查询按租户隔离
+     */
+    public function testListDataIsTenantScoped(): void
+    {
+        // Insert data for two tenants | 为两个租户插入数据
+        Db::table($this->testTableName)->insertAll([
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Tenant1 Item', 'price' => 10],
+            ['tenant_id' => 2, 'site_id' => 0, 'name' => 'Tenant2 Item', 'price' => 20],
+        ]);
+
+        $formName = 'product_form';
+        $tenantId = 1;
+
+        $this->mockDependencies($formName, $tenantId);
+
+        $result = $this->manager->list($formName, [], 1, 10, $tenantId);
+
+        $this->assertEquals(1, $result['total']);
+        $this->assertCount(1, $result['list']);
+        $this->assertEquals(1, $result['list'][0]['tenant_id']);
+        $this->assertEquals('Tenant1 Item', $result['list'][0]['name']);
+    }
+
+    /**
+     * Test that get respects tenant isolation | 测试按ID获取时的租户隔离
+     */
+    public function testGetDataRespectsTenantIsolation(): void
+    {
+        // Insert data for two tenants | 为两个租户插入数据
+        $idTenant1 = Db::table($this->testTableName)->insertGetId([
+            'tenant_id' => 1,
+            'site_id' => 0,
+            'name' => 'Tenant1 Item',
+            'price' => 10,
+        ]);
+
+        $idTenant2 = Db::table($this->testTableName)->insertGetId([
+            'tenant_id' => 2,
+            'site_id' => 0,
+            'name' => 'Tenant2 Item',
+            'price' => 20,
+        ]);
+
+        $formName = 'product_form';
+        $tenantId = 1;
+
+        $this->mockDependencies($formName, $tenantId);
+
+        // Should get own-tenant record | 应能获取本租户记录
+        $resultOwn = $this->manager->get($formName, (int) $idTenant1, $tenantId);
+        $this->assertNotNull($resultOwn);
+        $this->assertEquals(1, $resultOwn['tenant_id']);
+
+        // Should not see other-tenant record | 不应看到其他租户记录
+        $resultOther = $this->manager->get($formName, (int) $idTenant2, $tenantId);
+        $this->assertNull($resultOther);
     }
 
     /**
@@ -255,7 +323,7 @@ class FormDataManagerTest extends ThinkPHPTestCase
         $collection->shouldReceive('getFields')->andReturn([$field1, $field2]);
 
         $this->collectionManager->shouldReceive('get')
-            ->with('test_collection')
+            ->with('test_collection', $tenantId)
             ->andReturn($collection);
     }
 }

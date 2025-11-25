@@ -27,9 +27,29 @@ class CollectionControllerTest extends ThinkPHPTestCase
 
     protected function tearDown(): void
     {
-        // 删除可能已缓存的 CollectionManager 实例并恢复真实实现，避免 Mock 泄露到其他测试
-        $this->app()->delete(CollectionManager::class);
-        $this->app()->bind(CollectionManager::class, CollectionManager::class);
+        // 删除可能已缓存的 CollectionManager 实例并清理 bind 映射，避免 Mock 泄露到其他测试
+        $app = $this->app();
+
+        // 1. 删除已解析实例
+        $app->delete(CollectionManager::class);
+
+        // 2. 通过反射清理 bind 中针对 CollectionManager 的闭包绑定
+        //    否则后续测试从容器解析时仍会得到 Mockery Mock
+        try {
+            $refApp = new \ReflectionObject($app);
+            if ($refApp->hasProperty('bind')) {
+                $bindProp = $refApp->getProperty('bind');
+                $bindProp->setAccessible(true);
+                $bind = $bindProp->getValue($app);
+
+                if (is_array($bind) && array_key_exists(CollectionManager::class, $bind)) {
+                    unset($bind[CollectionManager::class]);
+                    $bindProp->setValue($app, $bind);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Ignore reflection errors in tests
+        }
 
         Mockery::close();
         parent::tearDown();

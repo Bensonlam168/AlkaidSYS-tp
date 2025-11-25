@@ -17,11 +17,11 @@ use think\facade\Db;
  *
  * @package Tests\Feature\Lowcode
  */
-    class FormApiTest extends ThinkPHPTestCase
+class FormApiTest extends ThinkPHPTestCase
+{
+    protected function setUp(): void
     {
-        protected function setUp(): void
-        {
-            parent::setUp();
+        parent::setUp();
 
         // Clean up before tests
         Db::execute('TRUNCATE TABLE lowcode_forms');
@@ -50,8 +50,29 @@ use think\facade\Db;
 
         // Ensure Form API tests always use the real CollectionManager implementation
         // 确保表单 API 测试始终使用真实的 CollectionManager 实现
-        $this->app()->delete(CollectionManager::class);
-        $this->app()->bind(CollectionManager::class, CollectionManager::class);
+
+        $app = $this->app();
+
+        // 1. 删除已解析的 CollectionManager 实例，防止复用旧 Mock
+        $app->delete(CollectionManager::class);
+
+        // 2. 通过反射清理 bind 中针对 CollectionManager 的闭包绑定
+        //    避免后续从容器解析时仍然返回 Mockery Mock
+        try {
+            $refApp = new \ReflectionObject($app);
+            if ($refApp->hasProperty('bind')) {
+                $bindProp = $refApp->getProperty('bind');
+                $bindProp->setAccessible(true);
+                $bind = $bindProp->getValue($app);
+
+                if (is_array($bind) && array_key_exists(CollectionManager::class, $bind)) {
+                    unset($bind[CollectionManager::class]);
+                    $bindProp->setValue($app, $bind);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Ignore reflection errors in tests
+        }
     }
 
     protected function tearDown(): void
