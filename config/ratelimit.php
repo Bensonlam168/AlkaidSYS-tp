@@ -44,23 +44,49 @@ return [
     ],
 
     // ------------------------------------------------------------------
-    // 2. 限流维度(scopes)配置
+    // 2. 算法选择与 Token Bucket 配置
+    // ------------------------------------------------------------------
+
+    // 限流算法选择：
+    // - 'fixed_window': 固定时间窗口算法（简单，但有边界效应）
+    // - 'token_bucket': 令牌桶算法（平滑流量，支持突发）
+    'algorithm' => env('RATELIMIT_ALGORITHM', 'token_bucket'),
+
+    // Token Bucket 算法专属配置：
+    // - capacity: 桶容量（最大令牌数）
+    // - rate: 令牌补充速率（令牌/秒）
+    // - cost_per_request: 每个请求消耗的令牌数
+    'token_bucket' => [
+        'capacity'         => (int) env('RATELIMIT_TB_CAPACITY', 100),
+        'rate'             => (float) env('RATELIMIT_TB_RATE', 10.0),
+        'cost_per_request' => 1,
+    ],
+
+    // ------------------------------------------------------------------
+    // 3. 限流维度(scopes)配置
     // ------------------------------------------------------------------
 
     // 每个 scope 描述一种限流维度：按用户、租户、IP 或路由等；
     // - enabled: 是否启用该维度的限流；
-    // - limit: 在 period 秒内允许的最大请求数；
-    // - period: 统计窗口长度(秒)；
+    // - Fixed Window 参数：
+    //   - limit: 在 period 秒内允许的最大请求数；
+    //   - period: 统计窗口长度(秒)；
+    // - Token Bucket 参数：
+    //   - capacity: 桶容量（最大令牌数）；
+    //   - rate: 令牌补充速率（令牌/秒）；
     //
     // 中间件会根据当前请求上下文动态组合 Redis key：
-    //   rl:{env}:{scope}:{identifier}:{period}s
-    // 例如：rl:prod:user:123:60s, rl:stage:tenant:1001:60s, rl:dev:ip:203.0.113.1:60s
+    //   Fixed Window: rl:{env}:{scope}:{identifier}:{period}s
+    //   Token Bucket: rl:{env}:{scope}:{identifier}:token_bucket
     'scopes' => [
         // 按用户维度限流：适用于单用户频繁调用接口导致的风控场景
         'user' => [
             'enabled' => (bool) env('RATELIMIT_SCOPE_USER_ENABLED', true),
             'limit'   => (int) env('RATELIMIT_SCOPE_USER_LIMIT', 200),
             'period'  => (int) env('RATELIMIT_SCOPE_USER_PERIOD', 60),
+            // Token Bucket 参数（可选，未设置时使用全局 token_bucket 配置）
+            'capacity' => (int) env('RATELIMIT_SCOPE_USER_CAPACITY', 200),
+            'rate'     => (float) env('RATELIMIT_SCOPE_USER_RATE', 20.0),
         ],
 
         // 按租户维度限流：保护单个租户在高并发场景下不会压垮系统
@@ -68,6 +94,8 @@ return [
             'enabled' => (bool) env('RATELIMIT_SCOPE_TENANT_ENABLED', true),
             'limit'   => (int) env('RATELIMIT_SCOPE_TENANT_LIMIT', 1000),
             'period'  => (int) env('RATELIMIT_SCOPE_TENANT_PERIOD', 60),
+            'capacity' => (int) env('RATELIMIT_SCOPE_TENANT_CAPACITY', 1000),
+            'rate'     => (float) env('RATELIMIT_SCOPE_TENANT_RATE', 100.0),
         ],
 
         // 按 IP 维度限流：适合公共接口的基础防护，例如匿名访问或攻击流量
@@ -75,6 +103,8 @@ return [
             'enabled' => (bool) env('RATELIMIT_SCOPE_IP_ENABLED', true),
             'limit'   => (int) env('RATELIMIT_SCOPE_IP_LIMIT', 100),
             'period'  => (int) env('RATELIMIT_SCOPE_IP_PERIOD', 60),
+            'capacity' => (int) env('RATELIMIT_SCOPE_IP_CAPACITY', 100),
+            'rate'     => (float) env('RATELIMIT_SCOPE_IP_RATE', 10.0),
         ],
 
         // 按路由维度限流：针对部分高风险/高成本接口设置更严格的频率限制
@@ -83,6 +113,8 @@ return [
             'enabled' => (bool) env('RATELIMIT_SCOPE_ROUTE_ENABLED', true),
             'limit'   => (int) env('RATELIMIT_SCOPE_ROUTE_LIMIT', 50),
             'period'  => (int) env('RATELIMIT_SCOPE_ROUTE_PERIOD', 60),
+            'capacity' => (int) env('RATELIMIT_SCOPE_ROUTE_CAPACITY', 50),
+            'rate'     => (float) env('RATELIMIT_SCOPE_ROUTE_RATE', 5.0),
         ],
     ],
 

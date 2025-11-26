@@ -46,6 +46,7 @@ class RateLimit
         }
 
         $env       = (string) env('APP_ENV', 'dev');
+        $algorithm = (string) ($config['algorithm'] ?? 'token_bucket'); // token_bucket | fixed_window
         $store     = $config['store'] ?? null;
         $cache     = $store ? Cache::store($store) : Cache::store();
         $global    = (array) ($config['default'] ?? []);
@@ -56,6 +57,12 @@ class RateLimit
         $limitHit = false;
         $hitMeta  = [];
 
+        // 选择算法：Token Bucket 或 Fixed Window
+        if ($algorithm === 'token_bucket') {
+            return $this->handleTokenBucket($request, $next, $env, $store, $global, $scopesCfg, $routeRule);
+        }
+
+        // Fallback: Fixed Window 算法（原有实现）
         foreach (['user', 'tenant', 'ip', 'route'] as $scope) {
             $rule = $this->resolveScopeRule($scope, $global, $scopesCfg, $routeRule);
             if ($rule === null) {
@@ -97,6 +104,7 @@ class RateLimit
                     'period'     => $period,
                     'current'    => $current,
                     'identifier' => (string) $identifier,
+                    'algorithm'  => 'fixed_window',
                 ];
                 break;
             }
@@ -114,6 +122,93 @@ class RateLimit
         }
         return $next($request);
     }
+
+    /**
+     * Handle Token Bucket 算法限流 | Handle Token Bucket rate limiting
+     *
+     * @param Request $request Request instance
+     * @param Closure $next Next middleware
+     * @param string $env Environment
+     * @param string|null $store Cache store
+     * @param array $global Global config
+     * @param array $scopesCfg Scopes config
+     * @param array $routeRule Route-specific rule
+     * @return mixed Response or next middleware result
+     */
+    protected function handleTokenBucket(
+        Request $request,
+        Closure $next,
+        string $env,
+        ?string $store,
+        array $global,
+        array $scopesCfg,
+        array $routeRule
+    ) {
+        try {
+            $service = new \Infrastructure\RateLimit\Service\RateLimitService($store);
+            $config  = (array) config('ratelimit');
+            $tbCfg   = (array) ($config['token_bucket'] ?? []);
+
+            $limitHit = false;
+            $hitMeta  = [];
+
+            foreach (['user', 'tenant', 'ip', 'route'] as $scope) {
+                $rule = $this->resolveScopeRule($scope, $global, $scopesCfg, $routeRule);
+                if ($rule === null) {
+                    continue;
+                }
+                if (isset($rule['enabled']) && !$rule['enabled']) {
+                    continue;
+                }
+
+                $identifier = $this->resolveIdentifier($scope, $request);
+                if ($identifier === null || $identifier === '') {
+                    continue;
+                }
+
+                // Token Bucket 参数：capacity 和 rate
+                $capacity = (int) ($rule['capacity'] ?? $tbCfg['capacity'] ?? 100);
+                $rate     = (float) ($rule['rate'] ?? $tbCfg['rate'] ?? 10.0);
+                $cost     = (int) ($tbCfg['cost_per_request'] ?? 1);
+
+                if ($capacity <= 0 || $rate <= 0) {
+                    continue;
+                }
+
+                $key = \Infrastructure\RateLimit\Service\RateLimitService::buildKey($env, $scope, (string) $identifier);
+
+                if (!$service->allowRequest($key, $capacity, $rate, $cost)) {
+                    $info = $service->getRateLimitInfo($key);
+                    $limitHit = true;
+                    $hitMeta  = [
+                        'scope'      => $scope,
+                        'key'        => $key,
+                        'capacity'   => $capacity,
+                        'rate'       => $rate,
+                        'tokens'     => $info['tokens'],
+                        'identifier' => (string) $identifier,
+                        'algorithm'  => 'token_bucket',
+                    ];
+                    break;
+                }
+            }
+
+            if ($limitHit) {
+                if (method_exists($request, 'setRateLimited')) {
+                    $request->setRateLimited(true, $hitMeta);
+                }
+                return $this->buildRateLimitedResponse($hitMeta);
+            }
+
+            if (method_exists($request, 'setRateLimited')) {
+                $request->setRateLimited(false, []);
+            }
+            return $next($request);
+        } catch (\Throwable $e) {
+            return $this->passThroughOnError($request, $next, $e);
+        }
+    }
+
 
     /**
      * 是否命中白名单。
@@ -248,29 +343,59 @@ class RateLimit
      */
     protected function buildRateLimitedResponse(array $meta)
     {
-        $ttl = (int) ($meta['period'] ?? 0);
-        if ($ttl <= 0) {
-            $ttl = 1;
+        $algorithm = (string) ($meta['algorithm'] ?? 'fixed_window');
+
+        if ($algorithm === 'token_bucket') {
+            // Token Bucket 响应
+            $body = [
+                'code'    => 429,
+                'message' => 'Too Many Requests',
+                'data'    => [
+                    'scope'      => $meta['scope'] ?? null,
+                    'capacity'   => $meta['capacity'] ?? null,
+                    'rate'       => $meta['rate'] ?? null,
+                    'tokens'     => $meta['tokens'] ?? null,
+                    'identifier' => $meta['identifier'] ?? null,
+                    'algorithm'  => 'token_bucket',
+                ],
+            ];
+
+            $response = json($body, 429);
+            $response->header([
+                'Retry-After'           => '1',
+                'X-Rate-Limited'        => '1',
+                'X-RateLimit-Scope'     => (string) ($meta['scope'] ?? ''),
+                'X-RateLimit-Limit'     => (string) ($meta['capacity'] ?? 0),
+                'X-RateLimit-Remaining' => (string) max(0, floor($meta['tokens'] ?? 0)),
+                'X-RateLimit-Reset'     => (string) (time() + 1),
+            ]);
+        } else {
+            // Fixed Window 响应
+            $ttl = (int) ($meta['period'] ?? 0);
+            if ($ttl <= 0) {
+                $ttl = 1;
+            }
+
+            $body = [
+                'code'    => 429,
+                'message' => 'Too Many Requests',
+                'data'    => [
+                    'scope'      => $meta['scope'] ?? null,
+                    'limit'      => $meta['limit'] ?? null,
+                    'period'     => $meta['period'] ?? null,
+                    'current'    => $meta['current'] ?? null,
+                    'identifier' => $meta['identifier'] ?? null,
+                    'algorithm'  => 'fixed_window',
+                ],
+            ];
+
+            $response = json($body, 429);
+            $response->header([
+                'Retry-After'       => (string) $ttl,
+                'X-Rate-Limited'    => '1',
+                'X-RateLimit-Scope' => (string) ($meta['scope'] ?? ''),
+            ]);
         }
-
-        $body = [
-            'code'    => 429,
-            'message' => 'Too Many Requests',
-            'data'    => [
-                'scope'      => $meta['scope'] ?? null,
-                'limit'      => $meta['limit'] ?? null,
-                'period'     => $meta['period'] ?? null,
-                'current'    => $meta['current'] ?? null,
-                'identifier' => $meta['identifier'] ?? null,
-            ],
-        ];
-
-        $response = json($body, 429);
-        $response->header([
-            'Retry-After'       => (string) $ttl,
-            'X-Rate-Limited'    => '1',
-            'X-RateLimit-Scope' => (string) ($meta['scope'] ?? ''),
-        ]);
 
         return $response;
     }
