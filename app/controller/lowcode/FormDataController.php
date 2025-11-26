@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use think\App;
 use think\Request;
 use Infrastructure\Lowcode\FormDesigner\Service\FormDataManager;
 use think\Response;
@@ -21,10 +22,11 @@ class FormDataController extends ApiController
 {
     protected FormDataManager $manager;
 
-    public function __construct(FormDataManager $manager)
-    {
-        $this->manager = $manager;
-    }
+        public function __construct(App $app, FormDataManager $manager)
+        {
+            parent::__construct($app);
+            $this->manager = $manager;
+        }
 
     /**
      * List form data | 获取表单数据列表
@@ -60,8 +62,9 @@ class FormDataController extends ApiController
         $siteId = $request->siteId();
 
         try {
-            // 参数顺序：表单名、筛选条件、分页参数、租户与站点信息
-            $result = $this->manager->list($name, $filters, $page, $pageSize, $tenantId, $siteId);
+            // 参数顺序：表单名、租户ID（必选）、筛选条件、分页参数、站点ID
+            // 调整为 PHP 8.2+ 兼容签名：必选参数在可选参数之前
+            $result = $this->manager->list($name, $tenantId, $filters, $page, $pageSize, $siteId);
             return $this->paginate($result['list'], $result['total'], $result['page'], $result['pageSize']);
         } catch (\Exception $e) {
             return $this->error($e->getMessage());

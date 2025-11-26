@@ -133,4 +133,3 @@ class CasbinController extends ApiController
         }
     }
 }
-

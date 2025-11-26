@@ -6,6 +6,7 @@ namespace app\controller;
 
 use app\BaseController;
 use Infrastructure\I18n\LanguageService;
+use think\App;
 use think\Response;
 
 /**
@@ -32,10 +33,10 @@ class ApiController extends BaseController
     /**
      * Constructor | 构造函数
      */
-    public function __construct()
+    public function __construct(App $app)
     {
-        parent::__construct();
-        $this->langService = app()->make(LanguageService::class);
+        parent::__construct($app);
+        $this->langService = $app->make(LanguageService::class);
     }
 
     /**

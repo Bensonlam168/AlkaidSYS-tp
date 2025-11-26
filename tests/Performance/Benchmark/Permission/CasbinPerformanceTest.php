@@ -59,7 +59,8 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         // 生成性能报告（使用新的报告生成器）
         // Generate performance report (using new reporter)
         $reportFile = $this->reporter->generate('casbin-performance-benchmark-' . date('Y-m-d') . '.md');
-        echo "\nPerformance report generated: {$reportFile}\n";
+        // 注意：不要在这里直接 echo，以免 PHPUnit 将测试标记为 risky（unexpected output）
+        // Note: Do not echo here to avoid PHPUnit marking tests as risky due to unexpected output.
 
         parent::tearDown();
     }
