@@ -190,9 +190,15 @@
 - **依赖**：无
 - **被依赖**：T-001, T-011, T-020, T-039, T-040, T-042, T-043
 
-⬜ **[T-036] (P1) 应用系统基础设施**
+✅ **[T-036] (P1) 应用系统基础设施** [已完成 2025-11-26]
 - **描述**：Application System 基类与生命周期
-- **代码证据**：代码中无 BaseApplication/ApplicationManager 实现，也无 addons/apps 应用目录
+- **完成情况**：
+  - 创建 ApplicationInterface 定义应用契约 ✅
+  - 创建 BaseApplication 抽象基类（生命周期方法 + 辅助方法） ✅
+  - 创建 ApplicationManager 管理器（发现/注册/安装/卸载/启用/禁用/升级） ✅
+  - 创建 ApplicationServiceProvider 集成 DI 容器 ✅
+  - 创建 addons/apps 目录和 _template 示例应用 ✅
+  - 编写单元测试（18 tests, 27 assertions） ✅
 - **依赖**：T-031
 
 ⬜ **[T-037] (P1) BaseModel 全局作用域性能与 CLI 行为优化**
@@ -353,7 +359,7 @@ flowchart TD
     T031[T-031 P1 DI 容器增强 ✅]
     T032[T-032 P1 测试 & 迁移体系 ✅]
     T033[T-033 P0 技术规范文档重写 ✅]
-    T036[T-036 P1 应用系统基础设施]
+    T036[T-036 P1 应用系统基础设施 ✅]
     T037[T-037 P1 BaseModel 作用域优化]
     T038[T-038 P1 技术栈与配置修正 ✅]
     T039[T-039 P2 文档与注释规范]
@@ -424,7 +430,7 @@ flowchart TD
   class T045,T046,T047,T053,T054,T055 p3;
 
   %% 已完成任务
-  class T031,T032,T033,T038 done;
+  class T031,T032,T033,T036,T038 done;
 
   %% 关键路径（示例：多租户 Collection → TokenBucket → Casbin）
   class T001,T002,T003,T020,T011 critical;

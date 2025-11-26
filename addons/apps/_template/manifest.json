@@ -1,0 +1,43 @@
+{
+  "key": "template",
+  "name": "Application Template",
+  "type": "app",
+  "category": "utility",
+  "version": "1.0.0",
+  "description": "Template for creating new applications in AlkaidSYS",
+  "author": "AlkaidSYS Team",
+  "author_url": "https://www.alkaidsys.com",
+  "author_email": "support@alkaidsys.com",
+  "icon": "icon.png",
+  "min_framework_version": "1.0.0",
+  "max_framework_version": "2.0.0",
+  "dependencies": {
+    "apps": [],
+    "plugins": []
+  },
+  "support_terminals": ["admin"],
+  "support_databases": ["mysql"],
+  "price": 0,
+  "license": "MIT",
+  "tags": ["template", "example"],
+  "install": {
+    "sql": "sql/install.sql",
+    "menu": "config/menu.php"
+  },
+  "uninstall": {
+    "sql": "sql/uninstall.sql",
+    "keep_data": false
+  },
+  "upgrade": {
+    "auto_backup": true,
+    "scripts": "sql/upgrade/"
+  },
+  "config": {
+    "enabled": true
+  },
+  "permissions": [
+    "template.view",
+    "template.manage"
+  ]
+}
+
