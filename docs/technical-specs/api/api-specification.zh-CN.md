@@ -102,12 +102,9 @@
 - **`paginate(array $list, int $total, int $page, int $pageSize, string $message = 'Success')`**
   - 用途：统一分页响应封装
   - **标准响应结构**：`{ list, total, page, page_size, total_pages }`
-  - **Phase 1（当前实现约定）**：
-    - 现有 `ApiController::paginate` 实际返回字段为 `{ list, total, page, pageSize }`，暂未包含 `total_pages`。
-    - 新代码在使用分页时应继续通过该 Helper，避免自行构造分页结构。
-  - **Phase 2（目标对齐）**：
-    - 分页响应必须与设计文档 `design/03-data-layer/10-api-design.md` 和本规范保持一致。
-    - 实现必须在 JSON 载荷中引入 `page_size`（snake_case）和 `total_pages` 字段，并逐步废弃 `pageSize`，以保证所有接口分页结构完全一致。
+  - **实现状态**：✅ 已完全对齐目标规范。
+    - `ApiController::paginate` 返回 `{ list, total, page, page_size, total_pages }`，字段名统一使用 snake_case。
+    - 所有新代码必须使用此 Helper，以确保所有 API 的分页响应结构一致。
 
 - **`error(string $message, int $code = 400, array $errors = [], int $httpCode = 400)`**
   - 用途：业务失败响应
