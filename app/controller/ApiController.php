@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace app\controller;
 
 use app\BaseController;
+use Infrastructure\I18n\LanguageService;
 use think\Response;
 
 /**
@@ -24,16 +25,33 @@ use think\Response;
 class ApiController extends BaseController
 {
     /**
+     * Language service | 语言服务
+     */
+    protected LanguageService $langService;
+
+    /**
+     * Constructor | 构造函数
+     */
+    public function __construct()
+    {
+        parent::__construct();
+        $this->langService = app()->make(LanguageService::class);
+    }
+
+    /**
      * Return successful response | 返回成功响应
      *
      * @param mixed $data Response data | 响应数据
-     * @param string $message Success message | 成功消息
+     * @param string|null $message Success message (null = use default) | 成功消息（null = 使用默认）
      * @param int $code Business status code (0 for success) | 业务状态码（0表示成功）
      * @param int $httpCode HTTP status code | HTTP状态码
      * @return Response
      */
-    protected function success($data = null, string $message = 'Success', int $code = 0, int $httpCode = 200): Response
+    protected function success($data = null, ?string $message = null, int $code = 0, int $httpCode = 200): Response
     {
+        if ($message === null) {
+            $message = $this->langService->trans('common.success');
+        }
         $response = [
             'code' => $code,
             'message' => $message,
@@ -111,44 +129,56 @@ class ApiController extends BaseController
      * Return validation error response | 返回验证错误响应
      *
      * @param array $errors Validation errors | 验证错误
-     * @param string $message Error message | 错误消息
+     * @param string|null $message Error message (null = use default) | 错误消息（null = 使用默认）
      * @return Response
      */
-    protected function validationError(array $errors, string $message = 'Validation failed'): Response
+    protected function validationError(array $errors, ?string $message = null): Response
     {
+        if ($message === null) {
+            $message = $this->langService->trans('error.validation_failed');
+        }
         return $this->error($message, 422, $errors, 422);
     }
 
     /**
      * Return not found response | 返回未找到响应
      *
-     * @param string $message Error message | 错误消息
+     * @param string|null $message Error message (null = use default) | 错误消息（null = 使用默认）
      * @return Response
      */
-    protected function notFound(string $message = 'Resource not found'): Response
+    protected function notFound(?string $message = null): Response
     {
+        if ($message === null) {
+            $message = $this->langService->trans('error.resource_not_found');
+        }
         return $this->error($message, 404, [], 404);
     }
 
     /**
      * Return unauthorized response | 返回未授权响应
      *
-     * @param string $message Error message | 错误消息
+     * @param string|null $message Error message (null = use default) | 错误消息（null = 使用默认）
      * @return Response
      */
-    protected function unauthorized(string $message = 'Unauthorized'): Response
+    protected function unauthorized(?string $message = null): Response
     {
+        if ($message === null) {
+            $message = $this->langService->trans('error.unauthorized');
+        }
         return $this->error($message, 401, [], 401);
     }
 
     /**
      * Return forbidden response | 返回禁止访问响应
      *
-     * @param string $message Error message | 错误消息
+     * @param string|null $message Error message (null = use default) | 错误消息（null = 使用默认）
      * @return Response
      */
-    protected function forbidden(string $message = 'Forbidden'): Response
+    protected function forbidden(?string $message = null): Response
     {
+        if ($message === null) {
+            $message = $this->langService->trans('error.forbidden');
+        }
         return $this->error($message, 403, [], 403);
     }
 
@@ -212,22 +242,31 @@ class ApiController extends BaseController
      */
     protected function getTraceId(): ?string
     {
-        $request = $this->request;
+        $request = $this->request ?? null;
+
+        // When running in CLI tests or non-HTTP contexts, the request instance
+        // may not be available. In that case we simply skip trace_id injection.
+        // 在 CLI 测试或非 HTTP 场景下，请求实例可能不存在，此时直接跳过 trace_id 注入。
+        if ($request === null) {
+            return null;
+        }
 
         // Priority 1: Get from Request object (injected by Trace middleware)
         // 优先级 1：从 Request 对象获取（由 Trace 中间件注入）
-        if (method_exists($request, 'getTraceId')) {
+        if (is_object($request) && method_exists($request, 'getTraceId')) {
             $traceId = $request->getTraceId();
             if (is_string($traceId) && $traceId !== '') {
                 return $traceId;
             }
         }
 
-        // Priority 2: Fallback to request header
-        // 优先级 2：降级到请求头
-        $traceId = $request->header('X-Trace-Id');
-        if (is_string($traceId) && $traceId !== '') {
-            return $traceId;
+        // Priority 2: Fallback to request header (if supported)
+        // 优先级 2：降级到请求头（在支持 header 方法的情况下）
+        if (is_object($request) && method_exists($request, 'header')) {
+            $traceId = $request->header('X-Trace-Id');
+            if (is_string($traceId) && $traceId !== '') {
+                return $traceId;
+            }
         }
 
         return null;

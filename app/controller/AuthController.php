@@ -109,7 +109,7 @@ class AuthController extends ApiController
                 'token_type' => 'Bearer',
                 'expires_in' => $this->jwtService->getAccessTokenTtl(),
                 'user' => $user->toArray(),
-            ], 'Login successful');
+            ], $this->langService->trans('auth.login_successful'));
         } catch (\Exception $e) {
             // Handle unexpected internal error | 处理未预期的内部异常
             return $this->handleInternalError($e, 'auth.login');
@@ -179,7 +179,7 @@ class AuthController extends ApiController
                 'token_type' => 'Bearer',
                 'expires_in' => $this->jwtService->getAccessTokenTtl(),
                 'user' => $user->toArray(),
-            ], 'Registration successful');
+            ], $this->langService->trans('auth.registration_successful'));
         } catch (\Exception $e) {
             // Handle unexpected internal error | 处理未预期的内部异常
             return $this->handleInternalError($e, 'auth.register');
@@ -310,7 +310,7 @@ class AuthController extends ApiController
             $user = $this->userRepository->findById($userId);
 
             if (!$user) {
-                return $this->error('User not found', 404);
+                return $this->error($this->langService->trans('auth.user_not_found'), 404);
             }
 
             // Get user roles | 获取用户角色
@@ -387,6 +387,6 @@ class AuthController extends ApiController
         ]);
 
         // Generic internal error response | 通用内部错误响应
-        return $this->error('Internal server error', 5000, [], 500);
+        return $this->error($this->langService->trans('error.internal_server_error'), 5000, [], 500);
     }
 }

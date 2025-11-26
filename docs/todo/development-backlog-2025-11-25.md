@@ -269,8 +269,27 @@
   - 文档包含中间件参考 ✅
 - **依赖**：T-033
 
-⬜ **[T-045] (P3) 错误消息国际化与多语言支持**
+✅ **[T-045] (P3) 错误消息国际化与多语言支持** `[已完成 2025-11-26]`
 - **描述**：app/middleware/Auth.php 及部分控制器中仍存在中文/英文硬编码错误提示
+- **完成内容**：
+  - 创建语言包目录结构：`app/lang/zh-cn/` 和 `app/lang/en-us/`
+  - 创建语言文件：`error.php`（错误消息）、`auth.php`（认证消息）、`common.php`（通用消息）
+  - 实现 `LanguageService` 服务类：提供 `trans()` 和 `transError()` 方法
+  - 支持自动语言检测：从 Accept-Language header、Cookie、查询参数检测
+  - 更新 `ErrorCode::getMessage()` 使用语言服务
+  - 更新 `Auth` 中间件：所有错误消息使用语言包
+  - 更新 `Permission` 中间件：所有错误消息使用语言包
+  - 更新 `ApiController`：默认消息使用语言包（success/error/validation/notFound/unauthorized/forbidden）
+  - 更新 `AuthController`：所有硬编码消息使用语言包
+  - 更新 `config/lang.php`：添加 en-us 支持，配置 Accept-Language header
+  - 编写单元测试：10 个测试用例，24 个断言，全部通过
+  - 代码格式化：通过 PHP-CS-Fixer 检查，符合 PSR-12 规范
+- **技术亮点**：
+  - 支持参数替换（如 `:name`）
+  - 自动回退机制：Lang facade → 文件加载 → 英文默认值
+  - 语言切换不影响当前会话
+  - 完整的中英文双语支持（70+ 条消息）
+- **提交**：`feat(i18n): implement comprehensive internationalization system`
 - **依赖**：T-039
 
 ✅ **[T-046] (P3) 测试遗留小问题清理** [已审查 2025-11-26]

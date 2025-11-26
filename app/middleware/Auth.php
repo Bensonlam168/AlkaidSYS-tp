@@ -7,6 +7,7 @@ namespace app\middleware;
 use Closure;
 use think\Request;
 use Infrastructure\Auth\JwtService;
+use Infrastructure\I18n\LanguageService;
 
 /**
  * Auth Middleware | 认证中间件
@@ -19,10 +20,12 @@ use Infrastructure\Auth\JwtService;
 class Auth
 {
     protected JwtService $jwtService;
+    protected LanguageService $langService;
 
     public function __construct()
     {
         $this->jwtService = new JwtService();
+        $this->langService = app()->make(LanguageService::class);
     }
 
     /**
@@ -48,7 +51,7 @@ class Auth
 
             return ResponseHelper::jsonError(
                 2001,
-                'Unauthorized: Token is missing, invalid, or expired',
+                $this->langService->trans('error.token_missing'),
                 401,
                 $traceId
             );
@@ -76,7 +79,7 @@ class Auth
 
             return ResponseHelper::jsonError(
                 2001,
-                'Unauthorized: Token is missing, invalid, or expired',
+                $this->langService->trans('error.token_missing'),
                 401,
                 $traceId
             );

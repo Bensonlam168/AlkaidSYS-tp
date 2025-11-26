@@ -58,41 +58,65 @@ final class ErrorCode
     public const EXTERNAL_SERVICE_ERROR = 5002;
 
     /**
-     * Error messages | 错误消息
-     */
-    public const MESSAGES = [
-        self::SUCCESS => 'Success',
-        self::BAD_REQUEST => 'Bad Request',
-        self::VALIDATION_ERROR => 'Validation Error',
-        self::PARAMETER_MISSING => 'Required Parameter Missing',
-        self::PARAMETER_INVALID => 'Invalid Parameter',
-        self::UNAUTHORIZED => 'Unauthorized',
-        self::FORBIDDEN => 'Forbidden',
-        self::REFRESH_TOKEN_INVALID => 'Invalid Refresh Token',
-        self::REFRESH_TOKEN_EXPIRED => 'Refresh Token Expired',
-        self::TOKEN_ISSUER_MISMATCH => 'Token Issuer Mismatch',
-        self::WRONG_TOKEN_TYPE => 'Wrong Token Type',
-        self::TOKEN_REVOKED => 'Token Revoked',
-        self::NOT_FOUND => 'Not Found',
-        self::RESOURCE_NOT_FOUND => 'Resource Not Found',
-        self::RESOURCE_EXISTS => 'Resource Already Exists',
-        self::RESOURCE_CONFLICT => 'Resource Conflict',
-        self::RATE_LIMITED => 'Rate Limited',
-        self::TOO_MANY_REQUESTS => 'Too Many Requests',
-        self::SERVER_ERROR => 'Internal Server Error',
-        self::DATABASE_ERROR => 'Database Error',
-        self::EXTERNAL_SERVICE_ERROR => 'External Service Error',
-    ];
-
-    /**
      * Get message for error code | 获取错误码消息
      *
+     * Uses language service for internationalization.
+     * 使用语言服务实现国际化。
+     *
      * @param int $code Error code
+     * @param string|null $lang Language code (null = use current language)
      * @return string Error message
      */
-    public static function getMessage(int $code): string
+    public static function getMessage(int $code, ?string $lang = null): string
     {
-        return self::MESSAGES[$code] ?? 'Unknown Error';
+        try {
+            $langService = app()->make(\Infrastructure\I18n\LanguageService::class);
+            $message = $langService->transError($code, $lang);
+
+            // If translation not found, return code-based key | 如果未找到翻译，返回基于代码的键
+            if (str_starts_with($message, 'error.')) {
+                return self::getFallbackMessage($code);
+            }
+
+            return $message;
+        } catch (\Throwable $e) {
+            // Fallback to English if language service fails | 如果语言服务失败，回退到英文
+            return self::getFallbackMessage($code);
+        }
+    }
+
+    /**
+     * Get fallback message (English) | 获取回退消息（英文）
+     *
+     * @param int $code Error code
+     * @return string Fallback message
+     */
+    protected static function getFallbackMessage(int $code): string
+    {
+        return match ($code) {
+            self::SUCCESS => 'Success',
+            self::BAD_REQUEST => 'Bad Request',
+            self::VALIDATION_ERROR => 'Validation Error',
+            self::PARAMETER_MISSING => 'Required Parameter Missing',
+            self::PARAMETER_INVALID => 'Invalid Parameter',
+            self::UNAUTHORIZED => 'Unauthorized',
+            self::FORBIDDEN => 'Forbidden',
+            self::REFRESH_TOKEN_INVALID => 'Invalid Refresh Token',
+            self::REFRESH_TOKEN_EXPIRED => 'Refresh Token Expired',
+            self::TOKEN_ISSUER_MISMATCH => 'Token Issuer Mismatch',
+            self::WRONG_TOKEN_TYPE => 'Wrong Token Type',
+            self::TOKEN_REVOKED => 'Token Revoked',
+            self::NOT_FOUND => 'Not Found',
+            self::RESOURCE_NOT_FOUND => 'Resource Not Found',
+            self::RESOURCE_EXISTS => 'Resource Already Exists',
+            self::RESOURCE_CONFLICT => 'Resource Conflict',
+            self::RATE_LIMITED => 'Rate Limited',
+            self::TOO_MANY_REQUESTS => 'Too Many Requests',
+            self::SERVER_ERROR => 'Internal Server Error',
+            self::DATABASE_ERROR => 'Database Error',
+            self::EXTERNAL_SERVICE_ERROR => 'External Service Error',
+            default => 'Unknown Error',
+        };
     }
 
     /**

@@ -6,6 +6,7 @@ namespace app\middleware;
 
 use Closure;
 use Infrastructure\Permission\Service\PermissionService;
+use Infrastructure\I18n\LanguageService;
 use think\Request;
 use think\facade\Log;
 
@@ -24,11 +25,17 @@ class Permission
      */
     protected PermissionService $permissionService;
 
+    /**
+     * Language service for i18n | 语言服务（用于国际化）
+     */
+    protected LanguageService $langService;
+
     public function __construct()
     {
         // Use dedicated PermissionService as the single source of truth
         // 使用专门的 PermissionService 作为权限校验的单一入口
         $this->permissionService = new PermissionService();
+        $this->langService = app()->make(LanguageService::class);
     }
 
     /**
@@ -58,7 +65,7 @@ class Permission
 
             return ResponseHelper::jsonError(
                 2001,
-                'Unauthorized: Token is missing, invalid, or expired',
+                $this->langService->trans('error.token_missing'),
                 401,
                 $traceId
             );
@@ -79,7 +86,7 @@ class Permission
 
                 return ResponseHelper::jsonError(
                     2002,
-                    'Forbidden: Insufficient permissions',
+                    $this->langService->trans('error.permission_denied'),
                     403,
                     $traceId
                 );
@@ -114,12 +121,29 @@ class Permission
     /**
      * Check if user has permission | 检查用户是否有权限
      *
+     * This method accepts either the internal slug format (`resource.action`)
+     * or the external code format (`resource:action`) and normalizes it to
+     * `resource:action` before delegating to PermissionService.
+     *
+     * 本方法同时支持内部 slug 形式（`resource.action`）和对外权限码形式
+     *（`resource:action`），并在委托给 PermissionService 之前统一转换为
+     * `resource:action` 格式。
+     *
      * @param int $userId User ID | 用户ID
-     * @param string $permission Permission code in `resource:action` format | `resource:action` 格式的权限码
+     * @param string $permission Permission identifier in slug or code format
+     *                           | slug 或对外权限码格式的权限标识符
      * @return bool
      */
     protected function checkUserPermission(int $userId, string $permission): bool
     {
+        // Normalize permission identifier to external code format (resource:action)
+        // 将权限标识符统一转换为对外权限码格式（resource:action）
+        if (str_contains($permission, '.') && !str_contains($permission, ':')) {
+            // Internal slug (resource.action) -> External code (resource:action)
+            // 内部 slug（resource.action）-> 对外权限码（resource:action）
+            $permission = str_replace('.', ':', $permission);
+        }
+
         // Delegate to PermissionService to enforce a single permission model
         // 委托给 PermissionService，以确保权限模型的一致性和可维护性
         return $this->permissionService->hasPermission($userId, $permission);
