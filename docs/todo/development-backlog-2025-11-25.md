@@ -230,8 +230,14 @@
   - 验证 JwtService/PermissionService PHPDoc 完整性 ✅
 - **依赖**：T-033
 
-⬜ **[T-040] (P2) 配置与部署文档 + 环境变量校验完善**
+✅ **[T-040] (P2) 配置与部署文档 + 环境变量校验完善** [已完成 2025-11-26]
 - **描述**：.env.example 内容不完整，config/*.php 中大量 env() 调用无集中校验
+- **完成情况**：
+  - 对比 config/*.php 中的 env() 调用与 .env.example ✅
+  - 补充应用配置（APP_ENV, APP_DEBUG, DEFAULT_LANG）✅
+  - 补充数据库配置（DB_TYPE, DB_DRIVER, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS, DB_CHARSET, DB_PREFIX）✅
+  - 补充 Casbin 降级配置（CASBIN_CACHE_DEGRADATION_*）✅
+  - 补充完整限流配置（RATELIMIT_*）✅
 - **依赖**：T-033, T-038
 
 ✅ **[T-042] (P2) 代码与架构规范化** [已完成 2025-11-26]
@@ -379,7 +385,7 @@ flowchart TD
     T037[T-037 P1 BaseModel 作用域优化 ✅]
     T038[T-038 P1 技术栈与配置修正 ✅]
     T039[T-039 P2 文档与注释规范 ✅]
-    T040[T-040 P2 配置与部署文档]
+    T040[T-040 P2 配置与部署文档 ✅]
     T042[T-042 P2 代码与架构规范化 ✅]
     T043[T-043 P2 路由文档与校验]
     T045[T-045 P3 错误消息国际化]
