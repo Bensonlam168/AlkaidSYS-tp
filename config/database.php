@@ -41,13 +41,17 @@ return [
             'prefix'          => env('DB_PREFIX', ''),
 
             // 数据库部署方式:0 集中式(单一服务器),1 分布式(主从服务器)
-            'deploy'          => 0,
+            // Database deployment mode: 0 = single server, 1 = master-slave
+            'deploy'          => (int) env('DB_DEPLOY', 0),
             // 数据库读写是否分离 主从式有效
-            'rw_separate'     => false,
+            // Read-write separation (only effective when deploy=1)
+            'rw_separate'     => (bool) env('DB_RW_SEPARATE', false),
             // 读写分离后 主服务器数量
-            'master_num'      => 1,
+            // Number of master servers for read-write separation
+            'master_num'      => (int) env('DB_MASTER_NUM', 1),
             // 指定从服务器序号
-            'slave_no'        => '',
+            // Specify slave server number
+            'slave_no'        => env('DB_SLAVE_NO', ''),
             // 是否严格检查字段是否存在
             'fields_strict'   => true,
             // 是否需要断线重连

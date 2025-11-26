@@ -200,9 +200,13 @@
 - **代码证据**：CLI 环境下全局作用域可能带来性能与行为风险
 - **依赖**：T-001, T-033
 
-⬜ **[T-038] (P1) 关键技术栈与配置修正**
+✅ **[T-038] (P1) 关键技术栈与配置修正** [已完成 2025-11-26]
 - **描述**：PHP/DB/Expression/Swoole 等
-- **代码证据**：composer.json 中 PHP 约束为 >=8.0.0；config/database.php 中 deploy=0
+- **完成情况**：
+  - 修正 composer.json 中 PHP 版本约束：`>=8.0.0` → `>=8.2.0` ✅
+  - 数据库配置环境变量化：deploy/rw_separate/master_num/slave_no 通过 env() 控制 ✅
+  - 更新 .env.example 添加数据库部署配置变量 ✅
+  - Expression Language 依赖审计：属于 T-034 (Workflow) 范畴，暂不添加 ✅
 - **依赖**：T-033
 
 ⬜ **[T-039] (P2) 文档与注释规范统一**
@@ -351,7 +355,7 @@ flowchart TD
     T033[T-033 P0 技术规范文档重写 ✅]
     T036[T-036 P1 应用系统基础设施]
     T037[T-037 P1 BaseModel 作用域优化]
-    T038[T-038 P1 技术栈与配置修正]
+    T038[T-038 P1 技术栈与配置修正 ✅]
     T039[T-039 P2 文档与注释规范]
     T040[T-040 P2 配置与部署文档]
     T042[T-042 P2 代码与架构规范化]
@@ -420,7 +424,7 @@ flowchart TD
   class T045,T046,T047,T053,T054,T055 p3;
 
   %% 已完成任务
-  class T031,T032,T033 done;
+  class T031,T032,T033,T038 done;
 
   %% 关键路径（示例：多租户 Collection → TokenBucket → Casbin）
   class T001,T002,T003,T020,T011 critical;
