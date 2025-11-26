@@ -230,9 +230,15 @@
 - **描述**：.env.example 内容不完整，config/*.php 中大量 env() 调用无集中校验
 - **依赖**：T-033, T-038
 
-⬜ **[T-042] (P2) 代码与架构规范化**
-- **描述**：魔法数字、DI 使用、格式化
-- **代码证据**：code-review-issues 文档中的 M-008/M-009/M-010 等问题仍存在
+✅ **[T-042] (P2) 代码与架构规范化** [已完成 2025-11-26]
+- **描述**：魔法数字、DI 使用、格式化配置
+- **完成情况**：
+  - 验证 .php-cs-fixer.php 配置存在且符合 PSR-12 ✅
+  - 创建 .editorconfig 统一编辑器配置 ✅
+  - 创建 app/constant/HttpStatus.php HTTP 状态码常量类 ✅
+  - 创建 app/constant/ErrorCode.php 业务错误码常量类（含 2001-2007 认证错误码）✅
+  - 创建 app/constant/SystemDefault.php 系统默认值常量类 ✅
+  - 创建 docs/technical-specs/code-style/dependency-injection-guidelines.md DI 使用规范 ✅
 - **依赖**：T-031, T-033
 
 ⬜ **[T-043] (P2) 路由文档化与自动化校验**
@@ -370,7 +376,7 @@ flowchart TD
     T038[T-038 P1 技术栈与配置修正 ✅]
     T039[T-039 P2 文档与注释规范]
     T040[T-040 P2 配置与部署文档]
-    T042[T-042 P2 代码与架构规范化]
+    T042[T-042 P2 代码与架构规范化 ✅]
     T043[T-043 P2 路由文档与校验]
     T045[T-045 P3 错误消息国际化]
     T046[T-046 P3 测试遗留清理]
