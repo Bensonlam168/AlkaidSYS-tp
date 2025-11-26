@@ -201,9 +201,15 @@
   - 编写单元测试（18 tests, 27 assertions） ✅
 - **依赖**：T-031
 
-⬜ **[T-037] (P1) BaseModel 全局作用域性能与 CLI 行为优化**
-- **描述**：app/model/BaseModel.php 第55-95行注册 tenant/site 全局作用域优化
-- **代码证据**：CLI 环境下全局作用域可能带来性能与行为风险
+✅ **[T-037] (P1) BaseModel 全局作用域性能与 CLI 行为优化** [已完成 2025-11-26]
+- **描述**：app/model/BaseModel.php 全局作用域优化
+- **完成情况**：
+  - CLI 环境检测：使用 `php_sapi_name() === 'cli'` 自动禁用作用域 ✅
+  - 字段存在性缓存：添加 `$columnCache` 静态缓存避免重复查询 ✅
+  - 统一上下文获取：`getTenantContext()`/`getSiteContext()` 带错误处理 ✅
+  - 作用域开关配置化：支持 `DISABLE_TENANT_SCOPES`/`ENABLE_TENANT_SCOPES_IN_CLI` 环境变量 ✅
+  - 重构为 ThinkPHP 标准 scope 方法：`scopeTenant()`/`scopeSite()` ✅
+  - 单元测试：9 个测试用例，12 个断言，全部通过 ✅
 - **依赖**：T-001, T-033
 
 ✅ **[T-038] (P1) 关键技术栈与配置修正** [已完成 2025-11-26]
@@ -360,7 +366,7 @@ flowchart TD
     T032[T-032 P1 测试 & 迁移体系 ✅]
     T033[T-033 P0 技术规范文档重写 ✅]
     T036[T-036 P1 应用系统基础设施 ✅]
-    T037[T-037 P1 BaseModel 作用域优化]
+    T037[T-037 P1 BaseModel 作用域优化 ✅]
     T038[T-038 P1 技术栈与配置修正 ✅]
     T039[T-039 P2 文档与注释规范]
     T040[T-040 P2 配置与部署文档]
