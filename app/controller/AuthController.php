@@ -26,12 +26,12 @@ class AuthController extends ApiController
     protected PermissionService $permissionService;
 
     /**
-     * Constructor with dependency injection | [0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m
+     * Constructor with dependency injection | 构造函数（依赖注入）
      *
      * Use ThinkPHP container to inject dependencies instead of manual instantiation.
-     * [0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m
+     * 使用 ThinkPHP 容器注入依赖，而非手动实例化。
      *
-     * [0m[38;5;244m[48;5;236m@param \think\App $app Application instance | [0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m[0m[38;5;244m[48;5;236m应用实例
+     * @param \think\App $app Application instance | 应用实例
      * @param JwtService $jwtService JWT service | JWT 服务
      * @param UserRepository $userRepository User repository | 用户仓储
      * @param PermissionService $permissionService Permission service | 权限服务

@@ -221,9 +221,13 @@
   - Expression Language 依赖审计：属于 T-034 (Workflow) 范畴，暂不添加 ✅
 - **依赖**：T-033
 
-⬜ **[T-039] (P2) 文档与注释规范统一**
+✅ **[T-039] (P2) 文档与注释规范统一** [已完成 2025-11-26]
 - **描述**：含 API 文档与 PHPDoc
-- **代码证据**：当前 app/controller 与部分 Service/Repository 仍缺少完整 PHPDoc 与一致的注释风格
+- **完成情况**：
+  - 创建 docs/technical-specs/code-style/phpdoc-standards.md PHPDoc 规范文档 ✅
+  - 验证 ApiController PHPDoc 完整性（双语格式）✅
+  - 验证 AuthController PHPDoc 完整性（修复 ANSI 转义码乱码）✅
+  - 验证 JwtService/PermissionService PHPDoc 完整性 ✅
 - **依赖**：T-033
 
 ⬜ **[T-040] (P2) 配置与部署文档 + 环境变量校验完善**
@@ -374,7 +378,7 @@ flowchart TD
     T036[T-036 P1 应用系统基础设施 ✅]
     T037[T-037 P1 BaseModel 作用域优化 ✅]
     T038[T-038 P1 技术栈与配置修正 ✅]
-    T039[T-039 P2 文档与注释规范]
+    T039[T-039 P2 文档与注释规范 ✅]
     T040[T-040 P2 配置与部署文档]
     T042[T-042 P2 代码与架构规范化 ✅]
     T043[T-043 P2 路由文档与校验]
