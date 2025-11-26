@@ -24,6 +24,7 @@
   - [NEW] 新增 T-048~T-051：基础设施增强任务，对应设计文档阶段1
   - [ENHANCED] T-020/T-034/T-035 增加设计文档引用
   - [STRUCTURE] 增加 Phase 1/Phase 2 能力区分说明
+  - [NEW] 基于 code-review-report-2025-11-26.md 第 4/5/6 节新增 T-056~T-064 等组 D 基础设施待办，用于统一测试入口、CI gate、路由/i18n 校验与现代化规范文档化
 
 ## 阶段与能力区分
 
@@ -104,23 +105,36 @@
   - 测试覆盖：CasbinServiceTest、CasbinCacheTest、CasbinCacheDegradationTest、DatabaseAdapterTest、CasbinControllerTest、PermissionServiceIntegrationTest、CasbinPerformanceTest
   - 迁移脚本：`20251125_add_casbin_manage_permission.php` 创建 casbin.manage 权限
 - **依赖**：T-010, T-033
-🔄 **[T-012] (P1) 权限相关测试与迁移补齐**
+✅ **[T-012] (P1) 权限相关测试与迁移补齐**
 - **描述**：角色/权限表迁移、策略变更回滚策略、关键路径 Feature Test
-- **状态更新**：2025-11-26（审查更新）
+- **状态更新**：2025-11-27（端到端测试与文档补齐）
 - **已完成**：
   - 测试覆盖：CasbinServiceTest、CasbinCacheTest、CasbinCacheDegradationTest、DatabaseAdapterTest（Unit 层）
   - Feature 测试：CasbinControllerTest、AuthPermissionIntegrationTest
   - Integration 测试：CasbinCacheIntegrationTest
   - Performance 测试：CasbinPerformanceTest
   - 迁移脚本：casbin.manage 权限迁移已完成
+  - 新增集成测试：`tests/Integration/Permission/CasbinModeSwitchAndRollbackIntegrationTest.php`，覆盖 DB_ONLY / DUAL_MODE / CASBIN_ONLY 模式切换与回滚，以及典型权限变更 + 回滚场景
+  - 文档更新：`docs/casbin/migration-guide.md` 增加「自动化验证：策略变更 + 回滚（T-012）」小节，指导通过新增集成测试验证迁移与回滚
 - **待完成**：
-  - 策略变更回滚策略尚未明确定义
-  - 部分关键路径的 Feature Test 仍可进一步补充
+  - （无，控制器 DI / 异常信息收敛 / 测试命令规范 等后续优化归属于 [T-044]）
 - **依赖**：T-010, T-011, T-032
-⬜ **[T-044] (P2) 权限集成后续优化**
-- **描述**：异常信息收敛、AuthController DI、测试命令规范、PSR-12 统一
-- **代码证据**：docs/todo/development-backlog-2025-11-23.md §404-443 中列出的 4 条后端权限集成后续优化项目前仍以文档形式存在
-- **依赖**：T-010, T-032
+	✅ **[T-044] (P2) 权限集成后续优化**
+	- **描述**：围绕权限基线与 Casbin 集成后的收尾工作，包含异常信息收敛、AuthController/ApiController/低代码控制器 DI 统一、测试命令规范与 PSR-12 统一等。
+	- **完成时间**：2025-11-27
+	- **已完成**：
+	  - 统一 BaseController / ApiController / AuthController / app\controller\admin\CasbinController 以及低代码控制器（Collection/FormSchema/FormData/Relationship）的构造函数签名与依赖注入模式（`__construct(App $app, ...)` + `parent::__construct($app)`），修复因 DI 不一致导致的 Feature 测试 500（Too few arguments）问题，并确认低代码生成器模板在新 DI 模式下保持兼容。
+	  - 复核并固化 Auth/Permission 中间件错误码与响应结构（未授权 2001/401、权限不足 2002/403、内部错误 5000/500，全部携带 trace_id），在 docs/todo/development-backlog-2025-11-23.md §404-443 中更新 T-044 四条优化项的当前状态，使其与 `.augment/rules/always-alkaidsys-project-rules.md` 与技术规范文档保持一致。
+	  - 清理 tests/Performance/Benchmark/Permission/CasbinPerformanceTest.php 中的 stdout 输出，仅保留性能报告生成逻辑，避免 PHPUnit 将性能测试标记为 Risky，同时保持性能基线报告可用。
+	  - 同步 backlog 对测试命令规范的描述，明确本地与 CI 必须在 `alkaid-backend` 容器内通过 `docker exec alkaid-backend ...` 运行测试，将统一测试入口与 CI Gate 工作分别拆分为 T-056/T-059 跟踪。
+	- **测试验证结果**：
+	  - 在 `alkaid-backend` 容器内运行全部权限相关 Unit/Integration/Feature/Performance 测试，包含但不限于：
+	    - `tests/Feature/AuthPermissionIntegrationTest.php`（/v1/auth/me 与 /v1/auth/codes 集成测试）；
+	    - `tests/Feature/Admin/CasbinControllerTest.php`（Casbin 管理接口测试）；
+	    - `tests/Performance/Benchmark/Permission/CasbinPerformanceTest.php`（Casbin 性能基线测试，已无 Risky 输出）；
+	    - `tests/Unit/Infrastructure/Permission/*` 与 `tests/Integration/Permission/*`（权限服务与 Casbin 模式切换/回滚测试）。
+	  - 所有上述测试集均执行通过，无新增失败或 Risky，仅存在 PHPUnit 自身的 Deprecation 提示，不影响业务行为与验收结论。
+	- **依赖**：T-010, T-032
 
 ---
 
@@ -318,6 +332,140 @@
   - array_reduce 优化数组操作性能
 - **提交**：`refactor(modernize): upgrade to PHP 8.2+ features`
 - **依赖**：T-042
+
+⬜ **[T-056] (P1) 统一测试入口实现（php think test 或等价脚本）** `[NEW 2025-11-26 code-review]`
+- **描述**：为 phpunit 提供统一的测试入口命令（例如 `php think test` 或等价代理脚本），在 alkaid-backend 容器与 CI 中一条命令执行完整 test suite。
+- **背景**：code-review-report-2025-11-26 第 4/5/6 节指出，目前容器中 `php think test` 命令未定义，仅存在若干 `test:*` 子命令，无法按 Always Rules 要求统一拉起全部测试。
+- **目标**：
+  - 在 alkaid-backend 容器中提供一个稳定的“一键测试”入口；
+  - 与现有测试基类（T-032, T-046）兼容，不改变测试代码调用方式；
+  - 为后续 CI gate（代码格式检查、i18n 检查等）提供统一执行入口。
+- **范围**：
+  - 包含：ThinkPHP Console 命令或等价 CLI 脚本的设计与实现、README/技术规范更新；
+  - 不包含：具体单测/集成测试用例的编写（由其他任务承担）。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 高优先级问题“统一测试入口缺失”；§5 “测试体系”；§6 短期行动 S1。
+	- **依赖**：T-032, T-038, T-042, T-044
+- **预估工作量**：1–2 天
+- **验收标准**：
+  - 在 alkaid-backend 容器内执行文档指定命令可拉起全部 phpunit 测试且退出码正确；
+  - CI 管线中引用该命令作为测试入口；
+  - 相关技术规范文档（testing-guidelines）同步更新。
+
+⬜ **[T-057] (P2) 低代码 CLI 集成测试补充（Schema/迁移场景）** `[NEW 2025-11-26 code-review]`
+- **描述**：围绕 lowcode:create-model / lowcode:create-form / lowcode:migration:diff 等命令，补充覆盖低代码 Schema 与数据库迁移行为的集成级测试。
+- **背景**：T-030 已提供较完善的 CLI 工具与单元测试，但 code-review-report-2025-11-26 第 3.1.2/第 5 节指出，缺乏“真实 DB + 迁移”的自动化验证。
+- **目标**：
+  - 在测试环境中模拟典型低代码 Schema 变更，验证 CLI 命令对动态表、索引、多租户字段的处理正确；
+  - 确认 `lowcode:migration:diff --all --check` 在多租户场景下的行为符合设计文档。
+- **范围**：
+  - 包含：针对 CLI 命令的功能/集成测试（可使用 sqlite/in-memory DB 或测试专用数据库）；
+  - 不包含：新的 CLI 命令能力设计（另见 T-030 已完成内容）。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §3.1.2（T-030 测试与稳健性）、§5 “迁移测试”“集成与性能测试”。
+- **依赖**：T-030, T-032, T-056
+- **预估工作量**：3–5 天
+- **验收标准**：
+  - 针对低代码 CLI 的集成测试在本地与 CI 中均可通过统一测试入口执行；
+  - 覆盖至少：集合创建、表单生成、Schema diff、迁移执行/回滚 4 类场景；
+  - 发现的问题与修复有明确记录。
+
+⬜ **[T-058] (P2) 多租户 & 低代码 & 应用系统 E2E 与性能测试基线** `[NEW 2025-11-26 code-review]`
+- **描述**：围绕多租户隔离、低代码动态表访问、应用系统安装/启用/升级等关键路径，建立端到端与性能测试基线。
+- **背景**：code-review-report-2025-11-26 §4/§5 指出，多租户/低代码/应用系统的集成级与性能级测试覆盖不足，仅有局部单测/Feature Test。
+- **目标**：
+  - 构建若干代表性 E2E 场景（包含跨租户访问拒绝、租户切换、应用安装/升级回滚）；
+  - 为关键路径建立性能基线指标（例如请求耗时/SQL 次数/缓存命中）。
+- **范围**：
+  - 包含：后端 Feature/E2E 测试，必要时配合前端脚本或 API 驱动；
+  - 不包含：完整前端 UI 自动化（前端多租户 E2E 扩展可另立任务）。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Medium “集成与性能测试”；§5 “集成与性能测试”。
+- **依赖**：T-001, T-002, T-003, T-036, T-056
+- **预估工作量**：5–10 天
+- **验收标准**：
+  - 至少 3 条 E2E 测试用例覆盖上述关键场景并在 CI 中稳定通过；
+  - 提供一份简单的性能基线报告，作为后续优化对比基准。
+
+⬜ **[T-059] (P2) CI 中强制执行代码格式检查与核心测试套件** `[NEW 2025-11-26 code-review]`
+- **描述**：在 CI 中接入 .php-cs-fixer --dry-run 与核心测试套件（Unit + Feature + 关键 Performance），作为合并前必经门槛。
+- **背景**：T-042 已落实 .php-cs-fixer 配置，但 code-review-report-2025-11-26 §4/§5 指出尚未在 CI 中统一强制执行；测试入口缺失导致无法一键 gate。
+- **目标**：
+  - 在 CI pipeline 中增加“代码格式检查”和“测试通过”两个 gate；
+  - 失败时阻断合并，并提供清晰日志。
+- **范围**：
+  - 包含：CI 脚本编写/修改、对 .php-cs-fixer 和统一测试入口的集成；
+  - 不包含：CI 执行环境/Runner 运维本身。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Medium “.php-cs-fixer 规则未在 CI 中统一强制”；§5 “测试体系”；§6 中期行动。
+	- **依赖**：T-032, T-038, T-042, T-056, T-044
+- **预估工作量**：2–3 天
+- **验收标准**：
+  - CI 中存在独立的格式检查与测试步骤，并在 PR 上可见；
+  - 故意提交不符合 PSR-12 或使测试失败的变更会导致 CI 失败。
+
+⬜ **[T-060] (P2) 路由文档自动生成与校验机制** `[NEW 2025-11-26 code-review]`
+- **描述**：基于路由反射自动生成/校验 route-reference 文档，降低手工同步漂移风险。
+- **背景**：T-043 已完成 route-reference 文档，但 code-review-report-2025-11-26 §4/§5 指出当前主要依赖人工更新，缺少自动化校验。
+- **目标**：
+  - 基于 ThinkPHP 路由定义自动生成当前所有 API 路由清单；
+  - 与 docs/technical-specs/api/route-reference.md 做差异对比，CI 中报警。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Medium “路由文档与实际路由一致性主要依赖人工同步”；§5 “文档与路由同步”；§6 中期行动。
+- **依赖**：T-033, T-043, T-056
+- **预估工作量**：3–5 天
+- **验收标准**：
+  - 提供 CLI 或脚本可以生成当前路由清单并与文档比对；
+  - 在 CI 中自动执行，并在不一致时失败；
+  - route-reference 文档更新流程有明确说明。
+
+⬜ **[T-061] (P2) 语言包 key 一致性检查脚本与 CI 集成** `[NEW 2025-11-26 code-review]`
+- **描述**：实现脚本检查不同语言包文件之间的 key 覆盖与一致性，并在 CI 中强制执行。
+- **背景**：T-045 已完成 LanguageService 与语言包接入，code-review-report-2025-11-26 §3.1.2/§4/§5 指出目前完全依赖人工维护，存在 key 漏/不一致风险。
+- **目标**：
+  - 自动检测 zh-cn 与 en-us 等语言包中缺失或多余的 key；
+  - 在 CI 中作为单独步骤运行。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §3.1.2（T-045 技术债）、§4 Medium “语言包自动化校验缺失”；§5 “国际化一致性”；§6 中期行动。
+- **依赖**：T-039, T-045, T-056, T-059
+- **预估工作量**：2–3 天
+- **验收标准**：
+  - 本地可运行脚本，给出语言包 key diff 报告；
+  - CI 中执行该脚本并在不一致时失败；
+  - 对新增语言/消息 key 的开发流程有 tooling 支持。
+
+⬜ **[T-062] (P3) 环境变量与配置完整性自动检查脚本** `[NEW 2025-11-26 code-review]`
+- **描述**：在启动或 CI 阶段运行的 env/config 完整性检查脚本，提前捕获缺失或非法值。
+- **背景**：T-040 已补齐 .env.example 与 config/*.php 中 env() 调用的文档化，code-review-report-2025-11-26 §4/§5 指出现阶段仍缺少自动化校验。
+- **目标**：
+  - 扫描 config 文件中使用的关键 env()，与 .env/.env.example 对比；
+  - 检查是否存在缺失、类型不匹配或明显非法值。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Low “配置与环境校验”；§5 “配置与环境校验”；§6 中期/长期行动。
+- **依赖**：T-033, T-038, T-040
+- **预估工作量**：2–3 天
+- **验收标准**：
+  - 本地/CI 中可运行检查脚本并给出清晰报告；
+  - 发现问题时有明确的修复建议或链接到文档。
+
+⬜ **[T-063] (P3) 语言包变更流程与审核机制** `[NEW 2025-11-26 code-review]`
+- **描述**：为 i18n 语言包引入标准化的变更流程与审核 checklist，结合 T-061 的检查脚本，降低误操作风险。
+- **背景**：code-review-report-2025-11-26 §5/§6 提到目前缺少正式“语言包变更流程与审核机制”，完全靠人工约定。
+- **目标**：
+  - 为语言包修改建立文档化流程（新增/修改 key、翻译审查、回滚方案）；
+  - 在 PR 模板或 review checklist 中集成相关检查点。
+- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §5 “国际化一致性”；§6 长期行动。
+- **依赖**：T-039, T-045, T-061
+- **预估工作量**：1–2 天
+- **验收标准**：
+  - docs/technical-specs/i18n-* 或等价文档中有清晰流程描述；
+  - PR 模板/贡献指南中反映该流程；
+  - 与 T-061 的检查脚本形成闭环。
+
+⬜ **[T-064] (P3) 现代 PHP 特性使用规范文档化** `[NEW 2025-11-26 code-review]`
+- **描述**：基于 T-047 的现代化改造经验，沉淀 match/readonly/array_reduce 等现代 PHP 特性的项目级使用规范。
+- **背景**：code-review-report-2025-11-26 §3.1.2（T-047）、§5 “现代化规范”、§6 长期行动均提到，需要在文档中给出现代特性的推荐使用模式，避免团队风格不一致。
+- **目标**：
+  - 在 docs/technical-specs/code-style 下新增或扩展文档，总结适用场景/反例/性能考量；
+  - 与现有 PHPDoc/DI 规范形成统一风格体系。
+- **依赖**：T-039, T-042, T-047
+- **预估工作量**：2–3 天
+- **验收标准**：
+  - 新增或更新的规范文档通过代码审查并被团队认可；
+  - 后续代码评审中可直接引用该文档作为判断标准。
 
 ⬜ **[T-034] (P2) Workflow 引擎** `[Phase 2]`
 - **描述**：流程建模、节点执行器、状态持久化及与低代码表单的集成
