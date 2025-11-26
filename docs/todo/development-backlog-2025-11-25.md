@@ -153,9 +153,19 @@
 
 ### 组 D：基础设施 & 工具 & 规范
 
-⬜ **[T-030] (P1) CLI 工具体系**
+✅ **[T-030] (P1) CLI 工具体系** `[已完成 2025-11-26]`
 - **描述**：基于 think console 的 alkaid:* 命令族，用于迁移/低代码运维/调试
-- **代码证据**：config/console.php 仅注册了 test:* 系列命令，未见生产级 CLI 命令
+- **完成内容**：
+  - 创建 `LowcodeCommand` 基类：提供统一的命令输出格式（success/error/warning/info）、字段解析、验证等辅助方法
+  - 实现 `lowcode:create-model` 命令：创建 Collection（数据模型），支持字段定义、交互式输入、租户隔离
+  - 实现 `lowcode:create-form` 命令：基于 Collection 创建表单 Schema，自动生成 JSON Schema
+  - 实现 `lowcode:generate` 命令：生成 CRUD 代码（Controller/Routes/Tests），支持多种生成类型
+  - 实现 `lowcode:migration:diff` 命令：比较数据库 Schema 与 Collection Schema，生成差异报告
+  - 创建代码生成器：`CrudGenerator`、`ControllerGenerator`、`RouteGenerator`、`TestGenerator`
+  - 更新 `config/console.php`：注册所有新命令
+  - 编写单元测试：13 个测试用例，76 个断言，全部通过
+  - 代码格式化：通过 PHP-CS-Fixer 检查，符合 PSR-12 规范
+- **提交**：`feat(cli): implement comprehensive CLI tool system for lowcode operations`
 - **依赖**：T-032
 
 ✅ **[T-031] (P1) DI 容器增强** `[已完成 2025-11-26]`
