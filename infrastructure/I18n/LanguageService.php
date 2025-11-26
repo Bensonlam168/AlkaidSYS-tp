@@ -200,15 +200,16 @@ class LanguageService
             }
 
             // Try language without region (e.g., "en-US" -> "en")
-            if (strpos($normalized, '-') !== false) {
+            // Use match expression for cleaner code
+            // 使用 match 表达式使代码更简洁
+            if (str_contains($normalized, '-')) {
                 $baseLang = explode('-', $normalized)[0];
                 // Map base language to supported variant
-                if ($baseLang === 'zh') {
-                    return 'zh-cn';
-                }
-                if ($baseLang === 'en') {
-                    return 'en-us';
-                }
+                return match ($baseLang) {
+                    'zh' => 'zh-cn',
+                    'en' => 'en-us',
+                    default => self::DEFAULT_LANG,
+                };
             }
         }
 

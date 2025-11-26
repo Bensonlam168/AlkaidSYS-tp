@@ -21,24 +21,22 @@ use think\facade\Event;
  */
 class FormSchemaManager
 {
-    protected FormSchemaRepository $repository;
-    protected ?CollectionManager $collectionManager;
-
     protected string $cachePrefix = 'lowcode:form:';
     protected int $cacheTtl = 3600; // 1 hour | 1小时
 
     /**
      * Constructor | 构造函数
      *
+     * Uses constructor property promotion for cleaner dependency injection.
+     * 使用构造器属性提升实现更简洁的依赖注入。
+     *
      * @param FormSchemaRepository $repository Form schema repository | 表单schema仓储
      * @param CollectionManager|null $collectionManager Collection manager | Collection管理器
      */
     public function __construct(
-        FormSchemaRepository $repository,
-        ?CollectionManager $collectionManager = null
+        protected readonly FormSchemaRepository $repository,
+        protected readonly ?CollectionManager $collectionManager = null
     ) {
-        $this->repository = $repository;
-        $this->collectionManager = $collectionManager;
     }
 
     /**

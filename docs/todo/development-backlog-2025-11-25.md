@@ -300,8 +300,23 @@
   - 无需立即修改，可在后续重构时逐步清理
 - **依赖**：T-032
 
-⬜ **[T-047] (P3) 代码现代化与局部性能微优化**
+✅ **[T-047] (P3) 代码现代化与局部性能微优化** `[已完成 2025-11-26]`
 - **描述**：多个 Repository/Service 仍大量使用 PHP 7 风格循环与手写 hydrate
+- **完成内容**：
+  - 使用构造器属性提升简化 3 个 Service 类（CollectionManager, RelationshipManager, FormSchemaManager）
+  - 所有依赖注入属性标记为 readonly，增强不可变性
+  - 优化 CollectionManager::buildColumns() 使用 array_reduce 替代 foreach
+  - 使用 match 表达式替代 if-else/switch：
+    - LanguageService::parseAcceptLanguage() - 语言映射
+    - MigrationManager::mapToMigrationType() - 数据库类型映射
+    - PermissionService::getUserPermissions() - 模式选择
+  - 所有测试通过，代码符合 PSR-12 规范
+- **技术亮点**：
+  - 构造器属性提升减少约 30 行样板代码
+  - readonly 属性增强类型安全和不可变性
+  - match 表达式提升代码可读性和性能
+  - array_reduce 优化数组操作性能
+- **提交**：`refactor(modernize): upgrade to PHP 8.2+ features`
 - **依赖**：T-042
 
 ⬜ **[T-034] (P2) Workflow 引擎** `[Phase 2]`

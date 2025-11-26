@@ -24,16 +24,14 @@ use think\facade\Event;
  */
 class CollectionManager
 {
-    protected SchemaBuilderInterface $schemaBuilder;
-    protected CollectionRepository $collectionRepo;
-    protected FieldRepository $fieldRepo;
-    protected RelationshipRepository $relationshipRepo;
-
     protected string $cachePrefix = 'lowcode:collection:';
     protected int $cacheTtl = 3600; // 1 hour | 1小时
 
     /**
      * Constructor | 构造函数
+     *
+     * Uses constructor property promotion for cleaner dependency injection.
+     * 使用构造器属性提升实现更简洁的依赖注入。
      *
      * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
      * @param CollectionRepository $collectionRepo Collection repository | Collection仓储
@@ -41,15 +39,11 @@ class CollectionManager
      * @param RelationshipRepository $relationshipRepo Relationship repository | 关系仓储
      */
     public function __construct(
-        SchemaBuilderInterface $schemaBuilder,
-        CollectionRepository $collectionRepo,
-        FieldRepository $fieldRepo,
-        RelationshipRepository $relationshipRepo
+        protected readonly SchemaBuilderInterface $schemaBuilder,
+        protected readonly CollectionRepository $collectionRepo,
+        protected readonly FieldRepository $fieldRepo,
+        protected readonly RelationshipRepository $relationshipRepo
     ) {
-        $this->schemaBuilder = $schemaBuilder;
-        $this->collectionRepo = $collectionRepo;
-        $this->fieldRepo = $fieldRepo;
-        $this->relationshipRepo = $relationshipRepo;
     }
 
     /**
@@ -280,20 +274,24 @@ class CollectionManager
                 'type' => 'INT',
                 'length' => 11,
                 'nullable' => false,
-                'default' => 0,
+                'default' => '0',
             ],
             // Site scope | 站点维度（0 = 默认站点）
             'site_id' => [
                 'type' => 'INT',
                 'length' => 11,
                 'nullable' => false,
-                'default' => 0,
+                'default' => '0',
             ],
         ];
 
-        foreach ($fields as $field) {
-            $columns[$field->getName()] = $field->getDbColumn();
-        }
+        // Add field columns using array_reduce for better performance
+        // 使用 array_reduce 添加字段列以提升性能
+        $columns = array_reduce(
+            $fields,
+            fn (array $cols, $field) => $cols + [$field->getName() => $field->getDbColumn()],
+            $columns
+        );
 
         // Add timestamps | 添加时间戳
         $columns['created_at'] = [

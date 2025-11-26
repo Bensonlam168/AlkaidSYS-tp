@@ -20,25 +20,21 @@ use think\facade\Event;
  */
 class RelationshipManager
 {
-    protected SchemaBuilderInterface $schemaBuilder;
-    protected RelationshipRepository $relationshipRepo;
-    protected CollectionManager $collectionManager;
-
     /**
      * Constructor | 构造函数
+     *
+     * Uses constructor property promotion for cleaner dependency injection.
+     * 使用构造器属性提升实现更简洁的依赖注入。
      *
      * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
      * @param RelationshipRepository $relationshipRepo Relationship repository | 关系仓储
      * @param CollectionManager $collectionManager Collection manager | Collection管理器
      */
     public function __construct(
-        SchemaBuilderInterface $schemaBuilder,
-        RelationshipRepository $relationshipRepo,
-        CollectionManager $collectionManager
+        protected readonly SchemaBuilderInterface $schemaBuilder,
+        protected readonly RelationshipRepository $relationshipRepo,
+        protected readonly CollectionManager $collectionManager
     ) {
-        $this->schemaBuilder = $schemaBuilder;
-        $this->relationshipRepo = $relationshipRepo;
-        $this->collectionManager = $collectionManager;
     }
 
     /**
