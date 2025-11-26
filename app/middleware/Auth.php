@@ -8,12 +8,20 @@ use Closure;
 use think\Request;
 use Infrastructure\Auth\JwtService;
 use Infrastructure\I18n\LanguageService;
+use think\facade\Log;
 
 /**
- * Auth Middleware | 认证中间件
+ * Authentication Middleware | 认证中间件
  *
- * Validates JWT token and authenticates the user.
- * 验证JWT令牌并认证用户。
+ * Validates JWT token and injects user/tenant context into request.
+ * 验证 JWT token 并将用户/租户上下文注入到请求中。
+ *
+ * Authentication failure reasons | 认证失败原因分类：
+ * - token_missing: Authorization header not provided
+ * - token_invalid: Token format error or signature verification failed
+ * - token_expired: Token has expired
+ * - token_revoked: Token has been revoked
+ * - decode_error: Failed to decode token payload
  *
  * @package app\middleware
  */
@@ -26,6 +34,37 @@ class Auth
     {
         $this->jwtService = new JwtService();
         $this->langService = app()->make(LanguageService::class);
+    }
+
+    /**
+     * Log authentication failure with detailed context | 记录认证失败及详细上下文
+     *
+     * @param Request $request Request instance
+     * @param string $reason Failure reason (token_missing|token_invalid|token_expired|token_revoked|decode_error)
+     * @param array $context Additional context
+     * @return void
+     */
+    protected function logAuthFailure(Request $request, string $reason, array $context = []): void
+    {
+        // Get trace_id for observability | 获取 trace_id 用于可观测性
+        $traceId = $this->getTraceId($request);
+
+        // Get tenant_id if available | 获取 tenant_id（如果可用）
+        $tenantId = null;
+        if (method_exists($request, 'getTenantId')) {
+            $tenantId = $request->getTenantId();
+        }
+
+        Log::warning('Authentication failed', array_merge([
+            'reason'     => $reason,
+            'trace_id'   => $traceId,
+            'tenant_id'  => $tenantId,
+            'client_ip'  => $request->ip(),
+            'user_agent' => $request->header('User-Agent'),
+            'path'       => $request->path(),
+            'method'     => $request->method(),
+            'timestamp'  => time(),
+        ], $context));
     }
 
     /**
@@ -46,6 +85,9 @@ class Auth
         $token = $this->getTokenFromRequest($request);
 
         if (!$token) {
+            // Log authentication failure | 记录认证失败
+            $this->logAuthFailure($request, 'token_missing');
+
             // Get trace_id for observability | 获取 trace_id 用于可观测性
             $traceId = $this->getTraceId($request);
 
@@ -74,12 +116,37 @@ class Auth
 
             return $next($request);
         } catch (\Exception $e) {
+            // Determine failure reason based on exception | 根据异常确定失败原因
+            $reason = 'token_invalid';
+            $errorCode = 2001;
+            $errorMessage = $this->langService->trans('error.token_invalid');
+
+            // Classify error type | 分类错误类型
+            $exceptionMessage = $e->getMessage();
+            if (strpos($exceptionMessage, 'Expired') !== false || strpos($exceptionMessage, 'expired') !== false) {
+                $reason = 'token_expired';
+                $errorCode = 2002;
+                $errorMessage = $this->langService->trans('error.token_expired');
+            } elseif (strpos($exceptionMessage, 'revoked') !== false || strpos($exceptionMessage, 'Revoked') !== false) {
+                $reason = 'token_revoked';
+                $errorCode = 2003;
+                $errorMessage = 'Token has been revoked';
+            } elseif (strpos($exceptionMessage, 'decode') !== false || strpos($exceptionMessage, 'Decode') !== false) {
+                $reason = 'decode_error';
+            }
+
+            // Log authentication failure with exception details | 记录认证失败及异常详情
+            $this->logAuthFailure($request, $reason, [
+                'exception' => get_class($e),
+                'error_message' => $exceptionMessage,
+            ]);
+
             // Get trace_id for observability | 获取 trace_id 用于可观测性
             $traceId = $this->getTraceId($request);
 
             return ResponseHelper::jsonError(
-                2001,
-                $this->langService->trans('error.token_missing'),
+                $errorCode,
+                $errorMessage,
                 401,
                 $traceId
             );

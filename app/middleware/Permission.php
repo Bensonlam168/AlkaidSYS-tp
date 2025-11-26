@@ -39,6 +39,46 @@ class Permission
     }
 
     /**
+     * Log permission denial with detailed context | 记录权限拒绝及详细上下文
+     *
+     * @param Request $request Request instance
+     * @param string $permission Permission identifier
+     * @param int|null $userId User ID
+     * @param string $reason Denial reason
+     * @return void
+     */
+    protected function logPermissionDenied(Request $request, string $permission, ?int $userId, string $reason = 'insufficient_permission'): void
+    {
+        // Get trace_id for observability | 获取 trace_id 用于可观测性
+        $traceId = $this->getTraceId($request);
+
+        // Get tenant_id if available | 获取 tenant_id（如果可用）
+        $tenantId = null;
+        if (method_exists($request, 'getTenantId')) {
+            $tenantId = $request->getTenantId();
+        }
+
+        // Parse permission to extract resource and action | 解析权限以提取资源和动作
+        $parts = explode(':', str_replace('.', ':', $permission));
+        $resource = $parts[0] ?? 'unknown';
+        $action = $parts[1] ?? 'unknown';
+
+        Log::warning('Permission denied', [
+            'reason'     => $reason,
+            'user_id'    => $userId,
+            'tenant_id'  => $tenantId,
+            'permission' => $permission,
+            'resource'   => $resource,
+            'action'     => $action,
+            'path'       => $request->path(),
+            'method'     => $request->method(),
+            'trace_id'   => $traceId,
+            'client_ip'  => $request->ip(),
+            'timestamp'  => time(),
+        ]);
+    }
+
+    /**
      * Handle request | 处理请求
      *
      * @param Request $request Custom request instance with tenant/user context
@@ -81,6 +121,9 @@ class Permission
             $hasPermission = $this->checkUserPermission($userId, $permission);
 
             if (!$hasPermission) {
+                // Log permission denial | 记录权限拒绝
+                $this->logPermissionDenied($request, $permission, $userId);
+
                 // Get trace_id for observability | 获取 trace_id 用于可观测性
                 $traceId = $this->getTraceId($request);
 
