@@ -161,8 +161,17 @@
 - **依赖**：无
 - **被依赖**：T-020, T-022
 
-🔄 **[T-022] (P1) Trace ID & 日志可观测性收尾**
+✅ **[T-022] (P1) Trace ID & 日志可观测性收尾** `[已完成 2025-11-27]`
 - **描述**：确保所有 API 响应都带 trace_id，关键路径记录租户/用户/trace 上下文
+- **完成时间**：2025-11-27
+- **已完成**：
+  - ✅ Trace 中间件：生成/注入 trace_id 到每个请求
+  - ✅ ApiController：所有标准方法（success/error/validationError/notFound/unauthorized/forbidden）包含 trace_id
+  - ✅ ExceptionHandle：所有异常响应包含 trace_id
+  - ✅ AccessLog 中间件：记录完整上下文（trace_id/tenant_id/user_id/site_id/method/path/status/response_time）
+  - ✅ Auth/Permission/Cors 中间件：日志记录包含 trace_id
+  - ✅ RateLimit 中间件：429 响应包含 trace_id 和 timestamp
+  - ✅ 所有业务控制器继承 ApiController，响应统一包含 trace_id
 - **代码证据**：ApiController::success/error 已统一注入 trace_id；ExceptionHandle::render 也支持 trace_id
 - **依赖**：无
 - **被依赖**：T-021

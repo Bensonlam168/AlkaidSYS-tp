@@ -345,12 +345,25 @@ class RateLimit
     {
         $algorithm = (string) ($meta['algorithm'] ?? 'fixed_window');
 
+        // Get trace_id from request | 从请求获取 trace_id
+        $traceId = null;
+        try {
+            $request = request();
+            if ($request && method_exists($request, 'getTraceId')) {
+                $traceId = $request->getTraceId();
+            } elseif ($request && method_exists($request, 'header')) {
+                $traceId = $request->header('X-Trace-Id');
+            }
+        } catch (\Throwable $e) {
+            // Ignore trace ID retrieval errors
+        }
+
         if ($algorithm === 'token_bucket') {
             // Token Bucket 响应
             $body = [
-                'code'    => 429,
-                'message' => 'Too Many Requests',
-                'data'    => [
+                'code'      => 429,
+                'message'   => 'Too Many Requests',
+                'data'      => [
                     'scope'      => $meta['scope'] ?? null,
                     'capacity'   => $meta['capacity'] ?? null,
                     'rate'       => $meta['rate'] ?? null,
@@ -358,7 +371,13 @@ class RateLimit
                     'identifier' => $meta['identifier'] ?? null,
                     'algorithm'  => 'token_bucket',
                 ],
+                'timestamp' => time(),
             ];
+
+            // Add trace_id if available | 添加 trace_id（如果可用）
+            if ($traceId) {
+                $body['trace_id'] = $traceId;
+            }
 
             $response = json($body, 429);
             $response->header([
@@ -377,9 +396,9 @@ class RateLimit
             }
 
             $body = [
-                'code'    => 429,
-                'message' => 'Too Many Requests',
-                'data'    => [
+                'code'      => 429,
+                'message'   => 'Too Many Requests',
+                'data'      => [
                     'scope'      => $meta['scope'] ?? null,
                     'limit'      => $meta['limit'] ?? null,
                     'period'     => $meta['period'] ?? null,
@@ -387,7 +406,13 @@ class RateLimit
                     'identifier' => $meta['identifier'] ?? null,
                     'algorithm'  => 'fixed_window',
                 ],
+                'timestamp' => time(),
             ];
+
+            // Add trace_id if available | 添加 trace_id（如果可用）
+            if ($traceId) {
+                $body['trace_id'] = $traceId;
+            }
 
             $response = json($body, 429);
             $response->header([
