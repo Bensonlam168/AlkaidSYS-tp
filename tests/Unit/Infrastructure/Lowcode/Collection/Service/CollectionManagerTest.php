@@ -159,8 +159,9 @@ class CollectionManagerTest extends ThinkPHPTestCase
 
         $this->assertArrayHasKey('tenant_id', $columns);
         $this->assertArrayHasKey('site_id', $columns);
-        $this->assertSame(0, $columns['tenant_id']['default']);
-        $this->assertSame(0, $columns['site_id']['default']);
+        // Use assertEquals for loose comparison (string '0' vs int 0)
+        $this->assertEquals(0, $columns['tenant_id']['default']);
+        $this->assertEquals(0, $columns['site_id']['default']);
 
         $refBuildIndexes = new \ReflectionMethod(CollectionManager::class, 'buildIndexes');
         $refBuildIndexes->setAccessible(true);
