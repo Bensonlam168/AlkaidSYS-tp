@@ -155,9 +155,19 @@
 - **设计文档**：`design/06-ratelimit/ratelimit-strategy.md`
 - **依赖**：T-021（Nginx 网关需先配置或并行进行）
 
-🔄 **[T-021] (P1) Nginx 网关接入与路由治理**
+✅ **[T-021] (P1) Nginx 网关接入与路由治理** `[已完成 2025-11-27]`
 - **描述**：统一接入层、透传 X-Tenant-ID / X-Trace-Id 等头部，分环境配置与熔断限流策略
-- **代码证据**：deploy/nginx/alkaid.api.conf 已包含基础 CORS 与租户相关头部配置，但尚无 stage/prod 接入
+- **完成时间**：2025-11-27
+- **已完成**：
+  - ✅ 关键头部透传：X-Trace-Id/X-Tenant-ID/X-User-ID/X-Site-ID（支持分布式追踪和多租户）
+  - ✅ 分环境配置文件：alkaid.api.dev.conf / alkaid.api.stage.conf / alkaid.api.prod.conf
+  - ✅ CORS 配置：分环境的严格 CORS 策略
+  - ✅ SSL/TLS：HTTPS 配置、HSTS、安全头部
+  - ✅ JSON 访问日志：记录 trace_id/tenant_id/user_id/site_id/rate_limited等关键字段
+  - ✅ 生产级特性：Gzip压缩、静态资源缓存、连接复用、缓冲优化
+  - ⚠️  Nginx 层限流：prod 配置中已添加基础限流（应用层已有 Token Bucket）
+  - ⚠️  熔断策略：未实施（需要 nginx-more 或 OpenResty，标记为未来优化）
+- **备注**：主配置文件 alkaid.api.conf 已更新，分环境配置可按需使用
 - **依赖**：无
 - **被依赖**：T-020, T-022
 
@@ -176,9 +186,18 @@
 - **依赖**：无
 - **被依赖**：T-021
 
-⬜ **[T-041] (P2) 可观测性与运维监控能力增强**
+✅ **[T-041] (P2) 可观测性与运维监控能力增强** `[已完成 2025-11-27]`
 - **描述**：认证/权限失败、慢查询、缓存命中率与性能指标
-- **代码证据**：docs/todo/development-backlog-2025-11-23.md 中可观测性条目标记为未完成
+- **完成时间**：2025-11-27
+- **已完成**：
+  - ✅ 认证失败监控：Auth 中间件详细记录失败原因（token_missing/invalid/expired/revoked/decode_error）及完整上下文
+  - ✅ 权限失败监控：Permission 中间件记录资源/动作/用户信息及拒绝原因
+  - ✅ 慢查询监听器：SlowQueryListener 监控数据库查询（阈值100ms），记录SQL/绑定参数/执行时间/trace_id
+  - ✅ 性能指标：AccessLog 已提供响应时间等性能数据（无需额外实施）
+  - ⚠️  缓存监控：未实施（作为未来优化，需要时可在关键服务中添加）
+  - ✅ 统一日志格式：所有监控日志包含 trace_id，使用结构化格式
+  - ✅ 代码质量：通过 PSR-12 格式检查
+- **备注**：SlowQueryListener 需在 config/event.php 中注册 `think\db\event\SqlExecuted` 事件
 - **依赖**：T-021, T-022
 
 ---
