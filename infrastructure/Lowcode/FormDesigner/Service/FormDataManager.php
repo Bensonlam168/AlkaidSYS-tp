@@ -156,14 +156,14 @@ class FormDataManager
      * List form data | 列出表单数据
      *
      * @param string $formName Form name | 表单名称
-     * @param array $filters  Filters | 筛选条件
-     * @param int   $page     Page number | 页码
-     * @param int   $pageSize Page size | 每页数量
-     * @param int   $tenantId Tenant ID | 租户ID
-     * @param int   $siteId   Site ID | 站点ID
+     * @param int    $tenantId Tenant ID | 租户ID（必选，置于可选参数之前以符合 PHP 8.2+ 规范）
+     * @param array  $filters  Filters | 筛选条件
+     * @param int    $page     Page number | 页码
+     * @param int    $pageSize Page size | 每页数量
+     * @param int    $siteId   Site ID | 站点ID
      * @return array{list: array, total: int, page: int, pageSize: int}
      */
-    public function list(string $formName, array $filters = [], int $page = 1, int $pageSize = 20, int $tenantId, int $siteId = 0): array
+    public function list(string $formName, int $tenantId, array $filters = [], int $page = 1, int $pageSize = 20, int $siteId = 0): array
     {
         $tableName = $this->getTableName($formName, $tenantId, $siteId);
 

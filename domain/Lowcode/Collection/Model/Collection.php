@@ -30,6 +30,20 @@ class Collection implements CollectionInterface
     protected ?string $updatedAt = null;
 
     /**
+     * Tenant ID | 租户ID
+     *
+     * NOTE(T-002/T-003): Domain 层暂不在接口上强制暴露多租户契约，
+     * 但通过可选属性与 getTenantId()/getSiteId() 为基础设施层持久化
+     * 提供信息来源。
+     */
+    protected ?int $tenantId = null;
+
+    /**
+     * Site ID | 站点ID
+     */
+    protected ?int $siteId = null;
+
+    /**
      * Constructor | 构造函数
      *
      * @param string $name Collection name | Collection名称
@@ -44,7 +58,7 @@ class Collection implements CollectionInterface
         $this->options = $config['options'] ?? [];
 
         if (isset($config['id'])) {
-            $this->id = (int)$config['id'];
+            $this->id = (int) $config['id'];
         }
 
         if (isset($config['created_at'])) {
@@ -53,6 +67,15 @@ class Collection implements CollectionInterface
 
         if (isset($config['updated_at'])) {
             $this->updatedAt = $config['updated_at'];
+        }
+
+        // Optional multi-tenant context | 可选多租户上下文
+        if (isset($config['tenant_id'])) {
+            $this->tenantId = (int) $config['tenant_id'];
+        }
+
+        if (isset($config['site_id'])) {
+            $this->siteId = (int) $config['site_id'];
         }
     }
 
@@ -241,6 +264,26 @@ class Collection implements CollectionInterface
     public function getUpdatedAt(): ?string
     {
         return $this->updatedAt;
+    }
+
+    /**
+     * Get tenant ID | 获取租户ID
+     *
+     * @return int|null
+     */
+    public function getTenantId(): ?int
+    {
+        return $this->tenantId;
+    }
+
+    /**
+     * Get site ID | 获取站点ID
+     *
+     * @return int|null
+     */
+    public function getSiteId(): ?int
+    {
+        return $this->siteId;
     }
 
     /**

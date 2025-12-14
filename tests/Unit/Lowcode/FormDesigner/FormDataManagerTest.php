@@ -201,12 +201,13 @@ class FormDataManagerTest extends ThinkPHPTestCase
         $this->mockDependencies($formName, $tenantId);
 
         // Test list all | 测试列出所有
-        $result = $this->manager->list($formName, [], 1, 10, $tenantId);
+        // 签名已调整：list(formName, tenantId, filters, page, pageSize, siteId)
+        $result = $this->manager->list($formName, $tenantId, [], 1, 10);
         $this->assertEquals(3, $result['total']);
         $this->assertCount(3, $result['list']);
 
         // Test filter | 测试筛选
-        $resultFilter = $this->manager->list($formName, ['price' => 20], 1, 10, $tenantId);
+        $resultFilter = $this->manager->list($formName, $tenantId, ['price' => 20], 1, 10);
         $this->assertEquals(1, $resultFilter['total']);
         $this->assertEquals('Item 2', $resultFilter['list'][0]['name']);
     }
@@ -227,7 +228,8 @@ class FormDataManagerTest extends ThinkPHPTestCase
 
         $this->mockDependencies($formName, $tenantId);
 
-        $result = $this->manager->list($formName, [], 1, 10, $tenantId);
+        // 签名已调整：list(formName, tenantId, filters, page, pageSize, siteId)
+        $result = $this->manager->list($formName, $tenantId, [], 1, 10);
 
         $this->assertEquals(1, $result['total']);
         $this->assertCount(1, $result['list']);

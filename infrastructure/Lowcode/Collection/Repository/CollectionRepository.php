@@ -196,6 +196,9 @@ class CollectionRepository
             'options' => $schema['options'] ?? [],
             'created_at' => $data['created_at'] ?? null,
             'updated_at' => $data['updated_at'] ?? null,
+            // Multi-tenant metadata | 多租户元数据
+            'tenant_id' => $data['tenant_id'] ?? 0,
+            'site_id' => $data['site_id'] ?? 0,
         ]);
 
         return $collection;
