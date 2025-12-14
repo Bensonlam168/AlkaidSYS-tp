@@ -41,13 +41,86 @@
   - JSON 响应中的诊断字段及限流相关响应头符合 API 与安全规范描述。
 - 错误处理测试 **必须** 断言所有 4xx/5xx JSON 响应中包含 `trace_id` 字段。
 
-## 7. CI 集成与覆盖率
+## 7. 统一测试入口 (T-056)
+
+项目提供统一的测试入口命令，通过 ThinkPHP CLI 执行：
+
+### 运行测试
+
+```bash
+# 运行所有测试（在 Docker 容器内）
+docker exec -it alkaid-backend php think test
+
+# 仅运行单元测试
+docker exec -it alkaid-backend php think test --testsuite=Unit
+
+# 仅运行功能测试
+docker exec -it alkaid-backend php think test --testsuite=Feature
+
+# 运行性能测试（需要 phpunit.performance.xml）
+docker exec -it alkaid-backend php think test -c phpunit.performance.xml
+
+# 按测试方法名过滤
+docker exec -it alkaid-backend php think test --filter=testCanCreateUser
+
+# 生成 HTML 覆盖率报告
+docker exec -it alkaid-backend php think test --coverage-html=coverage
+
+# 首次失败时停止
+docker exec -it alkaid-backend php think test --stop-on-failure
+
+# 详细输出
+docker exec -it alkaid-backend php think test --phpunit-verbose
+
+# 透传额外的 PHPUnit 参数
+docker exec -it alkaid-backend php think test --passthru="--group=auth"
+```
+
+### 可用选项
+
+| 选项 | 简写 | 描述 |
+|------|------|------|
+| `--testsuite` | `-s` | 测试套件名称 (Unit/Feature/Performance) |
+| `--filter` | `-f` | 按方法/类名过滤测试 |
+| `--coverage-html` | | 生成 HTML 覆盖率报告 |
+| `--coverage-text` | | 输出文本覆盖率报告 |
+| `--configuration` | `-c` | PHPUnit 配置文件 (默认: phpunit.xml) |
+| `--stop-on-failure` | | 首次失败时停止 |
+| `--stop-on-error` | | 首次错误时停止 |
+| `--phpunit-verbose` | | PHPUnit 详细输出 |
+| `--phpunit-debug` | | PHPUnit 调试模式 |
+| `--list-suites` | | 列出可用的测试套件 |
+| `--passthru` | `-p` | 额外的 PHPUnit 参数 |
+
+### 重要说明
+
+- 所有测试命令 **必须** 在 `alkaid-backend` Docker 容器内执行。
+- 默认配置文件为项目根目录的 `phpunit.xml`。
+- 性能测试使用 `phpunit.performance.xml` 配置。
+- 退出码 0 表示所有测试通过；非零表示存在失败。
+
+## 8. CI 集成与覆盖率 (T-059)
 
 - CI 流水线 **必须** 在合入受保护分支前执行完整的自动化测试套件。
 - 建议为关键模块（领域层、安全相关、API 层）设定最低覆盖率阈值。
 - 失败测试 **必须** 被视为发布阻断因素，除非通过正式流程豁免并记录原因。
 
-## 8. 测试 Phase 模型
+### CI 工作流
+
+项目使用 GitHub Actions 进行 CI/CD，包含两个主要任务：
+
+1. **PHP 代码风格检查 (PSR-12)**：以 dry-run 模式运行 PHP-CS-Fixer 检查代码格式。
+2. **PHPUnit 测试**：基于 MySQL 和 Redis 服务运行测试套件。
+
+CI 触发条件：
+- 对任意分支的 Pull Request
+- 推送到 `main`、`develop` 及 `releases/*` 分支
+
+### CI 配置
+
+完整的 CI 配置请参见 `.github/workflows/backend-php-cs-fixer.yml`。
+
+## 9. 测试 Phase 模型
 
 - **Phase 1（当前基线能力）**：
   - 现有测试可以暂时保持历史风格，但新增测试 **必须** 遵循本规范。

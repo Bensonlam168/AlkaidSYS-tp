@@ -64,32 +64,44 @@ subagents:
   enabled: true
   directory: .augment/subagents
   available:
-    - lowcode-developer  # 低代码开发专家
-    - api-developer      # API 开发专家
-    - frontend-developer # 前端开发专家（待创建）
-    - database-expert    # 数据库专家（待创建）
+    - lowcode-developer         # 低代码开发专家
+    - api-developer             # API 开发专家
+    - auth-security-engineer    # 认证安全工程师
+    - frontend-integrator       # 前端集成专家
+    - test-migration-engineer   # 测试迁移工程师
+    - code-reviewer             # 代码审查专家
+    - documentation-reviewer    # 文档审查专家
+    - architecture-reviewer     # 架构审查专家
 
 # Skills 配置
 skills:
   enabled: true
   directory: .augment/skills
   available:
-    - create-collection    # 创建 Collection
-    - create-field         # 创建字段
-    - create-api-endpoint  # 创建 API 端点
-    - create-form-schema   # 创建表单 Schema
-    - run-migration        # 运行迁移
-    - run-tests           # 运行测试
+    - create-collection                        # 创建 Collection
+    - create-field                             # 创建字段
+    - create-api-endpoint                      # 创建 API 端点
+    - create-form-schema                       # 创建表单 Schema
+    - run-migration                            # 运行迁移
+    - run-tests                                # 运行测试
+    - review-code                              # 代码审查
+    - auth-permission-best-practices           # 认证权限最佳实践
+    - rate-limit-and-gateway-best-practices    # 限流网关最佳实践
+    - workflow-and-plugin-architecture         # 工作流插件架构
 
 # Commands 配置
 commands:
   enabled: true
   directory: .augment/commands
   available:
-    - lowcode-init    # 初始化低代码环境
-    - generate-crud   # 生成 CRUD 代码
-    - setup-project   # 项目初始化（待创建）
-    - deploy          # 部署（待创建）
+    - lowcode-init                          # 初始化低代码环境
+    - generate-crud                         # 生成 CRUD 代码
+    - setup-project                         # 项目初始化
+    - deploy                                # 部署
+    - tests-and-migrations-hardening        # 测试迁移加固
+    - auth-permission-integration           # 权限集成
+    - casbin-phase2-rollout                 # Casbin Phase2 部署
+    - api-error-trace-pagination-unify      # API 错误追踪分页统一
 
 # 上下文文件（自动加载）
 context_files:

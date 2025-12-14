@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use think\App;
 use think\Request;
 use Domain\Lowcode\Collection\Model\Collection;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
@@ -24,21 +25,9 @@ class CollectionController extends ApiController
     protected CollectionManager $collectionManager;
 
     /**
-     * 初始化控制器，注入 CollectionManager
-     */
-    protected function initialize()
-    {
-        parent::initialize();
-        $this->collectionManager = $this->app->make(CollectionManager::class);
-    }
-
-
-    /**
      * Constructor | 构造函数
      */
-    /**
-     * Constructor | 构造函数
-    public function __construct(\think\App $app, CollectionManager $collectionManager)
+    public function __construct(App $app, CollectionManager $collectionManager)
     {
         parent::__construct($app);
         $this->collectionManager = $collectionManager;
@@ -123,11 +112,18 @@ class CollectionController extends ApiController
         }
 
         try {
+            // Resolve tenant/site from request context | 从请求上下文解析租户/站点
+            $tenantId = $request->tenantId();
+            $siteId = $request->siteId();
+
             // Build collection | 构建Collection
             $collection = new Collection($data['name'], [
                 'title' => $data['title'],
                 'description' => $data['description'] ?? '',
                 'table_name' => $data['table_name'] ?? null,
+                // Persist as tenant-scoped metadata | 将元数据保存到当前租户/站点
+                'tenant_id' => $tenantId,
+                'site_id' => $siteId,
             ]);
 
             // Add fields | 添加字段
@@ -153,18 +149,14 @@ class CollectionController extends ApiController
         }
     }
 
-    /**
-     * Update collection | 更新Collection
-     *
-     * PUT /api/lowcode/collections/{name}
-     *
-     * @param string $name Collection name | Collection名称
-     * @return Response
-     */
     public function update(string $name, Request $request): Response
     {
         $data = $request->put();
-        $tenantId = $data['tenant_id'] ?? 1;
+
+        // Get tenant ID from request context (set by TenantIdentify/Auth middleware)
+        // 从请求上下文获取租户ID（由 TenantIdentify/Auth 中间件设置）
+        // NOTE: 租户信息仅来自 Request 上下文，不信任请求体中的 tenant_id 字段。
+        $tenantId = $request->tenantId();
         $collection = $this->collectionManager->get($name, $tenantId);
 
         if (!$collection) {
@@ -190,20 +182,17 @@ class CollectionController extends ApiController
         }
     }
 
-    /**
-     * Delete collection | 删除Collection
-     *
-     * DELETE /api/lowcode/collections/{name}
-     *
-     * @param string $name Collection name | Collection名称
-     * @return Response
-     */
     public function delete(string $name, Request $request): Response
     {
         try {
             $data = $request->delete();
             $dropTable = (bool)($data['drop_table'] ?? true);
-            $this->collectionManager->delete($name, $dropTable);
+
+            // Get tenant ID from request context (set by TenantIdentify/Auth middleware)
+            // 从请求上下文获取租户ID（由 TenantIdentify/Auth 中间件设置）
+            $tenantId = $request->tenantId();
+
+            $this->collectionManager->delete($name, $dropTable, $tenantId);
 
             return $this->success(null, 'Collection deleted successfully');
         } catch (\Exception $e) {

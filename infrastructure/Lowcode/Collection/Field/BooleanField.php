@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Boolean Field Type | 布尔字段类型
- * 
+ *
  * Represents a TINYINT(1) field for boolean values.
  * 表示用于布尔值的TINYINT(1)字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class BooleanField extends AbstractField

@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * File Field Type | 文件字段类型
- * 
+ *
  * Represents a VARCHAR field for file path storage.
  * 表示用于存储文件路径的VARCHAR字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class FileField extends AbstractField

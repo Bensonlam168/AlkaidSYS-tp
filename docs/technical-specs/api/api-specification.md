@@ -102,12 +102,9 @@ All API controllers **MUST** extend `app\controller\ApiController`. The followin
 - **`paginate(array $list, int $total, int $page, int $pageSize, string $message = 'Success')`**
   - Purpose: Unified pagination response
   - **Standard response payload**: `{ list, total, page, page_size, total_pages }`
-  - **Phase 1 (current implementation)**:
-    - Existing `ApiController::paginate` returns fields `{ list, total, page, pageSize }` and does not yet include `total_pages`.
-    - New code SHOULD continue to use this helper to avoid ad-hoc pagination payloads.
-  - **Phase 2 (target alignment)**:
-    - Pagination responses MUST be aligned with the design document `design/03-data-layer/10-api-design.md` and this specification.
-    - Implementation MUST introduce `page_size` (snake_case) and `total_pages` fields in the JSON payload, and deprecate `pageSize` in favour of a fully consistent structure across all APIs.
+  - **Implementation status**: ✅ Fully aligned with target specification.
+    - `ApiController::paginate` returns `{ list, total, page, page_size, total_pages }` with snake_case field names.
+    - All new code MUST use this helper to ensure consistent pagination payloads across all APIs.
 
 - **`error(string $message, int $code = 400, array $errors = [], int $httpCode = 400)`**
   - Purpose: Business failure response

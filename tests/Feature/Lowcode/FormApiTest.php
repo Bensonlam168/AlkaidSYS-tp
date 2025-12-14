@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Lowcode;
 
+use Infrastructure\Lowcode\Collection\Service\CollectionManager;
 use Tests\ThinkPHPTestCase;
 use Tests\Helpers\AuthHelper;
 use think\facade\Db;
@@ -20,14 +21,7 @@ class FormApiTest extends ThinkPHPTestCase
 {
     protected function setUp(): void
     {
-        // Force debug ON to see errors
-        putenv('APP_DEBUG=1');
         parent::setUp();
-
-        if ($this->app()) {
-            $this->app()->debug(true);
-            $this->app()->config->set(['type' => 'html'], 'trace');
-        }
 
         // Clean up before tests
         Db::execute('TRUNCATE TABLE lowcode_forms');
@@ -49,7 +43,36 @@ class FormApiTest extends ThinkPHPTestCase
         }
 
         // Bind SchemaBuilderInterface
-        $this->app()->bind(\Domain\Schema\Interfaces\SchemaBuilderInterface::class, \Infrastructure\Schema\SchemaBuilder::class);
+        $this->app()->bind(
+            \Domain\Schema\Interfaces\SchemaBuilderInterface::class,
+            \Infrastructure\Schema\SchemaBuilder::class
+        );
+
+        // Ensure Form API tests always use the real CollectionManager implementation
+        // 确保表单 API 测试始终使用真实的 CollectionManager 实现
+
+        $app = $this->app();
+
+        // 1. 删除已解析的 CollectionManager 实例，防止复用旧 Mock
+        $app->delete(CollectionManager::class);
+
+        // 2. 通过反射清理 bind 中针对 CollectionManager 的闭包绑定
+        //    避免后续从容器解析时仍然返回 Mockery Mock
+        try {
+            $refApp = new \ReflectionObject($app);
+            if ($refApp->hasProperty('bind')) {
+                $bindProp = $refApp->getProperty('bind');
+                $bindProp->setAccessible(true);
+                $bind = $bindProp->getValue($app);
+
+                if (is_array($bind) && array_key_exists(CollectionManager::class, $bind)) {
+                    unset($bind[CollectionManager::class]);
+                    $bindProp->setValue($app, $bind);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Ignore reflection errors in tests
+        }
     }
 
     protected function tearDown(): void
@@ -182,7 +205,7 @@ class FormApiTest extends ThinkPHPTestCase
             $controller = $this->app()->make(\app\controller\lowcode\FormSchemaController::class);
             $this->assertInstanceOf(\app\controller\lowcode\FormSchemaController::class, $controller);
         } catch (\Throwable $e) {
-            echo "Controller Instantiation Failed: " . $e->getMessage() . "\n";
+            echo 'Controller Instantiation Failed: ' . $e->getMessage() . "\n";
             throw $e;
         }
     }
@@ -196,7 +219,7 @@ class FormApiTest extends ThinkPHPTestCase
             $manager = $this->app()->make(\Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager::class);
             $this->assertInstanceOf(\Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager::class, $manager);
         } catch (\Throwable $e) {
-            echo "Manager Instantiation Failed: " . $e->getMessage() . "\n";
+            echo 'Manager Instantiation Failed: ' . $e->getMessage() . "\n";
             throw $e;
         }
     }
@@ -218,7 +241,7 @@ class FormApiTest extends ThinkPHPTestCase
             ],
             'collection_name' => 'test_collection'
         ]);
-        
+
         if ($response->getCode() !== 200) {
             file_put_contents('error_create.html', $response->getContent());
             echo "Create Form Failed. See error_create.html\n";
@@ -269,7 +292,7 @@ class FormApiTest extends ThinkPHPTestCase
             ]
         ]);
         if ($response->getCode() !== 200) {
-            echo "Create Collection Failed (Code " . $response->getCode() . "): " . strip_tags($response->getContent()) . "\n";
+            echo 'Create Collection Failed (Code ' . $response->getCode() . '): ' . strip_tags($response->getContent()) . "\n";
         }
         $this->assertEquals(200, $response->getCode());
 

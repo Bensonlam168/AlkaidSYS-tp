@@ -12,38 +12,34 @@ use think\facade\Event;
 
 /**
  * Relationship Manager Service | 关系管理服务
- * 
+ *
  * Manages relationships between collections including pivot table creation.
  * 管理Collection之间的关系，包括中间表创建。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Service
  */
 class RelationshipManager
 {
-    protected SchemaBuilderInterface $schemaBuilder;
-    protected RelationshipRepository $relationshipRepo;
-    protected CollectionManager $collectionManager;
-
     /**
      * Constructor | 构造函数
-     * 
+     *
+     * Uses constructor property promotion for cleaner dependency injection.
+     * 使用构造器属性提升实现更简洁的依赖注入。
+     *
      * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
      * @param RelationshipRepository $relationshipRepo Relationship repository | 关系仓储
      * @param CollectionManager $collectionManager Collection manager | Collection管理器
      */
     public function __construct(
-        SchemaBuilderInterface $schemaBuilder,
-        RelationshipRepository $relationshipRepo,
-        CollectionManager $collectionManager
+        protected readonly SchemaBuilderInterface $schemaBuilder,
+        protected readonly RelationshipRepository $relationshipRepo,
+        protected readonly CollectionManager $collectionManager
     ) {
-        $this->schemaBuilder = $schemaBuilder;
-        $this->relationshipRepo = $relationshipRepo;
-        $this->collectionManager = $collectionManager;
     }
 
     /**
      * Add relationship to collection | 添加关系到Collection
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param RelationshipInterface $relationship Relationship to add | 要添加的关系
      * @return void
@@ -52,7 +48,7 @@ class RelationshipManager
     public function addRelationship(string $collectionName, RelationshipInterface $relationship): void
     {
         $collection = $this->collectionManager->get($collectionName);
-        
+
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }
@@ -84,7 +80,7 @@ class RelationshipManager
 
     /**
      * Remove relationship | 移除关系
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param string $relationshipName Relationship name | 关系名称
      * @param bool $dropPivotTable Drop pivot table for belongsToMany | 是否删除belongsToMany的中间表
@@ -97,13 +93,13 @@ class RelationshipManager
         bool $dropPivotTable = true
     ): void {
         $collection = $this->collectionManager->get($collectionName);
-        
+
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }
 
         $relationship = $collection->getRelationship($relationshipName);
-        
+
         if (!$relationship) {
             throw new \InvalidArgumentException("Relationship not found: {$relationshipName}");
         }
@@ -131,7 +127,7 @@ class RelationshipManager
 
     /**
      * Handle relationship type specific logic | 处理关系类型特定逻辑
-     * 
+     *
      * @param $sourceCollection Source collection | 源Collection
      * @param $targetCollection Target collection | 目标Collection
      * @param RelationshipInterface $relationship Relationship | 关系
@@ -167,7 +163,7 @@ class RelationshipManager
 
     /**
      * Create pivot table for many-to-many relationship | 为多对多关系创建中间表
-     * 
+     *
      * @param $sourceCollection Source collection | 源Collection
      * @param $targetCollection Target collection | 目标Collection
      * @param RelationshipInterface $relationship Relationship | 关系
@@ -216,7 +212,7 @@ class RelationshipManager
 
     /**
      * Get pivot table name | 获取中间表名
-     * 
+     *
      * @param $sourceCollection Source collection | 源Collection
      * @param RelationshipInterface $relationship Relationship | 关系
      * @return string Pivot table name | 中间表名
@@ -224,7 +220,7 @@ class RelationshipManager
     protected function getPivotTableName($sourceCollection, RelationshipInterface $relationship): string
     {
         $options = $relationship->getOptions();
-        
+
         if (isset($options['pivot_table'])) {
             return $options['pivot_table'];
         }
@@ -234,10 +230,10 @@ class RelationshipManager
         // 格式: lc_pivot_{源}_{目标}
         $sourceName = str_replace('lc_', '', $sourceCollection->getTableName());
         $targetName = str_replace('lc_', '', $relationship->getTargetCollection());
-        
+
         $names = [$sourceName, $targetName];
         sort($names); // Ensure consistent naming | 确保命名一致性
-        
+
         return 'lc_pivot_' . implode('_', $names);
-   }
+    }
 }

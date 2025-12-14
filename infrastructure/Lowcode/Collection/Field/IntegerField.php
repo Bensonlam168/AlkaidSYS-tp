@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Integer Field Type | 整数字段类型
- * 
+ *
  * Represents an INT field for integer numbers.
  * 表示用于整数的INT字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class IntegerField extends AbstractField

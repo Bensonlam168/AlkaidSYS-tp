@@ -67,3 +67,10 @@ For each protected branch (`main` and `develop`):
   - Commit message rules enforced via commitlint and Git hooks.
 - Future CI (Phase 2) MAY add automated checks to reject branches or PRs that violate naming / commit rules before merge.
 
+## 6. Current Status and GitHub Free Plan Limitation
+
+- For private repositories on the GitHub Free plan, "Branch protection rules" cannot be enabled.
+- The branch protection rules described in this document are **fully designed and agreed at the specification level**, but **are not yet enforced by GitHub** for this repository.
+- Once the repository is upgraded to a paid plan or made public, these branch protection rules SHOULD be enabled immediately according to this guideline.
+
+

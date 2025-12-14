@@ -38,4 +38,3 @@ class SessionEnvironmentGuardService extends Service
         }
     }
 }
-

@@ -64,6 +64,26 @@
     - 外部：`code = resource . ':' . action`（例如：`forms:view`）
   - 新增代码不得在没有明确设计决策的前提下引入第三种权限编码格式（例如 `AC_xxx`），以避免权限体系碎片化。
 
+#### 权限中间件参数格式
+
+权限中间件 `app\\middleware\\Permission` 支持两种权限参数格式，以提供向后兼容性和灵活性：
+
+1. **外部权限码格式（推荐）**：`resource:action`
+   - 与 API 返回值和前端使用的权限码保持一致。
+   - 示例：`forms:view`、`lowcode:read`。
+   - 路由示例：`->middleware(\\app\\middleware\\Permission::class . ':forms:view')`。
+
+2. **内部 slug 格式（仅用于兼容历史路由）**：`resource.action`
+   - 与数据库字段 `permissions.slug` 保持一致。
+   - 示例：`forms.view`、`lowcode.read`。
+   - 路由示例：`->middleware(\\app\\middleware\\Permission::class . ':forms.view')`。
+
+中间件内部会对两种格式做统一归一化处理：
+
+- 当收到 `resource.action` 形式时，会先转换为 `resource:action`，再调用 `PermissionService::hasPermission()`。
+- `PermissionService` 以及所有认证相关 API 始终使用 `resource:action` 形式作为对外权限码。
+- 新增路由 **必须** 在中间件声明中使用 `resource:action` 形式；`resource.action` 仅用于兼容旧代码，禁止在新代码中继续引入。
+
 ### 3.2 租户隔离
 - 所有数据访问必须按 `tenant_id` 进行范围限定
 - 权限使用租户范围前缀：`tenant:{tenantId}:{resource}`

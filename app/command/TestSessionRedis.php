@@ -55,4 +55,3 @@ class TestSessionRedis extends Command
         return 0;
     }
 }
-

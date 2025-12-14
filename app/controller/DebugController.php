@@ -90,4 +90,3 @@ class DebugController extends ApiController
         return $this->success($data, 'Session Redis test completed');
     }
 }
-

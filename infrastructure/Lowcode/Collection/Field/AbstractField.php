@@ -8,10 +8,10 @@ use Domain\Lowcode\Collection\Interfaces\FieldInterface;
 
 /**
  * Abstract Field Base Class | 抽象字段基类
- * 
+ *
  * Base implementation for all field types providing common functionality.
  * 为所有字段类型提供通用功能的基础实现。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 abstract class AbstractField implements FieldInterface
@@ -26,7 +26,7 @@ abstract class AbstractField implements FieldInterface
 
     /**
      * Constructor | 构造函数
-     * 
+     *
      * @param string $name Field name | 字段名称
      * @param array $options Field options | 字段选项
      */
@@ -37,7 +37,7 @@ abstract class AbstractField implements FieldInterface
         $this->nullable = $options['nullable'] ?? true;
         $this->default = $options['default'] ?? null;
         $this->options = $options;
-        
+
         // Initialize type-specific properties in child classes
         // 在子类中初始化特定类型的属性
         $this->initializeType();
@@ -45,10 +45,10 @@ abstract class AbstractField implements FieldInterface
 
     /**
      * Initialize type-specific properties | 初始化特定类型属性
-     * 
+     *
      * Override in child classes to set type and dbType.
      * 在子类中重写以设置type和dbType。
-     * 
+     *
      * @return void
      */
     abstract protected function initializeType(): void;

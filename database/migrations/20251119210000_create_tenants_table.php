@@ -1,11 +1,10 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 /**
  * Create Tenants Table Migration | 创建租户表迁移
- * 
+ *
  * Creates the tenants table for multi-tenant support.
  * 为多租户支持创建租户表。
  */

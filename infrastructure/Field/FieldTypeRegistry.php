@@ -17,17 +17,17 @@ use Infrastructure\Lowcode\Collection\Field\FieldFactory;
  */
 /**
  * Field Type Registry | 字段类型注册表
- * 
+ *
  * Central registry for managing and creating field types dynamically.
  * 用于动态管理和创建字段类型的中央注册表。
- * 
+ *
  * @package Infrastructure\Field
  */
 class FieldTypeRegistry
 {
     /**
      * Registered field types | 已注册的字段类型
-     * 
+     *
      * @var array<string, class-string<FieldInterface>>
      */
     protected static array $types = [];
@@ -95,10 +95,10 @@ class FieldTypeRegistry
 
     /**
      * Register default field types | 注册默认字段类型
-     * 
+     *
      * This method is automatically called when the registry is first used.
      * 当注册表首次使用时，会自动调用此方法。
-     * 
+     *
      * @return void
      */
     public static function registerDefaults(): void

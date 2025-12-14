@@ -1,11 +1,10 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 /**
  * Create Sites Table Migration | 创建站点表迁移
- * 
+ *
  * Creates the sites table for multi-site support.
  * 为多站点支持创建站点表。
  */

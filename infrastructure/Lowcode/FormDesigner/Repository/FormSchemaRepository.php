@@ -8,12 +8,12 @@ use think\facade\Db;
 
 /**
  * Form Schema Repository | 表单Schema仓储
- * 
+ *
  * Handles persistence of Form Schema entities.
  * 处理表单Schema实体的持久化。
- * 
+ *
  * Based on design: 09-lowcode-framework/43-lowcode-form-designer.md
- * 
+ *
  * @package Infrastructure\Lowcode\FormDesigner\Repository
  */
 class FormSchemaRepository
@@ -22,7 +22,7 @@ class FormSchemaRepository
 
     /**
      * Save form schema | 保存表单Schema
-     * 
+     *
      * @param array $data Form schema data | 表单Schema数据
      * @return int Form ID | 表单ID
      */
@@ -48,7 +48,7 @@ class FormSchemaRepository
 
     /**
      * Find by ID | 按ID查找
-     * 
+     *
      * @param int $id Form ID | 表单ID
      * @param int|null $tenantId Tenant ID | 租户ID
      * @return array|null
@@ -56,11 +56,11 @@ class FormSchemaRepository
     public function findById(int $id, ?int $tenantId = null): ?array
     {
         $query = Db::name($this->table)->where('id', $id);
-        
+
         if ($tenantId !== null) {
             $query->where('tenant_id', $tenantId);
         }
-        
+
         $data = $query->find();
 
         if (!$data) {
@@ -72,7 +72,7 @@ class FormSchemaRepository
 
     /**
      * Find by name | 按name查找
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param int $tenantId Tenant ID | 租户ID
      * @param int|null $siteId Site ID | 站点ID
@@ -83,7 +83,7 @@ class FormSchemaRepository
         $query = Db::name($this->table)
             ->where('name', $name)
             ->where('tenant_id', $tenantId);
-        
+
         if ($siteId !== null) {
             $query->where('site_id', $siteId);
         }
@@ -99,7 +99,7 @@ class FormSchemaRepository
 
     /**
      * Find by collection name | 按Collection名称查找
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param int $tenantId Tenant ID | 租户ID
      * @return array Forms linked to collection | 关联到Collection的表单
@@ -112,12 +112,12 @@ class FormSchemaRepository
             ->select()
             ->toArray();
 
-        return array_map(fn($data) => $this->hydrate($data), $list);
+        return array_map(fn ($data) => $this->hydrate($data), $list);
     }
 
     /**
      * List forms | 列出表单
-     * 
+     *
      * @param int $tenantId Tenant ID | 租户ID
      * @param array $filters Filters | 筛选条件
      * @param int $page Page number | 页码
@@ -154,7 +154,7 @@ class FormSchemaRepository
             ->select()
             ->toArray();
 
-        $forms = array_map(fn($data) => $this->hydrate($data), $list);
+        $forms = array_map(fn ($data) => $this->hydrate($data), $list);
 
         return [
             'list' => $forms,
@@ -166,7 +166,7 @@ class FormSchemaRepository
 
     /**
      * Delete form | 删除表单
-     * 
+     *
      * @param int $id Form ID | 表单ID
      * @param int|null $tenantId Tenant ID | 租户ID
      * @return bool
@@ -174,11 +174,11 @@ class FormSchemaRepository
     public function delete(int $id, ?int $tenantId = null): bool
     {
         $query = Db::name($this->table)->where('id', $id);
-        
+
         if ($tenantId !== null) {
             $query->where('tenant_id', $tenantId);
         }
-        
+
         $result = (bool)$query->delete();
         if (!$result) {
             // echo "Delete failed for ID $id (Tenant: $tenantId)\n";
@@ -188,7 +188,7 @@ class FormSchemaRepository
 
     /**
      * Hydrate form schema from database row | 从数据库行填充表单Schema
-     * 
+     *
      * @param array $data Database row | 数据库行
      * @return array
      */

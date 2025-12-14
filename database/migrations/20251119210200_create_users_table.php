@@ -1,11 +1,10 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 /**
  * Create Users Table Migration | 创建用户表迁移
- * 
+ *
  * Creates the users table for user management.
  * 为用户管理创建用户表。
  */

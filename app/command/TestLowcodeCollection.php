@@ -57,7 +57,7 @@ class TestLowcodeCollection extends Command
 
             // 2. Get Collection | 获取集合
             $output->writeln('2. Getting Collection | 获取集合');
-            $retrieved = $manager->get($testCollectionName);
+            $retrieved = $manager->get($testCollectionName, null);
 
             if ($retrieved && $retrieved->getName() === $testCollectionName) {
                 $output->writeln('  <info>✓ Collection retrieved successfully | 集合获取成功</info>');
@@ -83,7 +83,7 @@ class TestLowcodeCollection extends Command
 
             // 4. Verify Update | 验证更新
             $output->writeln('4. Verifying Update | 验证更新');
-            $updated = $manager->get($testCollectionName);
+            $updated = $manager->get($testCollectionName, null);
 
             if ($updated && count($updated->getFields()) === 3) {
                 $output->writeln('  <info>✓ Update verified | 更新已验证</info>');
@@ -96,9 +96,9 @@ class TestLowcodeCollection extends Command
 
             // 5. Delete Collection metadata | 删除集合元数据
             $output->writeln('5. Deleting Collection metadata | 删除集合元数据');
-            $manager->delete($testCollectionName, true);
+            $manager->delete($testCollectionName, true, null);
 
-            $deleted = $manager->get($testCollectionName);
+            $deleted = $manager->get($testCollectionName, null);
             if ($deleted === null) {
                 $output->writeln('  <info>✓ Collection deleted successfully | 集合元数据删除成功</info>');
             } else {
@@ -111,8 +111,9 @@ class TestLowcodeCollection extends Command
             return 0;
         } catch (\Throwable $e) {
             $output->writeln('<error>Test failed | 测试失败: ' . $e->getMessage() . '</error>');
+            // Extra debug output for development: full exception trace
+            $output->writeln('<error>' . (string) $e . '</error>');
             return 1;
         }
     }
 }
-

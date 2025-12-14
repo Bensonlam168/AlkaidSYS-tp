@@ -41,13 +41,86 @@ This document defines mandatory testing practices for the AlkaidSYS project. It 
   - Presence of diagnostic fields and rate-limit headers as defined in API and security specifications.
 - Error-handling tests **MUST** assert that all 4xx/5xx JSON responses include `trace_id`.
 
-## 7. CI Integration and Coverage
+## 7. Unified Test Entry Point (T-056)
+
+The project provides a unified test entry point via ThinkPHP CLI command:
+
+### Running Tests
+
+```bash
+# Run all tests (in Docker container)
+docker exec -it alkaid-backend php think test
+
+# Run Unit tests only
+docker exec -it alkaid-backend php think test --testsuite=Unit
+
+# Run Feature tests only
+docker exec -it alkaid-backend php think test --testsuite=Feature
+
+# Run Performance tests (requires phpunit.performance.xml)
+docker exec -it alkaid-backend php think test -c phpunit.performance.xml
+
+# Filter by test method name
+docker exec -it alkaid-backend php think test --filter=testCanCreateUser
+
+# Generate HTML coverage report
+docker exec -it alkaid-backend php think test --coverage-html=coverage
+
+# Stop on first failure
+docker exec -it alkaid-backend php think test --stop-on-failure
+
+# Verbose output
+docker exec -it alkaid-backend php think test --phpunit-verbose
+
+# Pass additional PHPUnit arguments
+docker exec -it alkaid-backend php think test --passthru="--group=auth"
+```
+
+### Available Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--testsuite` | `-s` | Test suite name (Unit/Feature/Performance) |
+| `--filter` | `-f` | Filter tests by method/class name |
+| `--coverage-html` | | Generate HTML coverage report |
+| `--coverage-text` | | Output text coverage report |
+| `--configuration` | `-c` | PHPUnit configuration file (default: phpunit.xml) |
+| `--stop-on-failure` | | Stop on first failure |
+| `--stop-on-error` | | Stop on first error |
+| `--phpunit-verbose` | | PHPUnit verbose output |
+| `--phpunit-debug` | | PHPUnit debug mode |
+| `--list-suites` | | List available test suites |
+| `--passthru` | `-p` | Additional PHPUnit arguments |
+
+### Important Notes
+
+- All test commands **MUST** be executed inside the `alkaid-backend` Docker container.
+- The default configuration file is `phpunit.xml` in the project root.
+- For performance tests, use `phpunit.performance.xml` configuration.
+- Exit code 0 indicates all tests passed; non-zero indicates failures.
+
+## 8. CI Integration and Coverage (T-059)
 
 - The CI pipeline **MUST** run the full automated test suite on every merge into protected branches.
 - Projects **SHOULD** define a minimum coverage threshold for critical modules (domain, security, API layer).
 - Failing tests **MUST** be treated as release blockers unless explicitly waived through a documented process.
 
-## 8. Phase Model (Testing)
+### CI Workflow
+
+The project uses GitHub Actions for CI/CD with two main jobs:
+
+1. **PHP Code Style Check (PSR-12)**: Runs PHP-CS-Fixer in dry-run mode to check code formatting.
+2. **PHPUnit Tests**: Runs the test suite against MySQL and Redis services.
+
+CI is triggered on:
+- Pull requests to any branch
+- Push to `main`, `develop`, and `releases/*` branches
+
+### CI Configuration
+
+See `.github/workflows/backend-php-cs-fixer.yml` for the complete CI configuration.
+
+## 9. Phase Model (Testing)
 
 - **Phase 1 (current baseline)**:
   - Existing tests MAY remain in mixed styles, but new tests **MUST** follow this guideline.

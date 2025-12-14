@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Bigint Field Type | 大整数字段类型
- * 
+ *
  * Represents a BIGINT field for large integer numbers.
  * 表示用于大整数的BIGINT字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class BigintField extends AbstractField

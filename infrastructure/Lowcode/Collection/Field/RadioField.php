@@ -6,10 +6,10 @@ namespace Infrastructure\Lowcode\Collection\Field;
 
 /**
  * Radio Field Type | 单选框字段类型
- * 
+ *
  * Represents a VARCHAR field for radio button selection.
  * 表示用于单选按钮的VARCHAR字段。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class RadioField extends AbstractField

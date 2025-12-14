@@ -31,8 +31,8 @@ class EventSystemTest extends ThinkPHPTestCase
     public function testEventListenerRegistration()
     {
         $called = false;
-        
-        $this->eventService->listenWithPriority('test.event', function() use (&$called) {
+
+        $this->eventService->listenWithPriority('test.event', function () use (&$called) {
             $called = true;
         });
 
@@ -48,15 +48,15 @@ class EventSystemTest extends ThinkPHPTestCase
     {
         $order = [];
 
-        $this->eventService->listenWithPriority('priority.test', function() use (&$order) {
+        $this->eventService->listenWithPriority('priority.test', function () use (&$order) {
             $order[] = 'second';
         }, 10);
 
-        $this->eventService->listenWithPriority('priority.test', function() use (&$order) {
+        $this->eventService->listenWithPriority('priority.test', function () use (&$order) {
             $order[] = 'first';
         }, 5); // Higher priority (lower number)
 
-        $this->eventService->listenWithPriority('priority.test', function() use (&$order) {
+        $this->eventService->listenWithPriority('priority.test', function () use (&$order) {
             $order[] = 'third';
         }, 15);
 
@@ -72,7 +72,7 @@ class EventSystemTest extends ThinkPHPTestCase
     {
         $receivedParams = null;
 
-        $this->eventService->listenWithPriority('param.test', function($params) use (&$receivedParams) {
+        $this->eventService->listenWithPriority('param.test', function ($params) use (&$receivedParams) {
             $receivedParams = $params;
         });
 
@@ -90,7 +90,7 @@ class EventSystemTest extends ThinkPHPTestCase
         // This test would require database access
         // Marking as incomplete for now
         $this->markTestIncomplete('Requires database connection');
-        
+
         // $this->eventLogger->logTrigger('test.event', ['param' => 'value']);
         // Verify insertion in database
     }
@@ -101,7 +101,7 @@ class EventSystemTest extends ThinkPHPTestCase
     public function testEventLoggerLogsSuccess()
     {
         $this->markTestIncomplete('Requires database connection');
-        
+
         // $this->eventLogger->logSuccess('test.event', 'TestListener');
         // Verify insertion in database
     }
@@ -112,7 +112,7 @@ class EventSystemTest extends ThinkPHPTestCase
     public function testEventLoggerLogsFailure()
     {
         $this->markTestIncomplete('Requires database connection');
-        
+
         // $this->eventLogger->logFailure('test.event', 'TestListener', 'Error message');
         // Verify insertion in database
     }
@@ -124,15 +124,15 @@ class EventSystemTest extends ThinkPHPTestCase
     {
         $count = 0;
 
-        $this->eventService->listenWithPriority('multi.test', function() use (&$count) {
+        $this->eventService->listenWithPriority('multi.test', function () use (&$count) {
             $count++;
         });
 
-        $this->eventService->listenWithPriority('multi.test', function() use (&$count) {
+        $this->eventService->listenWithPriority('multi.test', function () use (&$count) {
             $count++;
         });
 
-        $this->eventService->listenWithPriority('multi.test', function() use (&$count) {
+        $this->eventService->listenWithPriority('multi.test', function () use (&$count) {
             $count++;
         });
 
@@ -147,7 +147,7 @@ class EventSystemTest extends ThinkPHPTestCase
     public function testGetListenerKey()
     {
         // Test with closure | 测试闭包
-        $closureListener = function() {};
+        $closureListener = function () {};
         $this->eventService->listenWithPriority('test', $closureListener);
 
         // Test with array listener | 测试数组监听器

@@ -133,7 +133,7 @@ class FieldTypeSystemTest extends TestCase
         $this->assertArrayHasKey('type', $array);
         $this->assertArrayHasKey('nullable', $array);
         $this->assertArrayHasKey('default', $array);
-        
+
         $this->assertEquals('email', $array['name']);
         $this->assertEquals('string', $array['type']);
         $this->assertFalse($array['nullable']);

@@ -1,4 +1,5 @@
 <?php
+
 namespace app;
 
 use think\db\exception\DataNotFoundException;
@@ -64,7 +65,7 @@ class ExceptionHandle extends Handle
             return $this->buildJsonResponse(
                 422,
                 'Validation failed | 验证失败',
-                4001,
+                422,  // Unified validation error code | 统一的验证错误码
                 ['errors' => $e->getError()],
                 $traceId,
                 $isDebug ? $e : null

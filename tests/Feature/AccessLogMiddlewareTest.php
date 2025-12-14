@@ -78,4 +78,3 @@ class AccessLogMiddlewareTest extends ThinkPHPTestCase
         $this->assertIsNumeric($data['response_time_ms']);
     }
 }
-

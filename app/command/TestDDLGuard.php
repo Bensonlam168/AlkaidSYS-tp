@@ -1,6 +1,6 @@
 <?php
 
-declare (strict_types = 1);
+declare (strict_types=1);
 
 namespace app\command;
 
@@ -74,4 +74,3 @@ class TestDDLGuard extends Command
         return 0;
     }
 }
-

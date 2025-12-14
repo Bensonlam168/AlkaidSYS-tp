@@ -1,13 +1,12 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 class CreateLowcodeRelationshipsTable extends Migrator
 {
     /**
      * Create lowcode_relationships table | 创建低代码关系元数据表
-     * 
+     *
      * Stores relationship metadata between collections.
      * 存储集合之间的关系元数据。
      */

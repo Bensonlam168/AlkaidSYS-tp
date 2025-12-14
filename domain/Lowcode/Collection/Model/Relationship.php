@@ -9,10 +9,10 @@ use Domain\Lowcode\Collection\Enum\RelationType;
 
 /**
  * Relationship Model | 关系模型
- * 
+ *
  * Represents a relationship between collections.
  * 表示Collection之间的关系。
- * 
+ *
  * @package Domain\Lowcode\Collection\Model
  */
 class Relationship implements RelationshipInterface
@@ -30,7 +30,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Constructor | 构造函数
-     * 
+     *
      * @param int $collectionId Owner collection ID | 所属Collection ID
      * @param string $name Relationship name | 关系名称
      * @param array $config Configuration array | 配置数组
@@ -40,9 +40,9 @@ class Relationship implements RelationshipInterface
     {
         $this->collectionId = $collectionId;
         $this->name = $name;
-        
+
         if (!isset($config['type'])) {
-            throw new \InvalidArgumentException("Relationship type is required");
+            throw new \InvalidArgumentException('Relationship type is required');
         }
 
         if (!RelationType::isValid($config['type'])) {
@@ -50,9 +50,9 @@ class Relationship implements RelationshipInterface
         }
 
         $this->type = $config['type'];
-        
+
         if (!isset($config['target_collection'])) {
-            throw new \InvalidArgumentException("Target collection is required");
+            throw new \InvalidArgumentException('Target collection is required');
         }
 
         $this->targetCollection = $config['target_collection'];
@@ -83,7 +83,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Set relationship ID | 设置关系ID
-     * 
+     *
      * @param int $id
      * @return self
      */
@@ -95,7 +95,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Get collection ID | 获取Collection ID
-     * 
+     *
      * @return int
      */
     public function getCollectionId(): int
@@ -153,7 +153,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Set options | 设置选项
-     * 
+     *
      * @param array $options
      * @return self
      */
@@ -165,7 +165,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Get created timestamp | 获取创建时间
-     * 
+     *
      * @return string|null
      */
     public function getCreatedAt(): ?string
@@ -175,7 +175,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Get updated timestamp | 获取更新时间
-     * 
+     *
      * @return string|null
      */
     public function getUpdatedAt(): ?string
@@ -204,7 +204,7 @@ class Relationship implements RelationshipInterface
 
     /**
      * Generate default foreign key | 生成默认外键
-     * 
+     *
      * @return string Foreign key name | 外键名称
      */
     protected function generateForeignKey(): string

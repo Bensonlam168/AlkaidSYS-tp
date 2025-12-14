@@ -2,8 +2,8 @@
 
 **生成日期**: 2025-11-23
 **基于文档**:
-- `docs/todo/refactoring-plan.md`
-- `docs/todo/code-review-issues-2025-11-23.md`
+- `docs/todo/archive/refactoring-plan.md`
+- `docs/todo/archive/code-review-issues-2025-11-23.md`
 - `docs/report/backend-implementation-vs-design-analysis.md` (v1.0 + v2)
 
 **复核方法**: 三份文档逐条对照当前代码、配置与测试结果（通过 `view`/`codebase-retrieval` 完成验证），每条任务均给出来源与代码层证据。
@@ -73,21 +73,67 @@
 
 
 
-- [ ] **[P0] [Backend][Frontend] 前后端权限集成（PermissionService + /v1/auth/me + Auth Store）**
+- [x] **[P0] [Backend] 前后端权限集成 - 后端部分（PermissionService + /v1/auth/me + /v1/auth/codes）** ✅ 已完成
   - 来源: vben-permission-integration-decision §3.1–3.3, §5–§6；`docs/todo/vben-backend-integration-plan.md` 第三、七部分
-  - 当前状态: 后端 `PermissionService` 与 `/v1/auth/me.permissions`、`/v1/auth/codes` 均未实现；前端 `getUserInfoApi` 未处理 `permissions`，`Auth Store` 仍仅通过 `getAccessCodesApi` 从 mock `/auth/codes` 加载权限。
-  - 证据: `route/auth.php` 仅有 login/register/refresh/me；`app/controller/AuthController.php` 无 `codes()` 且 `me()` 不返回 `permissions`；`database/seeds/CorePlatformSeed.php` 仅提供 `slug/resource/action`；`frontend/apps/web-antd/src/api/core/auth.ts` 与 `src/store/auth.ts` 存在但未按集成方案实现。
-  - 预估工时: 2–3 天（后端 1–1.5 天，前端 1–1.5 天）。
+  - 完成状态:
+    - ✅ 后端 `PermissionService` 已实现（`Infrastructure/Permission/Service/PermissionService.php`）
+    - ✅ `/v1/auth/me` 已扩展，返回 `permissions` 字段（`resource:action` 格式）
+    - ✅ `/v1/auth/codes` 已实现（`GET /v1/auth/codes`）
+    - ✅ 路由已添加并修正为完整类名（`route/auth.php`）
+    - ✅ 单元测试已完成（8/8 通过，133 断言）
+    - ✅ 集成测试已完成（8/8 通过，139 断言）
+  - 提交信息:
+    - Commit: `51b23f7a0721088818d1ad4d4049874ab1da7b1c`
+    - Message: `feat(auth): add permission integration for backend API`
+    - Date: 2025-01-24
+    - Files: 5 个（3 新增，2 修改）
+    - Lines: +491, -7
+    - Tests: 16/16 passed (272 assertions)
+    - Review: 98/100
+  - 预估工时: 1–1.5 天（已完成）
+
+- [x] **[P0] [Frontend] 前后端权限集成 - 前端部分（getUserInfoApi + Auth Store）** ✅ 已完成（2025-11-25 代码审查确认）
+  - 依赖: 后端部分已完成 ✅
+  - 当前状态: 已在所有前端 apps 中落地：
+    - `src/api/core/user.ts::getUserInfoApi()` 从 `/v1/auth/me` 响应中读取 `permissions: string[]` 并映射到 `UserInfo.permissions`（`resource:action` 格式）；
+    - `src/store/auth.ts::authLogin()` 在登录成功后调用 `fetchUserInfo()`，并执行 `accessStore.setAccessCodes(userInfo.permissions || [])`；
+    - `@vben/access` 的 `useAccess().hasAccessByCodes()` 基于 `accessStore.accessCodes` 做按钮级权限控制。
+  - 测试与验证:
+    - Playwright E2E 测试 `frontend/apps/web-antd/tests/e2e/common/auth.ts` 已通过真实后端 `/v1/auth/login` + `/v1/auth/me` 验证主链路；
+    - 手工检查典型业务页面按钮权限显示符合预期。
+  - 文档与决策对齐:
+    - 与 `frontend/docs/src/guide/in-depth/access.md` 中“基于 `permissions: string[]` 写入 Access Store”一节对齐；
+    - 细节与 `docs/report/alkaidsys-code-review-2025-11-25.md` 前端权限集成章节一致。
+
+- [ ] **[P0] [Backend] 低代码 Collection 接口多租户隔离一致性整改**
+  - 来源: `docs/report/alkaidsys-code-review-2025-11-25.md` §3.3 多租户隔离机制
+  - 当前状态: FormData 相关接口已统一使用 `Request::tenantId()/siteId()` 并在单元测试中验证租户隔离；`CollectionController::update()` 仍从请求体 `tenant_id` 读取租户，`delete()` 调用 `CollectionManager::delete()` 时未显式传入 `tenant_id`，存在潜在越权/误删风险。
   - 实施建议:
-    - [Backend-P0] 实现 `PermissionService::getUserPermissions(int $userId): string[]`，基于 `user_roles`、`role_permissions`、`permissions` 计算并返回 `resource:action` 权限码数组（内部仍以 `slug = resource.action` 为主键）。
-    - [Backend-P0] 扩展 `GET /v1/auth/me`，在 data 中增加 `permissions: string[]` 字段（`resource:action`），并在文档中将其标记为权限码主通道。
-    - [Frontend-P0] 调整 `src/api/core/user.ts` 中的 `getUserInfoApi()` 处理 `permissions` 字段；在 `src/api/core/auth.ts` 中实现 `getAccessCodesFromMe()`；调整 `src/store/auth.ts` 登录/刷新流程，在获取用户信息后调用 `accessStore.setAccessCodes(permissions)`。
-    - [Backend-P1-可选] 在 `route/auth.php` 注册 `GET /v1/auth/codes`，在 `AuthController::codes()` 中复用 `PermissionService`，返回与 `/v1/auth/me.permissions` 完全一致的 `string[]`。
-    - [Test-P1] 为 `PermissionService`、`/v1/auth/me` 与（若实现）`/v1/auth/codes` 编写单元测试与集成测试，覆盖典型 RBAC 场景与 403 权限不足路径。
+    - 更新 `app/controller/lowcode/CollectionController::update()`：统一使用 `$request->tenantId()`，移除对请求体 `tenant_id` 的信任，保证租户来源唯一；
+    - 更新 `app/controller/lowcode/CollectionController::delete()` 与 `CollectionManager::delete()`：增加并强制传入 `tenantId` 参数，在所有内部查询/删除语句中显式添加 `tenant_id = :tenantId` 条件；
+    - 为 Collection 相关接口补充特性/单元测试，参考 `FormSchemaManagerTest::testTenantIsolation`，覆盖“不同租户间无法互相修改/删除集合”的场景；
+    - 回归执行 `docker exec alkaid-backend php think test --testsuite=Feature`，确保现有低代码与权限相关测试全部通过。
+  - 验收标准:
+    - 代码中不再存在从请求体读取 `tenant_id` 并绕过 Request 上下文的路径；
+    - 所有 Collection 删除/更新路径均带 `tenant_id` 过滤条件；
+    - 新增测试在模拟跨租户场景下能稳定阻止越权操作。
 
 ---
 
 ## 3. P1 - 高优先级问题（按模块分组）
+
+- [ ] **[P1] 前端多租户上下文管理与请求头集成**
+  - 来源: `docs/report/alkaidsys-code-review-2025-11-25.md` §2.2 多租户上下文管理；Always Rules §6 前后端多租户集成
+  - 当前状态: 前端请求拦截器统一注入 `Authorization` 与 `Accept-Language`，尚未统一注入 `X-Tenant-ID`/`X-Site-ID`，也缺少集中式 `tenantStore/useTenant()` 上下文管理；多租户隔离目前完全依赖后端 JWT 与中间件默认行为。
+  - 实施建议:
+    - 在前端新增 `useTenantStore`（或等价 Pinia store），统一管理 `currentTenantId/currentTenantCode` 等状态，并在登录/租户切换时更新；
+    - 在 `apps/*/src/api/request.ts` 请求拦截器中，根据 `useTenantStore` 的状态注入 `X-Tenant-ID`（及未来可能的 `X-Site-ID`）请求头，与后端 `TenantIdentify`/`SiteIdentify` 中间件保持一致；
+    - 在前端 UI 中提供基础的租户切换入口，并联动后端租户枚举接口更新 tenant store；
+    - 为多租户切换与数据隔离添加至少一条端到端 E2E 测试（可基于 web-antd），验证同一浏览器会话在不同租户下访问低代码集合/表单数据互不泄露。
+  - 验收标准:
+    - 在浏览器开发者工具中可观察到所有需要多租户隔离的 API 请求均携带正确的 `X-Tenant-ID`；
+    - 切换租户后，低代码集合/表单数据等接口返回的数据范围随之变化且互不泄露；
+    - 相关行为在前端文档中有说明，并配套至少一条 E2E 用例。
 
 - [ ] **[P1] 应用系统基础设施（Application System）**
   - 来源: backend-implementation-vs-design-analysis §3.2.1
@@ -113,13 +159,13 @@
 
 - [ ] **[P1] Trace ID JSON 覆盖与可观测性增强**
   - 来源: `docs/technical-specs/api/api-specification*.md` §6；`app/middleware/Trace.php`、`app/ExceptionHandle.php`；design-implementation-gap-analysis-2025-11-23 §3.3, §5
-  - 当前状态: Trace 中间件始终在响应头中写入 `X-Trace-Id`，且通过 `ExceptionHandle` 渲染的错误 JSON 包含 `trace_id` 字段；但通过 `ApiController` 直接返回的成功/部分错误响应，以及部分中间件直接 `json()` 返回的错误，目前 JSON 体中仍缺少 `trace_id`。
-  - 证据: `ApiController` 中统一响应方法实现；`ExceptionHandle::buildJsonResponse()` 对 `trace_id` 的处理；技术规范中对 Trace ID 行为的描述。
-  - 预估工时: 2–3 天
+  - 当前状态: Trace 中间件始终在响应头中写入 `X-Trace-Id`，且通过 `ExceptionHandle` 渲染的错误 JSON 包含 `trace_id` 字段；`ApiController` 已通过统一响应 Helper 在成功与错误响应中带上 `trace_id`（详见 `TraceIdCoverageTest`），大部分中间件错误也已统一通过该路径返回，仅个别 Legacy 路径仍需在后续清理中关注。
+  - 证据: `ApiController` 中统一响应方法实现；`ExceptionHandle::buildJsonResponse()` 对 `trace_id` 的处理；`tests/Feature/TraceIdCoverageTest.php` 对成功/错误响应的断言；技术规范中对 Trace ID 行为的描述。
+  - 预估工时: 0.5–1 天（验证与收尾）
   - 实施建议:
-    - 为 `ApiController` 增加注入 trace_id 的统一路径（例如通过 Response 装饰器或中间件后置处理），确保所有 4xx/5xx JSON 响应都包含 `trace_id`；
-    - 梳理 `Auth`、`Permission` 等中间件中直接 `json()` 返回的代码路径，改造为统一经过带 trace_id 的响应构造逻辑；
-    - 更新技术规范，将“所有错误响应必须包含 trace_id”提升级别为强制要求，并在回归测试中增加断言。
+    - 对现有中间件与控制器进行一次静态检索，确认不存在绕过 ApiController/ExceptionHandle 直接 `json()` 返回的新增路径；
+    - 如发现新路径，统一改造为经 ApiController/ResponseHelper 输出，以保证 `trace_id` 一致；
+    - 在技术规范中保留“所有错误响应必须包含 trace_id”的约定，并在新增接口评审清单中加入该检查项。
 
 - [ ] **[P1–P2] 分页结构统一（page/page_size/total/total_pages）**
   - 来源: `design/03-data-layer/10-api-design.md` §3（统一响应格式）；`docs/technical-specs/api/api-specification*.md` §3.4；`app/controller/ApiController.php`
@@ -355,3 +401,43 @@
 | backend-implementation-vs-design-analysis.md | 9 | 本 Backlog 中 9 条任务引用了该文档作为来源 |
 | **合计** | **29** | **按“文档×条目”计数，单条任务可在多份文档中有来源** |
 
+## 后端权限集成后续优化项（2025-11-25）
+
+基于代码审查报告 `docs/report/backend-permission-integration-review-2025-11-25.md` 的修复工作，以下优化项已记录待后续版本实施：
+
+### 1. Permission 中间件异常信息安全收敛（优先级：Medium）
+- **当前状态（2025-11-27 更新）**：Permission 中间件已在内部异常时通过 `Log::error(...)` 记录详细异常与 `trace_id`，并对客户端统一返回 HTTP 500 + `code = 5000` + 通用消息 `"Internal server error"`，不再暴露 `"Permission check failed: ..."` 等内部实现细节。
+- **目标**：保持与 `AuthController::handleInternalError()` 模式一致，确保后续新增的权限相关路径继续复用统一错误处理与错误码矩阵（2001/2002/5000）。
+- **实施要点**：
+  - 在权限相关改动的 code review 中，检查是否绕过 Permission 中间件或 ApiController/ExceptionHandle 直接返回 JSON；
+  - 将当前行为在技术规范中作为“已达成基线”归档（见 `docs/technical-specs/api/api-specification*.md` 与安全规范）。
+- **相关文件**：`app/middleware/Permission.php`
+
+### 2. AuthController 依赖注入改造（优先级：Low）
+- **当前状态（2025-11-27 更新）**：AuthController 已通过构造函数参数注入 `JwtService`、`UserRepository`、`PermissionService` 并调用 `parent::__construct($app)`，不再在内部手动 `new` 依赖，符合 DI 规范与测试可替换性要求。
+- **目标**：将该模式作为后续控制器 DI 的标准写法，在路由与测试中统一复用。
+- **实施要点**：
+  - 参考 `app/controller/AuthController.php` 的构造函数签名与用法，作为控制器 DI 示例；
+  - 在新增控制器时避免手动实例化权限/认证相关服务，统一通过容器注入。
+- **相关文件**：`app/controller/AuthController.php`、相关测试文件
+
+### 3. 测试执行命令规范化（优先级：Low）
+- **当前状态（2025-11-27 更新）**：本地开发与 CI 均已约定在 `alkaid-backend` 容器内通过 `docker exec ...` 运行测试：
+  - 推荐入口：`docker exec -it alkaid-backend php think test`（或等价的 `./vendor/bin/phpunit` 入口）；
+  - 详细命令规范见 `README.local.md` 第 3 节「常用测试命令」与 `.augment/rules/always-alkaidsys-project-rules.md` 第 8 节。
+- **目标**：通过后续任务 T-056 提供统一的“一键测试”入口（例如 `php think test` 或等价脚本），并在 CI 中作为唯一测试入口。
+- **实施要点**：
+  - 保持文档中的 `docker exec alkaid-backend ...` 测试命令与实际使用一致；
+  - 在实现 T-056 时，将统一测试入口与现有命令规范对齐，并更新 testing-guidelines 文档。
+
+### 4. PSR-12 代码格式统一（优先级：Low）
+- **当前状态（2025-11-27 更新）**：项目根目录已提供 `.php-cs-fixer.php` 作为唯一格式化配置，Auth/Permission 中间件与权限相关控制器整体已符合 PSR-12，仅少量历史缩进问题可通过批量格式化工具修复。
+- **目标**：在 CI 中启用基于 `.php-cs-fixer.php` 的只读格式检查（见 T-059），并在日常开发中统一通过该配置进行自动修复。
+- **实施要点**：
+  - 使用 `docker exec -it alkaid-backend ./vendor/bin/php-cs-fixer fix --dry-run --diff` 作为本地与 CI 的格式检查命令；
+  - 需要批量修复时，执行不带 `--dry-run` 的自动格式化，并在单独提交中完成历史代码格式修复。
+
+---
+**记录时间**：2025-11-25  
+**关联报告**：`docs/report/backend-permission-integration-review-2025-11-25.md`  
+**已完成修复**：H1（AuthController 错误处理）、M1（Permission 中间件重构）、M2（多租户隔离显式化）

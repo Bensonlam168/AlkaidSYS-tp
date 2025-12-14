@@ -4,7 +4,7 @@ use think\migration\Migrator;
 
 /**
  * Create Roles Table Migration | 创建角色表迁移
- * 
+ *
  * Creates the roles table for RBAC support.
  * 为RBAC支持创建角色表。
  */

@@ -10,10 +10,10 @@ use Domain\Lowcode\Collection\Interfaces\RelationshipInterface;
 
 /**
  * Collection Model | Collection模型
- * 
+ *
  * Represents a dynamic data collection (table) in the lowcode system.
  * 表示低代码系统中的动态数据集合（表）。
- * 
+ *
  * @package Domain\Lowcode\Collection\Model
  */
 class Collection implements CollectionInterface
@@ -30,21 +30,35 @@ class Collection implements CollectionInterface
     protected ?string $updatedAt = null;
 
     /**
+     * Tenant ID | 租户ID
+     *
+     * NOTE(T-002/T-003): Domain 层暂不在接口上强制暴露多租户契约，
+     * 但通过可选属性与 getTenantId()/getSiteId() 为基础设施层持久化
+     * 提供信息来源。
+     */
+    protected ?int $tenantId = null;
+
+    /**
+     * Site ID | 站点ID
+     */
+    protected ?int $siteId = null;
+
+    /**
      * Constructor | 构造函数
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @param array $config Configuration array | 配置数组
      */
     public function __construct(string $name, array $config = [])
     {
-       $this->name = $name;
+        $this->name = $name;
         $this->tableName = $config['table_name'] ?? $this->generateTableName($name);
         $this->title = $config['title'] ?? $name;
         $this->description = $config['description'] ?? '';
         $this->options = $config['options'] ?? [];
 
         if (isset($config['id'])) {
-            $this->id = (int)$config['id'];
+            $this->id = (int) $config['id'];
         }
 
         if (isset($config['created_at'])) {
@@ -53,6 +67,15 @@ class Collection implements CollectionInterface
 
         if (isset($config['updated_at'])) {
             $this->updatedAt = $config['updated_at'];
+        }
+
+        // Optional multi-tenant context | 可选多租户上下文
+        if (isset($config['tenant_id'])) {
+            $this->tenantId = (int) $config['tenant_id'];
+        }
+
+        if (isset($config['site_id'])) {
+            $this->siteId = (int) $config['site_id'];
         }
     }
 
@@ -66,7 +89,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set collection ID | 设置Collection ID
-     * 
+     *
      * @param int $id
      * @return self
      */
@@ -94,7 +117,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set table name | 设置表名
-     * 
+     *
      * @param string $tableName
      * @return self
      */
@@ -114,7 +137,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set title | 设置标题
-     * 
+     *
      * @param string $title
      * @return self
      */
@@ -134,7 +157,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set description | 设置描述
-     * 
+     *
      * @param string $description
      * @return self
      */
@@ -213,7 +236,7 @@ class Collection implements CollectionInterface
 
     /**
      * Set options | 设置选项
-     * 
+     *
      * @param array $options
      * @return self
      */
@@ -225,7 +248,7 @@ class Collection implements CollectionInterface
 
     /**
      * Get created timestamp | 获取创建时间
-     * 
+     *
      * @return string|null
      */
     public function getCreatedAt(): ?string
@@ -235,12 +258,32 @@ class Collection implements CollectionInterface
 
     /**
      * Get updated timestamp | 获取更新时间
-     * 
+     *
      * @return string|null
      */
     public function getUpdatedAt(): ?string
     {
         return $this->updatedAt;
+    }
+
+    /**
+     * Get tenant ID | 获取租户ID
+     *
+     * @return int|null
+     */
+    public function getTenantId(): ?int
+    {
+        return $this->tenantId;
+    }
+
+    /**
+     * Get site ID | 获取站点ID
+     *
+     * @return int|null
+     */
+    public function getSiteId(): ?int
+    {
+        return $this->siteId;
     }
 
     /**
@@ -254,8 +297,8 @@ class Collection implements CollectionInterface
             'table_name' => $this->tableName,
             'title' => $this->title,
             'description' => $this->description,
-            'fields' => array_map(fn($field) => $field->toArray(), $this->fields),
-            'relationships' => array_map(fn($rel) => $rel->toArray(), $this->relationships),
+            'fields' => array_map(fn ($field) => $field->toArray(), $this->fields),
+            'relationships' => array_map(fn ($rel) => $rel->toArray(), $this->relationships),
             'options' => $this->options,
             'created_at' => $this->createdAt,
             'updated_at' => $this->updatedAt,
@@ -300,7 +343,7 @@ class Collection implements CollectionInterface
 
     /**
      * Generate default table name | 生成默认表名
-     * 
+     *
      * @param string $name Collection name | Collection名称
      * @return string Table name | 表名
      */

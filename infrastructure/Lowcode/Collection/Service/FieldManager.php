@@ -11,10 +11,10 @@ use think\facade\Event;
 
 /**
  * Field Manager Service | 字段管理服务
- * 
+ *
  * Manages field operations including add, update, and remove.
  * 管理字段操作，包括添加、更新和移除。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Service
  */
 class FieldManager
@@ -25,7 +25,7 @@ class FieldManager
 
     /**
      * Constructor | 构造函数
-     * 
+     *
      * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
      * @param FieldRepository $fieldRepo Field repository | 字段仓储
      * @param CollectionManager $collectionManager Collection manager | Collection管理器
@@ -42,7 +42,7 @@ class FieldManager
 
     /**
      * Add field to collection | 添加字段到Collection
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param FieldInterface $field Field to add | 要添加的字段
      * @return void
@@ -51,7 +51,7 @@ class FieldManager
     public function addField(string $collectionName, FieldInterface $field): void
     {
         $collection = $this->collectionManager->get($collectionName);
-        
+
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }
@@ -79,11 +79,11 @@ class FieldManager
 
     /**
      * Update field | 更新字段
-     * 
+     *
      * Note: This is a simplified implementation. In production, you may want to
      * use ALTER TABLE to modify columns, which is more complex.
      * 注意：这是简化实现。生产环境可能需要使用ALTER TABLE修改列，这更复杂。
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param string $fieldName Field name | 字段名称
      * @param array $changes Changes to apply | 要应用的更改
@@ -93,20 +93,20 @@ class FieldManager
     public function updateField(string $collectionName, string $fieldName, array $changes): void
     {
         $collection = $this->collectionManager->get($collectionName);
-        
+
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }
 
         $field = $collection->getField($fieldName);
-        
+
         if (!$field) {
             throw new \InvalidArgumentException("Field not found: {$fieldName}");
         }
 
         // For now, just update metadata | 暂时只更新元数据
         // TODO: Implement ALTER TABLE column modification | 实现ALTER TABLE列修改
-        
+
         // Update field metadata | 更新字段元数据
         $this->fieldRepo->save($field, $collection->getId());
 
@@ -123,7 +123,7 @@ class FieldManager
 
     /**
      * Remove field from collection | 从Collection移除字段
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param string $fieldName Field name to remove | 要移除的字段名
      * @return void
@@ -132,7 +132,7 @@ class FieldManager
     public function removeField(string $collectionName, string $fieldName): void
     {
         $collection = $this->collectionManager->get($collectionName);
-        
+
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }

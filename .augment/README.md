@@ -1,22 +1,91 @@
 # AlkaidSYS Augment 配置
 
-这个目录包含了 AlkaidSYS 项目的 Augment AI 辅助开发配置，包括 Subagents、Skills 和 Commands。
+这个目录包含了 AlkaidSYS 项目的 Augment AI 辅助开发配置，包括官方 Rules 和自定义工作流系统。
+
+## 📌 重要说明
+
+本目录包含**两类配置系统**，它们有不同的用途和格式：
+
+### 1. 官方 Augment 配置 ✅
+
+**位置**：`.augment/rules/`
+
+**格式**：Markdown 文件
+
+**用途**：
+- 自动被 Augment Agent 和 Chat 识别和应用
+- 定义项目的硬约束和指导原则
+- 符合 Augment 官方规范（[官方文档](https://docs.augmentcode.com/setup-augment/guidelines)）
+
+**文件**：
+- `always-alkaidsys-project-rules.md` - Always 规则（自动应用于所有会话）
+- `auto-alkaidsys-guidelines.md` - Auto 规则（智能检测并应用）
+
+**特点**：
+- ✅ 完全符合 Augment 官方标准
+- ✅ 无需手动引用，自动生效
+- ✅ 定义项目的"硬约束"和核心原则
+
+---
+
+### 2. 自定义工作流系统 🎯
+
+**位置**：`config.yaml`、`subagents/`、`skills/`、`commands/`
+
+**格式**：YAML 文件
+
+**用途**：
+- 组织和文档化项目特定的 AI 辅助工作流
+- 提供标准化的提示词模板和最佳实践
+- 作为团队知识库和培训材料
+- 确保团队成员使用一致的 AI 辅助方式
+
+**使用方式**：
+- 通过自然语言提示词引用（如："使用 lowcode-developer 创建 Collection"）
+- 不依赖 Augment 官方的 `/agents` 或 `/command` 命令
+- 作为 Rules 的补充文档和参考资料
+
+**重要**：这是项目内部约定，**不是** Augment 官方配置格式。
+
+---
 
 ## 📁 目录结构
 
 ```
 .augment/
-├── config.yaml              # 主配置文件
-├── README.md               # 本文件
-├── subagents/              # 子代理配置
-│   ├── lowcode-developer.yaml    # 低代码开发专家
-│   └── api-developer.yaml        # API 开发专家
-├── skills/                 # 技能配置
-│   ├── create-collection.yaml    # 创建 Collection
-│   └── create-api-endpoint.yaml  # 创建 API 端点
-└── commands/               # 命令配置
-    ├── lowcode-init.yaml         # 初始化低代码环境
-    └── generate-crud.yaml        # 生成 CRUD 代码
+├── rules/                  # 官方 Augment Rules ✅
+│   ├── always-alkaidsys-project-rules.md  # Always 规则
+│   └── auto-alkaidsys-guidelines.md       # Auto 规则
+├── config.yaml             # 自定义系统配置索引 🎯
+├── README.md              # 本文件
+├── subagents/             # 自定义子代理配置 🎯
+│   ├── lowcode-developer.yaml         # 低代码开发专家
+│   ├── api-developer.yaml             # API 开发专家
+│   ├── auth-security-engineer.yaml    # 认证安全工程师
+│   ├── frontend-integrator.yaml       # 前端集成专家
+│   └── test-migration-engineer.yaml   # 测试迁移工程师
+├── skills/                # 自定义技能配置 🎯
+│   ├── create-collection.yaml         # 创建 Collection
+│   ├── create-field.yaml              # 创建字段
+│   ├── create-api-endpoint.yaml       # 创建 API 端点
+│   ├── create-form-schema.yaml        # 创建表单 Schema
+│   ├── run-migration.yaml             # 运行迁移
+│   ├── run-tests.yaml                 # 运行测试
+│   ├── auth-permission-best-practices.yaml  # 认证权限最佳实践
+│   ├── rate-limit-and-gateway-best-practices.yaml  # 限流网关最佳实践
+│   └── workflow-and-plugin-architecture.yaml  # 工作流插件架构
+├── commands/              # 自定义命令配置 🎯
+│   ├── lowcode-init.yaml              # 初始化低代码环境
+│   ├── generate-crud.yaml             # 生成 CRUD 代码
+│   ├── setup-project.yaml             # 项目初始化
+│   ├── deploy.yaml                    # 项目部署
+│   ├── tests-and-migrations-hardening.yaml  # 测试迁移加固
+│   ├── auth-permission-integration.yaml     # 权限集成
+│   ├── casbin-phase2-rollout.yaml          # Casbin Phase2 部署
+│   └── api-error-trace-pagination-unify.yaml  # API 错误追踪分页统一
+├── examples/              # 使用示例
+│   └── usage-examples.md
+└── validate-config.sh     # 配置验证脚本
 ```
 
 ## 🤖 Subagents（子代理）

@@ -1,4 +1,5 @@
 <?php
+
 require __DIR__ . '/vendor/autoload.php';
 
 use think\App;
@@ -33,6 +34,6 @@ $rules = Route::getRuleList();
 // Dump rules related to lowcode
 foreach ($rules as $rule) {
     if (strpos($rule['rule'], 'lowcode') !== false) {
-        echo "Route registered: " . $rule['rule'] . " -> " . $rule['route'] . "\n";
+        echo 'Route registered: ' . $rule['rule'] . ' -> ' . $rule['route'] . "\n";
     }
 }

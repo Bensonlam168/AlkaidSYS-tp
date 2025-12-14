@@ -243,6 +243,8 @@ php think swoole:server start
 
 技术规范文档位于 [`docs/technical-specs/`](docs/technical-specs/) 目录：
 
+- [技术规范总览](docs/technical-specs/README.md) - 技术规范总览与导航
+- [Git 工作流与提交规范](docs/technical-specs/git/git-workflow-guidelines.md) - 分支模型与提交规范
 - [API 规范](docs/technical-specs/api/) - RESTful API 设计规范
 - [安全指南](docs/technical-specs/security/) - 安全最佳实践
 - [代码风格](docs/technical-specs/code-style/) - 编码规范和最佳实践
@@ -412,7 +414,13 @@ php think lowcode:generate crud Product
 - **提交信息** - 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
 - **注释** - 使用中英文双语注释
 
-详细的代码规范请参考：[代码风格指南](docs/technical-specs/code-style/)
+ 详细的代码规范请参考：[代码风格指南](docs/technical-specs/code-style/)。
+
+ PHP 代码格式化工具与使用说明：
+
+ - 统一使用项目根目录的 `.php-cs-fixer.php` 作为 PHP-CS-Fixer 配置；
+ - 本地与 CI 中推荐使用 `php-cs-fixer fix --dry-run --diff` 做只读检查；
+ - 具体命令与 Docker 执行方式请参考本地开发文档：`README.local.md` 中的“代码格式化”章节。
 
 ---
 

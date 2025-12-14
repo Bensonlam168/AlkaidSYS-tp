@@ -73,12 +73,24 @@ abstract class ThinkPHPTestCase extends BaseTestCase
             ];
 
             // Initialize Cache configuration | 初始化Cache配置
+            // Include Redis store for RateLimitService and other Redis-dependent services
+            // 包含 Redis store 以支持 RateLimitService 和其他依赖 Redis 的服务
             $cacheConfig = [
                 'default' => 'file',
                 'stores' => [
                     'file' => [
                         'type' => 'File',
                         'path' => $rootPath . '/runtime/cache/',
+                    ],
+                    'redis' => [
+                        'type' => 'Redis',
+                        'host' => getenv('REDIS_HOST') ?: 'redis',
+                        'port' => (int) (getenv('REDIS_PORT') ?: 6379),
+                        'password' => getenv('REDIS_PASSWORD') ?: '',
+                        'select' => (int) (getenv('REDIS_DB') ?: 0),
+                        'prefix' => 'alkaid:test:',
+                        'expire' => 0,
+                        'timeout' => 0,
                     ],
                 ],
             ];
@@ -145,6 +157,19 @@ abstract class ThinkPHPTestCase extends BaseTestCase
      * Get ThinkPHP App instance | 获取ThinkPHP应用实例
      */
     protected function app(): App
+    {
+        return self::$app;
+    }
+
+    /**
+     * Get ThinkPHP App instance for container operations | 获取用于容器操作的 ThinkPHP App 实例
+     *
+     * This method is provided for MockContainerTrait compatibility.
+     * 此方法提供与 MockContainerTrait 的兼容性。
+     *
+     * @return App
+     */
+    protected function getContainerApp(): App
     {
         return self::$app;
     }

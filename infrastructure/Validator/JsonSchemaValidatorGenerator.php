@@ -8,10 +8,10 @@ use Domain\Validator\Interfaces\ValidatorGeneratorInterface;
 
 /**
  * JSON Schema Validator Generator | JSON Schema 验证器生成器
- * 
+ *
  * Generates ThinkPHP validation rules from JSON Schema definitions.
  * 从 JSON Schema 定义生成 ThinkPHP 验证规则。
- * 
+ *
  * @package Infrastructure\Validator
  */
 class JsonSchemaValidatorGenerator implements ValidatorGeneratorInterface

@@ -4,7 +4,7 @@ use think\migration\Migrator;
 
 /**
  * Create Permissions Table Migration | 创建权限表迁移
- * 
+ *
  * Creates the permissions table for RBAC support.
  * 为RBAC支持创建权限表。
  */

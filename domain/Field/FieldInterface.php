@@ -6,10 +6,10 @@ namespace Domain\Field;
 
 /**
  * Field Interface | 字段接口
- * 
+ *
  * Defines the contract for all field types in the low-code system.
  * 定义低代码系统中所有字段类型的契约。
- * 
+ *
  * @package Domain\Field
  */
 interface FieldInterface

@@ -69,3 +69,10 @@
   - 检查分支命名是否符合 `feature|fix|hotfix|release` 约定；
   - 检查 PR 中的提交是否全部符合 Conventional Commits 与项目规则。
 
+## 6. 当前状态与 GitHub 免费版限制
+
+- 在 GitHub 私有仓库的免费套餐下，无法启用「Branch protection rules」功能。
+- 本文档中的分支保护规则已在设计层面达成共识，但 **当前仓库暂未在 GitHub 上强制生效**。
+- 一旦仓库升级为付费方案或转为公开仓库，应按照本指南立即开启分支保护配置。
+
+

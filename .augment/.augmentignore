@@ -21,9 +21,9 @@ runtime/cache/
 .phpunit.result.cache
 
 # 环境配置
-.env
-.env.local
-.env.*.local
+; .env
+; .env.local
+; .env.*.local
 
 # IDE 配置
 .idea/
@@ -48,9 +48,9 @@ Thumbs.db
 *.7z
 
 # 数据库文件
-*.sql
-*.sqlite
-*.db
+; *.sql
+; *.sqlite
+; *.db
 
 # 编译文件
 *.o

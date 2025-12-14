@@ -6,10 +6,10 @@ namespace Domain\Field;
 
 /**
  * Abstract Field Class | 抽象字段类
- * 
+ *
  * Base implementation for all field types, providing common functionality.
  * 所有字段类型的基础实现，提供通用功能。
- * 
+ *
  * @package Domain\Field
  */
 abstract class AbstractField implements FieldInterface

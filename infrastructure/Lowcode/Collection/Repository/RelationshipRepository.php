@@ -10,10 +10,10 @@ use think\facade\Db;
 
 /**
  * Relationship Repository | 关系仓储
- * 
+ *
  * Handles persistence of Relationship entities.
  * 处理关系实体的持久化。
- * 
+ *
  * @package Infrastructure\Lowcode\Collection\Repository
  */
 class RelationshipRepository
@@ -22,7 +22,7 @@ class RelationshipRepository
 
     /**
      * Save relationship | 保存关系
-     * 
+     *
      * @param RelationshipInterface $relationship Relationship to save | 要保存的关系
      * @param int $collectionId Collection ID | Collection ID
      * @return int Relationship ID | 关系ID
@@ -59,7 +59,7 @@ class RelationshipRepository
 
     /**
      * Find relationships by collection ID | 按Collection ID查找关系
-     * 
+     *
      * @param int $collectionId Collection ID | Collection ID
      * @return array<string, RelationshipInterface>
      */
@@ -82,7 +82,7 @@ class RelationshipRepository
 
     /**
      * Delete relationship | 删除关系
-     * 
+     *
      * @param int $collectionId Collection ID | Collection ID
      * @param string $relationshipName Relationship name | 关系名称
      * @return bool
@@ -97,7 +97,7 @@ class RelationshipRepository
 
     /**
      * Delete all relationships by collection ID | 按Collection ID删除所有关系
-     * 
+     *
      * @param int $collectionId Collection ID | Collection ID
      * @return bool
      */
@@ -110,7 +110,7 @@ class RelationshipRepository
 
     /**
      * Hydrate relationship from database row | 从数据库行填充关系
-     * 
+     *
      * @param array $data Database row | 数据库行
      * @return RelationshipInterface
      */

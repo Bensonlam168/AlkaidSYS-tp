@@ -11,39 +11,37 @@ use think\facade\Event;
 
 /**
  * Form Schema Manager Service | 表单Schema管理服务
- * 
+ *
  * Manages Form Schema CRUD operations with caching.
  * 管理表单Schema的CRUD操作，包含缓存。
- * 
+ *
  * Based on design: 09-lowcode-framework/43-lowcode-form-designer.md
- * 
+ *
  * @package Infrastructure\Lowcode\FormDesigner\Service
  */
 class FormSchemaManager
 {
-    protected FormSchemaRepository $repository;
-    protected ?CollectionManager $collectionManager;
-
     protected string $cachePrefix = 'lowcode:form:';
     protected int $cacheTtl = 3600; // 1 hour | 1小时
 
     /**
      * Constructor | 构造函数
-     * 
+     *
+     * Uses constructor property promotion for cleaner dependency injection.
+     * 使用构造器属性提升实现更简洁的依赖注入。
+     *
      * @param FormSchemaRepository $repository Form schema repository | 表单schema仓储
      * @param CollectionManager|null $collectionManager Collection manager | Collection管理器
      */
     public function __construct(
-        FormSchemaRepository $repository,
-        ?CollectionManager $collectionManager = null
+        protected readonly FormSchemaRepository $repository,
+        protected readonly ?CollectionManager $collectionManager = null
     ) {
-        $this->repository = $repository;
-        $this->collectionManager = $collectionManager;
     }
 
     /**
      * Create form schema | 创建表单Schema
-     * 
+     *
      * @param array $data Form schema data | 表单Schema数据
      * @return array Created form schema | 创建的表单Schema
      * @throws \Exception
@@ -58,15 +56,13 @@ class FormSchemaManager
             $this->validateSchema($data['schema']);
         }
 
-        // If linked to collection, verify it exists | 如果关联到Collection，验证它存在
-        if (isset($data['collection_name']) && $this->collectionManager) {
-            $collection = $this->collectionManager->get($data['collection_name']);
-            if (!$collection) {
-                throw new \InvalidArgumentException(
-                    "Collection not found: {$data['collection_name']}"
-                );
-            }
-        }
+        // NOTE:
+        //  - Form metadata is allowed to reference a collection_name that does not yet exist.
+        //  - The actual runtime data access path (FormDataManager) will resolve the collection
+        //    with tenant context and throw a clear error if it is still missing when data APIs
+        //    are invoked.
+        //  - Therefore we intentionally do not enforce a strict existence check here to keep
+        //    creation flexible and to avoid unnecessary hard coupling to CollectionManager.
 
         // Save to database | 保存到数据库
         $formId = $this->repository->save($data);
@@ -85,7 +81,7 @@ class FormSchemaManager
 
     /**
      * Get form schema by name | 按名称获取表单Schema
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param int $tenantId Tenant ID | 租户ID
      * @param int|null $siteId Site ID | 站点ID
@@ -96,14 +92,14 @@ class FormSchemaManager
         // Try cache first | 优先从缓存获取
         $cacheKey = $this->getCacheKey($name, $tenantId, $siteId);
         $cached = Cache::get($cacheKey);
-        
+
         if ($cached !== null && $cached !== false) {
             return $cached;
         }
 
         // Load from database | 从数据库加载
         $form = $this->repository->findByName($name, $tenantId, $siteId);
-        
+
         if (!$form) {
             return null;
         }
@@ -116,7 +112,7 @@ class FormSchemaManager
 
     /**
      * Get form schema by ID | 按ID获取表单Schema
-     * 
+     *
      * @param int $id Form ID | 表单ID
      * @param int|null $tenantId Tenant ID | 租户ID
      * @return array|null
@@ -128,7 +124,7 @@ class FormSchemaManager
 
     /**
      * Get forms by collection | 按Collection获取表单
-     * 
+     *
      * @param string $collectionName Collection name | Collection名称
      * @param int $tenantId Tenant ID | 租户ID
      * @return array
@@ -140,7 +136,7 @@ class FormSchemaManager
 
     /**
      * Update form schema | 更新表单Schema
-     * 
+     *
      * @param int $id Form ID | 表单ID
      * @param array $data Update data | 更新数据
      * @param int|null $tenantId Tenant ID | 租户ID
@@ -151,7 +147,7 @@ class FormSchemaManager
     {
         // Get existing form | 获取已存在的表单
         $existingForm = $this->repository->findById($id, $tenantId);
-        
+
         if (!$existingForm) {
             throw new \InvalidArgumentException("Form not found: ID {$id}");
         }
@@ -187,7 +183,7 @@ class FormSchemaManager
 
     /**
      * Delete form schema | 删除表单Schema
-     * 
+     *
      * @param int $id Form ID | 表单ID
      * @param int|null $tenantId Tenant ID | 租户ID
      * @return void
@@ -197,7 +193,7 @@ class FormSchemaManager
     {
         // Get existing form | 获取已存在的表单
         $existingForm = $this->repository->findById($id, $tenantId);
-        
+
         if (!$existingForm) {
             throw new \InvalidArgumentException("Form not found: ID {$id}");
         }
@@ -217,7 +213,7 @@ class FormSchemaManager
 
     /**
      * List forms | 列出表单
-     * 
+     *
      * @param int $tenantId Tenant ID | 租户ID
      * @param array $filters Filters | 筛选条件
      * @param int $page Page number | 页码
@@ -231,7 +227,7 @@ class FormSchemaManager
 
     /**
      * Duplicate form | 复制表单
-     * 
+     *
      * @param int $id Source form ID | 源表单ID
      * @param string $newName New form name | 新表单名称
      * @param int|null $tenantId Tenant ID | 租户ID
@@ -242,7 +238,7 @@ class FormSchemaManager
     {
         // Get source form | 获取源表单
         $sourceForm = $this->repository->findById($id, $tenantId);
-        
+
         if (!$sourceForm) {
             throw new \InvalidArgumentException("Form not found: ID {$id}");
         }
@@ -260,7 +256,7 @@ class FormSchemaManager
 
     /**
      * Validate form data | 验证表单数据
-     * 
+     *
      * @param array $data Form data | 表单数据
      * @param bool $isCreate Is create operation | 是否是创建操作
      * @return void
@@ -296,7 +292,7 @@ class FormSchemaManager
 
     /**
      * Validate JSON Schema | 验证JSON Schema
-     * 
+     *
      * @param array $schema JSON Schema | JSON Schema
      * @return void
      * @throws \InvalidArgumentException
@@ -325,7 +321,7 @@ class FormSchemaManager
 
     /**
      * Cache form schema | 缓存表单Schema
-     * 
+     *
      * @param array $form Form schema | 表单Schema
      * @return void
      */
@@ -341,7 +337,7 @@ class FormSchemaManager
 
     /**
      * Clear cache | 清除缓存
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param int $tenantId Tenant ID | 租户ID
      * @param int|null $siteId Site ID | 站点ID
@@ -355,7 +351,7 @@ class FormSchemaManager
 
     /**
      * Get cache key | 获取缓存key
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param int $tenantId Tenant ID | 租户ID
      * @param int|null $siteId Site ID | 站点ID

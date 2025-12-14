@@ -5,30 +5,32 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use think\App;
 use think\Request;
 use Infrastructure\Lowcode\FormDesigner\Service\FormDataManager;
 use think\Response;
 
 /**
  * Form Data Controller | 表单数据控制器
- * 
+ *
  * Manages form data submission and retrieval.
  * 管理表单数据提交和检索。
- * 
+ *
  * @package app\controller\lowcode
  */
 class FormDataController extends ApiController
 {
     protected FormDataManager $manager;
 
-    public function __construct(FormDataManager $manager)
+    public function __construct(App $app, FormDataManager $manager)
     {
+        parent::__construct($app);
         $this->manager = $manager;
     }
 
     /**
      * List form data | 获取表单数据列表
-     * 
+     *
      * @param string $formName Form name | 表单名称
      * @param Request $request
      * @return Response
@@ -60,8 +62,9 @@ class FormDataController extends ApiController
         $siteId = $request->siteId();
 
         try {
-            // 参数顺序：表单名、筛选条件、分页参数、租户与站点信息
-            $result = $this->manager->list($name, $filters, $page, $pageSize, $tenantId, $siteId);
+            // 参数顺序：表单名、租户ID（必选）、筛选条件、分页参数、站点ID
+            // 调整为 PHP 8.2+ 兼容签名：必选参数在可选参数之前
+            $result = $this->manager->list($name, $tenantId, $filters, $page, $pageSize, $siteId);
             return $this->paginate($result['list'], $result['total'], $result['page'], $result['pageSize']);
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
@@ -70,7 +73,7 @@ class FormDataController extends ApiController
 
     /**
      * Get single form data record | 获取单条表单数据记录
-     * 
+     *
      * @param string $name Form name | 表单名称
      * @param int $id Data ID | 数据ID
      * @param Request $request
@@ -95,7 +98,7 @@ class FormDataController extends ApiController
 
     /**
      * Save form data (Create/Update) | 保存表单数据（创建/更新）
-     * 
+     *
      * @param string $formName Form name | 表单名称
      * @param Request $request
      * @return Response
@@ -118,7 +121,7 @@ class FormDataController extends ApiController
 
     /**
      * Delete form data | 删除表单数据
-     * 
+     *
      * @param string $formName Form name | 表单名称
      * @param int $id Data ID | 数据ID
      * @param Request $request

@@ -212,4 +212,3 @@ class AccessLog
         @file_put_contents($file, $line, FILE_APPEND | LOCK_EX);
     }
 }
-

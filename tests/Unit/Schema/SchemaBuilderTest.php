@@ -19,7 +19,7 @@ class SchemaBuilderTest extends ThinkPHPTestCase
     {
         parent::setUp();
         $this->schemaBuilder = new SchemaBuilder();
-        
+
         // Clean up test table if exists | 清理测试表（如果存在）
         if ($this->schemaBuilder->hasTable($this->testTable)) {
             $this->schemaBuilder->dropTable($this->testTable);
@@ -32,7 +32,7 @@ class SchemaBuilderTest extends ThinkPHPTestCase
         if ($this->schemaBuilder->hasTable($this->testTable)) {
             $this->schemaBuilder->dropTable($this->testTable);
         }
-        
+
         parent::tearDown();
     }
 
