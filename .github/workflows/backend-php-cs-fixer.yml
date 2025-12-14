@@ -28,7 +28,7 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
-          extensions: mbstring, xml
+          extensions: pdo_mysql, redis, mbstring, xml, bcmath, sockets, openssl, curl, fileinfo
           tools: php-cs-fixer
 
       - name: Get Composer cache directory
