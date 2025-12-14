@@ -29,5 +29,8 @@ return [
         // Route documentation commands | 路由文档命令 (T-060)
         'route:doc' => \app\command\RouteDocCommand::class,
         'route:verify' => \app\command\RouteVerifyCommand::class,
+
+        // Language pack commands | 语言包命令 (T-061)
+        'lang:check' => \app\command\LangCheckCommand::class,
     ],
 ];
