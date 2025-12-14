@@ -32,5 +32,8 @@ return [
 
         // Language pack commands | 语言包命令 (T-061)
         'lang:check' => \app\command\LangCheckCommand::class,
+
+        // Environment check commands | 环境检查命令 (T-062)
+        'env:check' => \app\command\EnvCheckCommand::class,
     ],
 ];
