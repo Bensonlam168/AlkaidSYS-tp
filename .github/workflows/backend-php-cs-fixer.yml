@@ -24,24 +24,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, xml
+          tools: php-cs-fixer
 
-      - name: Build backend image
-        run: |
-          docker compose build alkaid-backend
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 
-      - name: Start backend services
-        run: |
-          docker compose up -d alkaid-backend
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
 
-      - name: Wait for container to be ready
-        run: |
-          sleep 10
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
 
       - name: PHP-CS-Fixer dry-run (backend)
         run: |
-          docker exec alkaid-backend ./vendor/bin/php-cs-fixer fix --dry-run --diff
+          ./vendor/bin/php-cs-fixer fix --dry-run --diff
 
   # ============================================================================
   # Job 2: PHPUnit Tests
