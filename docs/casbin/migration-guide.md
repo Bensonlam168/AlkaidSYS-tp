@@ -335,7 +335,25 @@ docker-compose restart backend
 
 ```bash
 vendor/bin/phpunit tests/Unit/Infrastructure/Permission/PermissionServiceTest.php
+vendor/bin/phpunit tests/Integration/Permission/CasbinModeSwitchAndRollbackIntegrationTest.php
 ```
+
+#### 自动化验证：策略变更 + 回滚（T-012）
+
+为确保 Casbin 策略变更与回滚不会破坏权限一致性，推荐在以下场景运行集成测试：
+
+- 从 `DB_ONLY → DUAL_MODE → CASBIN_ONLY` 分阶段迁移或回滚时；
+- 调整角色/权限表（`roles` / `permissions` / `role_permissions` / `user_roles`）结构或种子数据时。
+
+```bash
+# 覆盖 DB_ONLY → DUAL_MODE → CASBIN_ONLY 切换与回滚 + 策略变更回滚
+vendor/bin/phpunit tests/Integration/Permission/CasbinModeSwitchAndRollbackIntegrationTest.php
+```
+
+该测试包含两个关键用例：
+
+- `testModeSwitchAcrossDbOnlyDualModeAndCasbinOnlyIsReversibleForAdminUser`：验证三种运行模式之间切换与回滚时管理员权限集合保持等价，且 `DUAL_MODE` 至少包含 DB 与 Casbin 两侧权限的并集；
+- `testPermissionChangeReloadAndRollbackWithCasbinKeepsInSyncWithDatabase`：验证在权限变更 → 策略刷新 → 回滚之后，数据库 RBAC 与 Casbin 策略重新保持一致。
 
 ### 常见问题
 

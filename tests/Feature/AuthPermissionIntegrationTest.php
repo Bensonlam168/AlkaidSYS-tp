@@ -94,8 +94,12 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
 
         // Assert response structure | 断言响应结构
         $this->assertArrayHasKey('code', $data);
+        $this->assertArrayHasKey('message', $data);
         $this->assertArrayHasKey('data', $data);
+        $this->assertArrayHasKey('timestamp', $data);
         $this->assertEquals(0, $data['code']);
+        $this->assertIsString($data['message']);
+        $this->assertIsInt($data['timestamp']);
 
         // Assert permissions field exists | 断言 permissions 字段存在
         $this->assertArrayHasKey('permissions', $data['data']);
@@ -188,12 +192,26 @@ class AuthPermissionIntegrationTest extends ThinkPHPTestCase
 
         // Assert response structure | 断言响应结构
         $this->assertArrayHasKey('code', $data);
+        $this->assertArrayHasKey('message', $data);
         $this->assertArrayHasKey('data', $data);
+        $this->assertArrayHasKey('timestamp', $data);
         $this->assertEquals(0, $data['code']);
+        $this->assertIsString($data['message']);
+        $this->assertIsInt($data['timestamp']);
 
         // Assert data is an array of permission codes | 断言 data 是权限码数组
         $this->assertIsArray($data['data']);
         $this->assertNotEmpty($data['data']);
+
+        foreach ($data['data'] as $code) {
+            $this->assertIsString($code);
+            $this->assertStringContainsString(':', $code);
+
+            $parts = explode(':', $code);
+            $this->assertCount(2, $parts);
+            $this->assertNotEmpty($parts[0]);
+            $this->assertNotEmpty($parts[1]);
+        }
     }
 
     /**
