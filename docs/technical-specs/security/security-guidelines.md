@@ -64,6 +64,26 @@ The authorization model is defined in two phases. Both phases share the same ext
     - External: `code = resource . ':' . action` (e.g., `forms:view`)
   - New code MUST NOT introduce additional permission code formats (such as `AC_xxx`) unless explicitly required by a future design decision.
 
+#### Permission middleware parameter format
+
+The permission middleware `app\\middleware\\Permission` supports two input formats for route-level permission declarations, in order to provide backward compatibility with legacy slugs while keeping a single external contract:
+
+1. **External permission code format (recommended):** `resource:action`
+   - This matches the permission codes returned by authentication APIs and consumed by frontend clients.
+   - Examples: `forms:view`, `lowcode:read`.
+   - Route example: `->middleware(\\app\\middleware\\Permission::class . ':forms:view')`.
+
+2. **Internal slug format (for legacy routes only):** `resource.action`
+   - This mirrors the `permissions.slug` value stored in the database.
+   - Examples: `forms.view`, `lowcode.read`.
+   - Route example: `->middleware(\\app\\middleware\\Permission::class . ':forms.view')`.
+
+Internally, the middleware normalizes both formats to the external `resource:action` form before delegating to `PermissionService`:
+
+- When it receives `resource.action`, it converts it to `resource:action` before calling `PermissionService::hasPermission()`.
+- `PermissionService` and all authentication APIs always work with the external `resource:action` format.
+- New routes **MUST** use the external `resource:action` format in middleware declarations; the slug format exists only for backward compatibility with older code and MUST NOT be used in new implementations.
+
 ### 3.2 Tenant Isolation
 - All data access must be scoped by `tenant_id`.
 - Permission codes for multi-tenant scenarios are prefixed with tenant scope, for example: `tenant:{tenantId}:{resource}:{action}` (e.g., `tenant:1001:forms:view`).

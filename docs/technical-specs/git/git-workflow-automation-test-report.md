@@ -54,9 +54,12 @@ npx --no-install commitlint --config commitlint.config.js --edit /tmp/commitmsg-
 
 ## 3. Observations
 
-- Frontend monorepo already includes a working commitlint + lefthook setup and its own `.commitlintrc.js`.
+- Frontend monorepo originally included its own commitlint + lefthook setup and `.commitlintrc.js`, but `frontend/.git` has now been removed. The frontend code is managed by the root repository and no longer has any direct remote to the vben official repository.
 - Backend root now has its own `commitlint.config.js`, Git hook and installed CLI, and commitlint behaves as expected on valid/invalid examples.
 - `pnpm` is configured as the package manager in `package.json` (via the `packageManager` field).
+- A real `git commit` with a valid Conventional Commit header (e.g. `chore(git): init AlkaidSYS-tp repo`) passed the `commit-msg` hook and was accepted.
+- Attempting to commit with an invalid header (e.g. `update`) is rejected by commitlint when run via the CLI.
+- A `develop` integration branch has been created from `main` and pushed as `origin/develop`; it will be used as the long-lived integration branch for feature and fix branches.
 
 ## 4. Recommendations / Next Steps
 
@@ -65,10 +68,12 @@ npx --no-install commitlint --config commitlint.config.js --edit /tmp/commitmsg-
    - Optionally add branch-name validation consistent with `git-workflow-guidelines*.md`.
 
 2. **Keep documentation in sync**
-   - Add CI jobs (GitHub Actions / GitLab CI) to lint all commits in a PR using the same config.
-   - Optionally add branch-name validation consistent with `git-workflow-guidelines*.md`.
-
-3. **Keep documentation in sync**
    - Ensure team members use this report and the Git specs as reference when configuring project-level CI.
-   - Update this report once CLI-based tests have been executed successfully.
+   - Update this report once CLI-based tests and real-world commits have been executed successfully.
+
+3. **Branch protection status (GitHub Free limitation)**
+   - On GitHub Free for private repositories, "Branch protection rules" cannot be enabled.
+   - Branch protection guidelines have been fully designed for `main`/`develop`, but they are currently **not enforced by GitHub** for this repository due to this limitation.
+   - Once the repository is upgraded to a paid plan or made public, branch protection SHOULD be enabled according to the branch-protection guideline documents.
+
 
