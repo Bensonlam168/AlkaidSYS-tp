@@ -5,6 +5,19 @@ name: lowcode-init
 version: 1.0.0
 description: 初始化 AlkaidSYS 低代码开发环境，包括数据库迁移、种子数据和示例 Collection
 
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
 # 命令别名
 aliases:
   - lc-init

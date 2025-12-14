@@ -22,8 +22,20 @@ Thumbs.db
 /.vscode
 /vendor
 /runtime
-/.settings
+# /.settings
 /.buildpath
-/.project
-# Serena MCP 缓存
-.serena/cache/
+# /.project
+# Serena MCP
+/.serena
+# Augment
+/.augment
+# zed
+/.zed
+# # dev-docs
+# /docs/mcp_docs
+# /docs/other-docs
+# /docs/report
+# /docs/report_archive
+# /docs/todo
+# # design
+# /design

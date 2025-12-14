@@ -1,21 +1,22 @@
 {
   "mcpServers": {
     "serena": {
-      "command": "uvx",
+      "command": "docker",
       "args": [
-        "--from",
-        "git+https://github.com/oraios/serena",
-        "serena",
-        "start-mcp-server",
+        "exec",
+        "-i",
+        "serena-serena-1",
+        "uv",
+        "run",
+        "--directory",
+        ".",
+        "serena-mcp-server",
+        "--transport",
+        "stdio",
         "--context",
-        "cli",
-        "--project-path",
-        "/Users/Benson/Code/AlkaidSYS-tp"
+        "ide-assistant"
       ],
-      "env": {
-        "SERENA_LOG_LEVEL": "info"
-      }
+      "env": {}
     }
   }
 }
-

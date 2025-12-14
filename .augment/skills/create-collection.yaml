@@ -5,6 +5,19 @@ name: create-collection
 version: 1.0.0
 description: 创建一个新的 Collection（低代码数据模型），包括领域模型、服务层、数据库迁移和测试
 
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
 # 输入参数
 parameters:
   - name: collection_name
@@ -12,25 +25,25 @@ parameters:
     required: true
     description: Collection 名称（如：Product、Order）
     example: Product
-  
+
   - name: table_name
     type: string
     required: false
     description: 数据库表名（默认为 snake_case 的 collection_name）
     example: products
-  
+
   - name: title
     type: string
     required: true
     description: Collection 显示标题
     example: 商品
-  
+
   - name: description
     type: string
     required: false
     description: Collection 描述
     example: 商品数据模型
-  
+
   - name: fields
     type: array
     required: true
@@ -57,27 +70,27 @@ steps:
       - 检查 collection_name 是否符合命名规范（PascalCase）
       - 检查字段定义是否完整
       - 检查是否存在同名 Collection
-  
+
   - name: create_migration
     description: 创建数据库迁移文件
     actions:
       - 生成迁移文件：database/migrations/YYYYMMDDHHMMSS_create_{table_name}_table.php
       - 定义表结构（包含 tenant_id、site_id 等多租户字段）
       - 添加索引和外键约束
-  
+
   - name: create_domain_model
     description: 创建领域模型（可选，如果需要自定义逻辑）
     actions:
       - 创建文件：domain/Lowcode/Collection/Model/{CollectionName}.php
       - 继承 Collection 基类
       - 添加自定义业务逻辑
-  
+
   - name: register_collection
     description: 注册 Collection 到系统
     actions:
       - 在 lowcode_collections 表中插入元数据
       - 缓存 Collection Schema
-  
+
   - name: create_test
     description: 创建测试用例
     actions:
@@ -85,11 +98,11 @@ steps:
       - 测试 Collection 创建
       - 测试字段添加和删除
       - 测试数据 CRUD 操作
-  
+
   - name: run_migration
     description: 运行数据库迁移
     command: php think migrate:run
-  
+
   - name: run_tests
     description: 运行测试验证
     command: php think test tests/Unit/Lowcode/Collection/{CollectionName}Test.php
@@ -107,7 +120,7 @@ examples:
     command: |
       auggie --print "使用 create-collection skill 创建 Product Collection，
       包含字段：name(string)、price(decimal)、stock(integer)、status(select)"
-    
+
   - description: 通过 YAML 配置创建
     config: |
       collection_name: Product

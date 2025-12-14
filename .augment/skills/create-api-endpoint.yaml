@@ -5,6 +5,19 @@ name: create-api-endpoint
 version: 1.0.0
 description: 创建一个新的 RESTful API 端点，包括路由、控制器、验证器和测试
 
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
 # 输入参数
 parameters:
   - name: resource_name
@@ -12,38 +25,38 @@ parameters:
     required: true
     description: 资源名称（复数形式，如：products、orders）
     example: products
-  
+
   - name: controller_name
     type: string
     required: true
     description: 控制器名称（如：ProductController）
     example: ProductController
-  
+
   - name: api_version
     type: string
     required: false
     default: v1
     description: API 版本
     example: v1
-  
+
   - name: operations
     type: array
     required: true
     description: 需要实现的操作
     example: [index, show, store, update, destroy]
-  
+
   - name: middleware
     type: array
     required: false
     description: 需要应用的中间件
     example: [auth, permission:product:read]
-  
+
   - name: with_validation
     type: boolean
     required: false
     default: true
     description: 是否生成验证器
-  
+
   - name: with_tests
     type: boolean
     required: false
@@ -61,24 +74,24 @@ steps:
       - 添加 PHPDoc 注释
     template: |
       <?php
-      
+
       declare(strict_types=1);
-      
+
       namespace app\controller;
-      
+
       use app\Request;
       use think\Response;
-      
+
       /**
        * {ResourceName} API Controller | {ResourceName} API控制器
-       * 
+       *
        * @package app\controller
        */
       class {ControllerName} extends ApiController
       {
           /**
            * List {resource_name} | 列表查询
-           * 
+           *
            * @param Request $request
            * @return Response
            */
@@ -87,10 +100,10 @@ steps:
               // TODO: 实现列表查询逻辑
               return $this->success([]);
           }
-          
+
           /**
            * Get single {resource_name} | 单条查询
-           * 
+           *
            * @param int $id
            * @return Response
            */
@@ -99,10 +112,10 @@ steps:
               // TODO: 实现单条查询逻辑
               return $this->success([]);
           }
-          
+
           /**
            * Create {resource_name} | 创建
-           * 
+           *
            * @param Request $request
            * @return Response
            */
@@ -111,10 +124,10 @@ steps:
               // TODO: 实现创建逻辑
               return $this->success([], 'Created successfully', 0, 201);
           }
-          
+
           /**
            * Update {resource_name} | 更新
-           * 
+           *
            * @param int $id
            * @param Request $request
            * @return Response
@@ -124,10 +137,10 @@ steps:
               // TODO: 实现更新逻辑
               return $this->success([], 'Updated successfully');
           }
-          
+
           /**
            * Delete {resource_name} | 删除
-           * 
+           *
            * @param int $id
            * @return Response
            */
@@ -137,7 +150,7 @@ steps:
               return $this->success([], 'Deleted successfully');
           }
       }
-  
+
   - name: create_routes
     description: 创建路由定义
     actions:
