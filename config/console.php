@@ -6,6 +6,9 @@
 return [
     // 指令定义
     'commands' => [
+        // Unified test entry point | 统一测试入口 (T-056)
+        'test' => \app\command\TestCommand::class,
+
         // Test commands | 测试命令
         'test:schema' => \app\command\TestSchema::class,
         'test:event' => \app\command\TestEvent::class,

@@ -1,13 +1,17 @@
-name: Backend PHP-CS-Fixer
+name: Backend CI
 
 on:
   pull_request:
   push:
     branches:
       - main
+      - develop
       - 'releases/*'
 
 jobs:
+  # ============================================================================
+  # Job 1: PHP Code Style Check (PSR-12)
+  # ============================================================================
   php-cs-fixer:
     name: PHP Code Style Check (PSR-12)
     runs-on: ubuntu-latest
@@ -30,6 +34,109 @@ jobs:
         run: |
           docker compose up -d alkaid-backend
 
+      - name: Wait for container to be ready
+        run: |
+          sleep 10
+
       - name: PHP-CS-Fixer dry-run (backend)
         run: |
           docker exec alkaid-backend ./vendor/bin/php-cs-fixer fix --dry-run --diff
+
+  # ============================================================================
+  # Job 2: PHPUnit Tests
+  # ============================================================================
+  phpunit:
+    name: PHPUnit Tests
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+    needs: php-cs-fixer
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: alkaid_sys_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, redis, mbstring, xml, bcmath
+          coverage: xdebug
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction
+
+      - name: Create .env file
+        run: |
+          cp .env.example .env
+          sed -i 's/DB_HOST=.*/DB_HOST=127.0.0.1/' .env
+          sed -i 's/DB_NAME=.*/DB_NAME=alkaid_sys_test/' .env
+          sed -i 's/DB_USER=.*/DB_USER=root/' .env
+          sed -i 's/DB_PASS=.*/DB_PASS=root/' .env
+          sed -i 's/REDIS_HOST=.*/REDIS_HOST=127.0.0.1/' .env
+
+      - name: Wait for MySQL to be ready
+        run: |
+          while ! mysqladmin ping -h"127.0.0.1" -uroot -proot --silent; do
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
+
+      - name: Run database migrations
+        run: php think migrate:run
+        continue-on-error: true
+
+      - name: Run PHPUnit tests
+        run: php think test --testsuite=Unit
+        env:
+          APP_ENV: testing
+          DB_HOST: 127.0.0.1
+          DB_NAME: alkaid_sys_test
+          DB_USER: root
+          DB_PASS: root
+          REDIS_HOST: 127.0.0.1
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results
+          path: |
+            runtime/log/
+          retention-days: 7
