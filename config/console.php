@@ -30,8 +30,9 @@ return [
         'route:doc' => \app\command\RouteDocCommand::class,
         'route:verify' => \app\command\RouteVerifyCommand::class,
 
-        // Language pack commands | 语言包命令 (T-061)
+        // Language pack commands | 语言包命令 (T-061, T-063)
         'lang:check' => \app\command\LangCheckCommand::class,
+        'lang:sync' => \app\command\LangSyncCommand::class,
 
         // Environment check commands | 环境检查命令 (T-062)
         'env:check' => \app\command\EnvCheckCommand::class,
