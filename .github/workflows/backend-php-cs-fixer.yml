@@ -139,6 +139,11 @@ jobs:
           DB_PASS: root
           REDIS_HOST: 127.0.0.1
 
+      - name: Verify route documentation (T-060)
+        run: php think route:verify
+        env:
+          APP_ENV: testing
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: failure()

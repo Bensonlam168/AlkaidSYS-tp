@@ -25,5 +25,9 @@ return [
         'lowcode:create-form' => \app\command\lowcode\CreateFormCommand::class,
         'lowcode:generate' => \app\command\lowcode\GenerateCommand::class,
         'lowcode:migration:diff' => \app\command\lowcode\MigrationDiffCommand::class,
+
+        // Route documentation commands | 路由文档命令 (T-060)
+        'route:doc' => \app\command\RouteDocCommand::class,
+        'route:verify' => \app\command\RouteVerifyCommand::class,
     ],
 ];
