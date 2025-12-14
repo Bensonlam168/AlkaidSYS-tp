@@ -12,7 +12,7 @@ use think\facade\Db;
 /**
  * DatabaseAdapter 单元测试
  * DatabaseAdapter Unit Tests
- * 
+ *
  * 测试 Casbin DatabaseAdapter 的策略加载功能。
  * Test Casbin DatabaseAdapter policy loading functionality.
  */
@@ -24,17 +24,17 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        
+
         // 创建适配器实例
         // Create adapter instance
         $this->adapter = new DatabaseAdapter();
-        
+
         // 创建 Casbin 模型
         // Create Casbin model
         $modelPath = __DIR__ . '/../../../../../config/casbin-model.conf';
         $this->model = new Model();
         $this->model->loadModel($modelPath);
-        
+
         // 准备测试数据
         // Prepare test data
         $this->prepareTestData();
@@ -45,7 +45,7 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
         // 清理测试数据
         // Clean up test data
         $this->cleanupTestData();
-        
+
         parent::tearDown();
     }
 
@@ -58,10 +58,10 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
         // 清理现有数据
         // Clean existing data
         $this->cleanupTestData();
-        
+
         // 插入测试租户（假设 tenants 表存在，如果不存在则跳过）
         // Insert test tenants (skip if tenants table doesn't exist)
-        
+
         // 插入测试用户
         // Insert test users
         Db::table('users')->insertAll([
@@ -69,7 +69,7 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
             ['id' => 9002, 'tenant_id' => 1, 'username' => 'test_user_2', 'email' => 'test2@test.com', 'password' => 'test', 'status' => 'active'],
             ['id' => 9003, 'tenant_id' => 2, 'username' => 'test_user_3', 'email' => 'test3@test.com', 'password' => 'test', 'status' => 'active'],
         ]);
-        
+
         // 插入测试角色
         // Insert test roles
         Db::table('roles')->insertAll([
@@ -276,7 +276,7 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
     {
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('read-only mode');
-        
+
         $this->adapter->savePolicy($this->model);
     }
 
@@ -288,7 +288,7 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
     {
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('read-only mode');
-        
+
         $this->adapter->addPolicy('p', 'p', ['role:1', 'tenant:1', 'casbin_test_forms', 'view']);
     }
 
@@ -300,7 +300,7 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
     {
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('read-only mode');
-        
+
         $this->adapter->removePolicy('p', 'p', ['role:1', 'tenant:1', 'casbin_test_forms', 'view']);
     }
 
@@ -312,8 +312,7 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
     {
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('read-only mode');
-        
+
         $this->adapter->removeFilteredPolicy('p', 'p', 0, 'role:1');
     }
 }
-

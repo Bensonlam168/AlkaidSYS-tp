@@ -148,4 +148,17 @@ abstract class ThinkPHPTestCase extends BaseTestCase
     {
         return self::$app;
     }
+
+    /**
+     * Get ThinkPHP App instance for container operations | 获取用于容器操作的 ThinkPHP App 实例
+     *
+     * This method is provided for MockContainerTrait compatibility.
+     * 此方法提供与 MockContainerTrait 的兼容性。
+     *
+     * @return App
+     */
+    protected function getContainerApp(): App
+    {
+        return self::$app;
+    }
 }

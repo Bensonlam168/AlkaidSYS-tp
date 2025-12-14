@@ -34,7 +34,6 @@ try {
             'email' => 'test@example.com',
             'password' => password_hash('password', PASSWORD_DEFAULT),
             'tenant_id' => 1,
-            'site_id' => 0,
             'status' => 1,
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
@@ -42,27 +41,42 @@ try {
         echo "   ✅ Test user created (id=1, username=test_user)\n";
     } else {
         echo "   ✅ Test user already exists (id={$user['id']}, username={$user['username']})\n";
+
+        // 为保证 E2E 与 Feature Test 一致，始终同步更新测试用户的关键字段
+        Db::table('users')
+            ->where('id', 1)
+            ->update([
+                'username' => 'test_user',
+                'email' => 'test@example.com',
+                'password' => password_hash('password', PASSWORD_DEFAULT),
+                'tenant_id' => 1,
+                'status' => 1,
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        echo "   ✅ Test user updated to ensure known credentials (email=test@example.com, password=password)\n";
     }
 
     // 2. Check and create lowcode permissions
+    //    NOTE: permissions.slug MUST use internal slug format `resource.action`
+    //    注意：permissions.slug 必须使用内部 slug 格式 `resource.action`
     echo "\n2. Checking lowcode permissions...\n";
     $permissions = [
         [
-            'slug' => 'lowcode:read',
+            'slug' => 'lowcode.read',
             'name' => 'Lowcode Read',
             'resource' => 'lowcode',
             'action' => 'read',
             'description' => 'Read lowcode resources'
         ],
         [
-            'slug' => 'lowcode:write',
+            'slug' => 'lowcode.write',
             'name' => 'Lowcode Write',
             'resource' => 'lowcode',
             'action' => 'write',
             'description' => 'Create and update lowcode resources'
         ],
         [
-            'slug' => 'lowcode:delete',
+            'slug' => 'lowcode.delete',
             'name' => 'Lowcode Delete',
             'resource' => 'lowcode',
             'action' => 'delete',
@@ -156,7 +170,7 @@ try {
     echo "  User ID: 1\n";
     echo "  Username: test_user\n";
     echo "  Tenant ID: 1\n";
-    echo "  Permissions: lowcode:read, lowcode:write, lowcode:delete\n";
+    echo "  Permissions (slug): lowcode.read, lowcode.write, lowcode.delete\n";
 
 } catch (\Exception $e) {
     echo "\n❌ Error: " . $e->getMessage() . "\n";
