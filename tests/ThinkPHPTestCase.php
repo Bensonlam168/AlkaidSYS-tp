@@ -73,12 +73,24 @@ abstract class ThinkPHPTestCase extends BaseTestCase
             ];
 
             // Initialize Cache configuration | 初始化Cache配置
+            // Include Redis store for RateLimitService and other Redis-dependent services
+            // 包含 Redis store 以支持 RateLimitService 和其他依赖 Redis 的服务
             $cacheConfig = [
                 'default' => 'file',
                 'stores' => [
                     'file' => [
                         'type' => 'File',
                         'path' => $rootPath . '/runtime/cache/',
+                    ],
+                    'redis' => [
+                        'type' => 'Redis',
+                        'host' => getenv('REDIS_HOST') ?: 'redis',
+                        'port' => (int) (getenv('REDIS_PORT') ?: 6379),
+                        'password' => getenv('REDIS_PASSWORD') ?: '',
+                        'select' => (int) (getenv('REDIS_DB') ?: 0),
+                        'prefix' => 'alkaid:test:',
+                        'expire' => 0,
+                        'timeout' => 0,
                     ],
                 ],
             ];

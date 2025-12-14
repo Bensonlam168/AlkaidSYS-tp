@@ -100,11 +100,19 @@ LUA;
     /**
      * Constructor | 构造函数
      *
-     * @param string|null $store Cache store name, null for default
+     * Rate limiting requires Redis for atomic operations and distributed state.
+     * Default store is 'redis' regardless of the application's default cache driver.
+     *
+     * 限流需要 Redis 来实现原子操作和分布式状态。
+     * 默认使用 'redis' store，不受应用默认缓存驱动影响。
+     *
+     * @param string|null $store Cache store name, defaults to 'redis'
      */
     public function __construct(?string $store = null)
     {
-        $this->cache = $store ? Cache::store($store) : Cache::store();
+        // Rate limiting must use Redis for atomic Lua script execution
+        // 限流必须使用 Redis 以执行原子 Lua 脚本
+        $this->cache = Cache::store($store ?? 'redis');
     }
 
     /**
