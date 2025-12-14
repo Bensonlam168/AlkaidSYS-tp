@@ -20,4 +20,3 @@ Route::group('v1/admin/casbin', function () {
             \app\middleware\RateLimit::class,
         ]);
 });
-

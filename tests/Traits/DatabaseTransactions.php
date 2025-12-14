@@ -105,4 +105,3 @@ trait DatabaseTransactions
         parent::tearDown();
     }
 }
-

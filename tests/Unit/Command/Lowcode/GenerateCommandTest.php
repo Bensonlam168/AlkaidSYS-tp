@@ -41,4 +41,3 @@ class GenerateCommandTest extends ThinkPHPTestCase
         $this->assertNotEmpty($this->command->getDescription());
     }
 }
-

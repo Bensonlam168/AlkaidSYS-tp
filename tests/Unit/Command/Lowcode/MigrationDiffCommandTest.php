@@ -41,4 +41,3 @@ class MigrationDiffCommandTest extends ThinkPHPTestCase
         $this->assertNotEmpty($this->command->getDescription());
     }
 }
-

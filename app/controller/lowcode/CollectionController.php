@@ -20,18 +20,18 @@ use think\Response;
  *
  * @package app\controller\lowcode
  */
-    class CollectionController extends ApiController
-    {
-        protected CollectionManager $collectionManager;
+class CollectionController extends ApiController
+{
+    protected CollectionManager $collectionManager;
 
-        /**
-         * Constructor | 构造函数
-         */
-        public function __construct(App $app, CollectionManager $collectionManager)
-        {
-            parent::__construct($app);
-            $this->collectionManager = $collectionManager;
-        }
+    /**
+     * Constructor | 构造函数
+     */
+    public function __construct(App $app, CollectionManager $collectionManager)
+    {
+        parent::__construct($app);
+        $this->collectionManager = $collectionManager;
+    }
 
     /**
      * List collections | 列出Collections

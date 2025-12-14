@@ -22,11 +22,11 @@ class FormDataController extends ApiController
 {
     protected FormDataManager $manager;
 
-        public function __construct(App $app, FormDataManager $manager)
-        {
-            parent::__construct($app);
-            $this->manager = $manager;
-        }
+    public function __construct(App $app, FormDataManager $manager)
+    {
+        parent::__construct($app);
+        $this->manager = $manager;
+    }
 
     /**
      * List form data | 获取表单数据列表

@@ -212,4 +212,3 @@ class CasbinCacheDegradationTest extends ThinkPHPTestCase
         $this->assertTrue($result);
     }
 }
-

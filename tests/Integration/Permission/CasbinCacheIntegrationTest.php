@@ -169,7 +169,7 @@ class CasbinCacheIntegrationTest extends ThinkPHPTestCase
 
         // 验证缓存中有数据
         // Verify cache has data
-        $cacheKey = "casbin:check:9100:1:cache_integration:view";
+        $cacheKey = 'casbin:check:9100:1:cache_integration:view';
         $cachedValue = Cache::get($cacheKey);
         $this->assertNotNull($cachedValue, 'Cache should have value');
         $this->assertTrue((bool) $cachedValue, 'Cached value should be true');
@@ -328,4 +328,3 @@ class CasbinCacheIntegrationTest extends ThinkPHPTestCase
         $this->assertEquals(1, $stats3['misses']);
     }
 }
-

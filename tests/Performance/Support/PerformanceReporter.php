@@ -78,7 +78,7 @@ class PerformanceReporter
     protected function buildReport(): string
     {
         $report = "# Performance Test Report\n\n";
-        $report .= "**Generated**: " . date('Y-m-d H:i:s') . "\n\n";
+        $report .= '**Generated**: ' . date('Y-m-d H:i:s') . "\n\n";
 
         $benchmarks = $this->benchmark->getAllBenchmarks();
 
@@ -142,7 +142,7 @@ class PerformanceReporter
         // Regression detection
         $regression = $this->benchmark->detectRegression($testName, $data['execution_time_ms']);
         $detail .= "**Regression Detection**:\n";
-        $detail .= "- Status: " . ($regression['has_regression'] ? '❌ Regression Detected' : '✅ OK') . "\n";
+        $detail .= '- Status: ' . ($regression['has_regression'] ? '❌ Regression Detected' : '✅ OK') . "\n";
         $detail .= "- Current: {$regression['current_time']} ms\n";
         $detail .= "- Baseline: {$regression['baseline_time']} ms\n";
         $detail .= "- Threshold: {$regression['threshold_time']} ms\n";
@@ -201,7 +201,7 @@ class PerformanceReporter
             $range = 1;
         }
 
-        $chart = "";
+        $chart = '';
         $maxBarLength = 50;
 
         foreach ($times as $index => $time) {
@@ -220,4 +220,3 @@ class PerformanceReporter
         return $chart;
     }
 }
-

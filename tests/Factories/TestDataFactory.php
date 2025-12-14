@@ -274,4 +274,3 @@ class TestDataFactory
         return count($this->createdRecords);
     }
 }
-

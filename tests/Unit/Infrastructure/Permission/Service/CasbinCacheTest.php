@@ -36,7 +36,7 @@ class CasbinCacheTest extends ThinkPHPTestCase
         // 重新加载策略
         // Reload policy
         $this->service->reloadPolicy();
-        
+
         // 启用缓存
         // Enable cache
         Config::set(['casbin.cache_enabled' => true]);
@@ -225,4 +225,3 @@ class CasbinCacheTest extends ThinkPHPTestCase
     }
 
 }
-

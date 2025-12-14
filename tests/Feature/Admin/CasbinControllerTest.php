@@ -211,4 +211,3 @@ class CasbinControllerTest extends ThinkPHPTestCase
 
 
 }
-

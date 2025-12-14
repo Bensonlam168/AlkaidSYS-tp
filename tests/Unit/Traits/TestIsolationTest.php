@@ -187,4 +187,3 @@ class TestIsolationTest extends ThinkPHPTestCase
         $this->assertEquals(0, $this->factory->getCreatedCount());
     }
 }
-

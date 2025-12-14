@@ -93,4 +93,3 @@ class CreateFormCommandTest extends ThinkPHPTestCase
         $this->assertEquals('string', $method->invoke($this->command, 'unknown_type'));
     }
 }
-

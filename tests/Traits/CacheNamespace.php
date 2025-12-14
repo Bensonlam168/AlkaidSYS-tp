@@ -175,4 +175,3 @@ trait CacheNamespace
         parent::tearDown();
     }
 }
-

@@ -61,4 +61,3 @@ class AddCasbinManagePermission extends Migrator
         $this->output->writeln('<info>Permission casbin.manage deleted</info>');
     }
 }
-

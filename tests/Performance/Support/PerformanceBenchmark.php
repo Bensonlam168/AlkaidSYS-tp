@@ -237,7 +237,7 @@ class PerformanceBenchmark
             'degradation_percent' => round($degradation, 2),
             'message' => $hasRegression
                 ? "Performance regression detected: {$degradation}% slower than baseline"
-                : "Performance is within acceptable range",
+                : 'Performance is within acceptable range',
         ];
     }
 
@@ -299,4 +299,3 @@ class PerformanceBenchmark
         return $this->benchmarks;
     }
 }
-

@@ -20,23 +20,23 @@ use think\Response;
  *
  * @package app\controller\lowcode
  */
-    class RelationshipController extends ApiController
-    {
-        protected CollectionManager $collectionManager;
-        protected RelationshipManager $relationshipManager;
+class RelationshipController extends ApiController
+{
+    protected CollectionManager $collectionManager;
+    protected RelationshipManager $relationshipManager;
 
-        /**
-         * Constructor | 构造函数
-         */
-        public function __construct(
-            App $app,
-            CollectionManager $collectionManager,
-            RelationshipManager $relationshipManager
-        ) {
-            parent::__construct($app);
-            $this->collectionManager = $collectionManager;
-            $this->relationshipManager = $relationshipManager;
-        }
+    /**
+     * Constructor | 构造函数
+     */
+    public function __construct(
+        App $app,
+        CollectionManager $collectionManager,
+        RelationshipManager $relationshipManager
+    ) {
+        parent::__construct($app);
+        $this->collectionManager = $collectionManager;
+        $this->relationshipManager = $relationshipManager;
+    }
 
     /**
      * Add relationship to collection | 添加关系到Collection

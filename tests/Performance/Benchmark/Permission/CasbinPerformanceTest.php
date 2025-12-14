@@ -15,7 +15,7 @@ use think\facade\Db;
 /**
  * Casbin 性能基准测试
  * Casbin Performance Benchmark Tests
- * 
+ *
  * 测试 Casbin 授权引擎的性能指标。
  * Test performance metrics of Casbin authorization engine.
  */
@@ -74,7 +74,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         // 清理现有数据
         // Clean existing data
         $this->cleanupTestData();
-        
+
         // 插入 1000 个测试用户
         // Insert 1000 test users
         $users = [];
@@ -89,7 +89,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
             ];
         }
         Db::table('users')->insertAll($users);
-        
+
         // 插入 100 个测试角色
         // Insert 100 test roles
         $roles = [];
@@ -103,7 +103,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
             ];
         }
         Db::table('roles')->insertAll($roles);
-        
+
         // 插入 1000 个测试权限
         // Insert 1000 test permissions
         $permissions = [];
@@ -112,13 +112,13 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
                 'id' => $i,
                 'name' => "Perf Test Permission {$i}",
                 'slug' => "perf_test_perm_{$i}",
-                'resource' => "perf_test_resource_" . (($i - 10000) % 100),
-                'action' => "action_" . (($i - 10000) % 10),
+                'resource' => 'perf_test_resource_' . (($i - 10000) % 100),
+                'action' => 'action_' . (($i - 10000) % 10),
                 'description' => 'Performance Test',
             ];
         }
         Db::table('permissions')->insertAll($permissions);
-        
+
         // 插入用户角色关联（每个用户 1-3 个随机角色，使用去重逻辑）
         // Insert user-role associations (1-3 random roles per user, with deduplication)
         $userRoles = [];
@@ -143,7 +143,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
             }
         }
         Db::table('user_roles')->insertAll($userRoles);
-        
+
         // 插入角色权限关联（每个角色 10-50 个随机权限，使用去重逻辑）
         // Insert role-permission associations (10-50 random permissions per role, with deduplication)
         $rolePermissions = [];
@@ -194,7 +194,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         // 配置 CASBIN_ONLY 模式
         // Configure CASBIN_ONLY mode
         Config::set(['casbin.mode' => 'CASBIN_ONLY']);
-        
+
         // 测试 100 次单次权限检查
         // Test 100 single permission checks
         $times = [];
@@ -203,13 +203,13 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
             $this->casbinService->check(10000, 1, 'perf_test_resource_0', 'action_0');
             $times[] = (microtime(true) - $startTime) * 1000; // ms
         }
-        
+
         // 计算统计数据
         // Calculate statistics
         $avgTime = array_sum($times) / count($times);
         $maxTime = max($times);
         $minTime = min($times);
-        
+
         // 记录性能数据到基准
         // Record performance data to benchmark
         $this->benchmark->record(
@@ -311,13 +311,13 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
             $this->casbinService->reloadPolicy();
             $times[] = (microtime(true) - $startTime) * 1000; // ms
         }
-        
+
         // 计算统计数据
         // Calculate statistics
         $avgTime = array_sum($times) / count($times);
         $maxTime = max($times);
         $minTime = min($times);
-        
+
         // 记录性能数据
         // Record performance data
         $this->performanceReport['policy_loading'] = [
@@ -326,7 +326,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
             'min_time_ms' => round($minTime, 2),
             'iterations' => 10,
         ];
-        
+
         // 验证性能目标：< 100ms
         // Verify performance target: < 100ms
         $this->assertLessThan(100, $avgTime, "Average policy loading time should be < 100ms, got {$avgTime}ms");
@@ -340,16 +340,16 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
     {
         $modes = ['DB_ONLY', 'CASBIN_ONLY', 'DUAL_MODE'];
         $results = [];
-        
+
         foreach ($modes as $mode) {
             // 配置模式
             // Configure mode
             Config::set(['casbin.mode' => $mode]);
-            
+
             // 重新创建服务实例
             // Recreate service instance
             $this->permissionService = new PermissionService($this->casbinService);
-            
+
             // 测试 100 次权限检查
             // Test 100 permission checks
             $times = [];
@@ -358,7 +358,7 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
                 $this->permissionService->hasPermission(10000, 'perf_test_resource_0:action_0');
                 $times[] = (microtime(true) - $startTime) * 1000; // ms
             }
-            
+
             // 计算统计数据
             // Calculate statistics
             $results[$mode] = [
@@ -367,11 +367,11 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
                 'min_time_ms' => round(min($times), 2),
             ];
         }
-        
+
         // 记录性能数据
         // Record performance data
         $this->performanceReport['mode_comparison'] = $results;
-        
+
         // 性能对比数据已记录到报告中，不做严格断言
         // Performance comparison data is recorded in report, no strict assertion
         // 注意：由于测试环境的性能波动，不同模式的性能可能略有差异
@@ -384,4 +384,3 @@ class CasbinPerformanceTest extends ThinkPHPTestCase
         $this->assertArrayHasKey('DUAL_MODE', $results, 'DUAL_MODE results should exist');
     }
 }
-

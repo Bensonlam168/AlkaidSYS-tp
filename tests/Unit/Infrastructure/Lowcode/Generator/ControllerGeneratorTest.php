@@ -122,4 +122,3 @@ class ControllerGeneratorTest extends ThinkPHPTestCase
         parent::tearDown();
     }
 }
-

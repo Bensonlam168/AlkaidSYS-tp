@@ -198,4 +198,3 @@ class LanguageServiceTest extends ThinkPHPTestCase
         parent::tearDown();
     }
 }
-

@@ -22,11 +22,11 @@ class FormSchemaController extends ApiController
 {
     protected FormSchemaManager $manager;
 
-        public function __construct(App $app, FormSchemaManager $manager)
-        {
-            parent::__construct($app);
-            $this->manager = $manager;
-        }
+    public function __construct(App $app, FormSchemaManager $manager)
+    {
+        parent::__construct($app);
+        $this->manager = $manager;
+    }
 
     /**
      * List form schemas | 列出表单Schema

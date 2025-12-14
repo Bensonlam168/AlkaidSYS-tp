@@ -138,4 +138,3 @@ class CreateModelCommandTest extends ThinkPHPTestCase
         $this->assertEquals(2, $decimalOptions['scale']);
     }
 }
-
