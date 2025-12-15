@@ -55,12 +55,26 @@ class FieldTypeRegistry
      *
      * @param string $type Field type | 字段类型
      * @param string $name Field name | 字段名称
-     * @param array $options Field options | 字段选项
+     * @param array $options Field options |字段选项
      * @return FieldInterface
      * @throws \InvalidArgumentException If field type is unknown | 如果字段类型未知
      */
     public static function create(string $type, string $name, array $options = []): FieldInterface
     {
+        // Legacy FieldTypeRegistry deprecation warning | Legacy FieldTypeRegistry 废弃警告
+        try {
+            $request = request();
+            \think\facade\Log::warning('Legacy FieldTypeRegistry is deprecated and will be removed in v2.0', [
+                'trace_id' => method_exists($request, 'traceId') ? $request->traceId() : null,
+                'tenant_id' => method_exists($request, 'tenantId') ? $request->tenantId() : null,
+                'field_type' => $type,
+                'field_name' => $name,
+                'backtrace' => array_slice(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS), 0, 5),
+            ]);
+        } catch (\Throwable $e) {
+            // Silently fail if logging is not available | 如果日志不可用则静默失败
+        }
+
         // If no explicit mapping is registered, delegate to Lowcode FieldFactory
         if (!isset(self::$types[$type])) {
             // Let Lowcode\FieldFactory handle unknown types; this ensures

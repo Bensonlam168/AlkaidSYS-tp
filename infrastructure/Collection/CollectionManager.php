@@ -45,6 +45,19 @@ class CollectionManager
      */
     public function __construct(SchemaBuilder $schemaBuilder)
     {
+        // Legacy CollectionManager deprecation warning | Legacy CollectionManager 废弃警告
+        try {
+            $request = request();
+            \think\facade\Log::warning('Legacy CollectionManager is deprecated and will be removed in v2.0', [
+                'trace_id' => method_exists($request, 'traceId') ? $request->traceId() : null,
+                'tenant_id' => method_exists($request, 'tenantId') ? $request->tenantId() : null,
+                'class' => static::class,
+                'backtrace' => array_slice(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS), 0, 5),
+            ]);
+        } catch (\Throwable $e) {
+            // Silently fail if logging is not available | 如果日志不可用则静默失败
+        }
+
         $this->schemaBuilder = $schemaBuilder;
     }
 

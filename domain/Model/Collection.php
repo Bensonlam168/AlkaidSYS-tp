@@ -51,6 +51,22 @@ class Collection extends Model
      */
     public function __construct(string $name = '', array $config = [])
     {
+        // Legacy Collection deprecation warning | Legacy Collection 废弃警告
+        // Log usage for tracking and migration planning | 记录使用情况以便跟踪和迁移规划
+        try {
+            $request = request();
+            \think\facade\Log::warning('Legacy Collection is deprecated and will be removed in v2.0', [
+                'trace_id' => method_exists($request, 'traceId') ? $request->traceId() : null,
+                'tenant_id' => method_exists($request, 'tenantId') ? $request->tenantId() : null,
+                'collection_name' => $name,
+                'backtrace' => array_slice(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS), 0, 5),
+            ]);
+        } catch (\Throwable $e) {
+            // Silently fail if logging is not available | 如果日志不可用则静默失败
+            // This ensures the constructor doesn't break in CLI or test environments
+            // 确保构造函数在 CLI 或测试环境中不会崩溃
+        }
+
         $this->name = $name;
         $this->table = $config['table_name'] ?? $this->getDefaultTableName();
         $this->fields = $config['fields'] ?? [];
