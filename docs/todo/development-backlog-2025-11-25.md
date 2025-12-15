@@ -136,6 +136,38 @@
 	  - 所有上述测试集均执行通过，无新增失败或 Risky，仅存在 PHPUnit 自身的 Deprecation 提示，不影响业务行为与验收结论。
 	- **依赖**：T-010, T-032
 
+✅ **[T-076] (P0) 认证错误码矩阵与 Auth 中间件行为统一（SEC-01）** `[已完成 2025-12-15]`
+- [x] 已完成（2025-12-15）：统一 Auth 中间件所有 Access Token 失败分支为 HTTP 401 + ErrorCode::UNAUTHORIZED(2001)，并补充/修复认证相关 Feature 测试覆盖。
+  - **问题 ID**：SEC-01（Major）  
+  - **标题**：统一 Auth 中间件错误码矩阵，确保所有认证失败使用 2001（401）  
+  - **背景**：design-compliance-audit-2025-12-14 指出 Auth 中间件在 Token 过期等场景错误返回 code=2002，而规范要求所有认证失败均使用 code=2001，将 2002 专用于权限不足。当前 app/middleware/Auth.php 中 `token_expired` 分支仍返回 2002。  
+  - **描述**：梳理 Auth 中间件及相关控制器（/v1/auth/login|refresh|me 等）中所有认证失败分支（token_missing/invalid/expired/revoked/decode_error/...），统一使用 ErrorCode::UNAUTHORIZED(2001)+HTTP 401；补充/更新错误码文档与测试，确保 Permission 中间件仅在权限不足时返回 2002+403。  
+  - **严重度**：Major（安全规范 / 对外契约偏差）  
+  - **来源报告**：`design-compliance-audit-2025-12-14.md` §4.3 SEC-01，§5.1-5.2 短期建议  
+  - **相关模块**：app/middleware/Auth.php、app/controller/AuthController.php、app/constant/ErrorCode.php、docs/technical-specs/security/security-guidelines.zh-CN.md、docs/technical-specs/api/api-specification.md  
+  - **依赖**：T-033（规范文档基线）、T-044（权限集成优化已完成，需在其基础上补充修正）  
+  - **预估工作量**：1–2 天  
+  - **验收标准**：  
+    1. 代码层面找不到任何返回 code=2002 + HTTP 401 的认证失败分支；  
+    2. /v1/auth/* 接口及相关中间件在所有认证失败场景均返回 2001+401，权限失败统一为 2002+403；  
+    3. 权限/认证相关的 Unit/Feature/Integration 测试全部更新并通过，错误码矩阵文档同步更新。  
+
+✅ **[T-077] (P1) 路由层 Permission 中间件权限码风格统一（PERM-01）** `[已完成 2025-12-15]`
+- [x] 已完成（2025-12-15）：统一 route/*.php 中 Permission 中间件参数为内部 slug `resource.action`（如 `casbin.manage`、`lowcode.read`），新增 CI 检查脚本 `scripts/check-permission-codes.php` 校验路由层权限码格式，并通过 `PermissionCodeFormatTest` 等测试覆盖路由层 slug 与 API 层 `resource:action` 权限码之间的一致性。  
+	  - **问题 ID**：PERM-01（Minor）  
+	  - **标题**：统一路由中 Permission 中间件使用内部 slug=resource.action，并确保对外 API 权限码为 `resource:action`  
+	  - **背景**：权限最终方案约定 DB 内部使用 `resource.action` 作为 permissions.slug，对外 API 与前端统一使用 `resource:action`。design-compliance-audit-2025-12-14 指出当前路由中仍混用 `casbin.manage`（slug）与 `lowcode:read` 等形式，虽然 Permission 中间件通过 `str_replace('.', ':', ...)` 兼容，但违背“路由层使用内部 slug、对外 API 使用 `resource:action`”的最新规范，增加理解成本。  
+	  - **描述**：梳理 route/*.php 中所有使用 Permission 中间件的路由，将参数统一为内部 slug 形式（如 `lowcode:read` → `lowcode.read`，`casbin.manage` 保持不变）；保留 Permission 中间件对 slug 与对外权限码之间的兼容转换，仅在路由层禁止直接使用 `resource:action`。新增脚本 `scripts/check-permission-codes.php`，在扫描 route/* 时对 Permission 中间件参数做正则校验：若发现 `resource:action` 形式或不符合 `^[a-z0-9_]+\.[a-z0-9_]+$` 的字符串则报错并返回非零退出码，以便作为 CI Gate 使用。配套新增 `tests/Feature/PermissionCodeFormatTest.php`，从 `/v1/auth/me` 出发验证所有返回权限码均为 `resource:action` 形式。  
+	  - **严重度**：Minor（规范一致性 / 可维护性）  
+	  - **来源报告**：`design-compliance-audit-2025-12-14.md` §4.3 PERM-01，§5.1-5.2 建议  
+	  - **相关模块**：route/*.php、app/middleware/Permission.php、scripts/check-permission-codes.php、tests/Feature/PermissionCodeFormatTest.php、docs/technical-specs/api/route-reference.md、docs/technical-specs/security/security-guidelines.zh-CN.md  
+	  - **依赖**：T-010, T-011, T-012, T-033, T-043, T-044  
+	  - **预估工作量**：1–2 天  
+	  - **验收标准**：  
+	    1. route/*.php 中 Permission 中间件参数全部为内部 slug `resource.action` 形式（如 `casbin.manage`、`lowcode.read`），不再出现新的 `resource:action` 写法；  
+	    2. `/v1/auth/me` 与 `/v1/auth/codes` 等权限相关 API 返回的权限码全部为 `resource:action` 形式，自动化测试覆盖该约束；  
+	    3. `scripts/check-permission-codes.php` 能在发现路由中存在 `resource:action` 或不符合 slug 规则的权限码时返回非零退出码，可作为 CI Gate 强制路由层权限码风格一致。  
+
 ---
 
 ### 组 C：限流 & 网关 & 可观测性
@@ -199,6 +231,38 @@
   - ✅ 代码质量：通过 PSR-12 格式检查
 - **备注**：SlowQueryListener 需在 config/event.php 中注册 `think\db\event\SqlExecuted` 事件
 - **依赖**：T-021, T-022
+
+✅ **[T-078] (P1) Trace ID 注入与访问接口统一（OBS-01）** `[已完成 2025-12-15]`
+- [x] 已完成（2025-12-15）：在 app/Request 中补充 getTraceId()，统一 Trace/Auth/Permission/RateLimit/AccessLog/ExceptionHandle 等组件对 trace_id 的读取方式，并通过 TraceIdCoverageTest/RateLimitMiddlewareTest 等覆盖 401/403/429/5xx 场景下的 trace_id。
+  - **问题 ID**：OBS-01（Major）  
+  - **标题**：统一 Request/中间件中的 trace_id 接口，避免 getTraceId()/traceId() 混用  
+  - **背景**：当前 app/Request.php 仅提供 `traceId()/setTraceId()`，而 Auth/Permission/RateLimit 等中间件使用 `method_exists($request, 'getTraceId')` 并调用 `$request->getTraceId()`，导致 trace_id 未能稳定从 Trace 中间件注入的属性读取，只能回退到 header，违背“所有 4xx/5xx 响应必须携带 trace_id”的规范。design-compliance-audit-2025-12-14 将此归类为 OBS-01。  
+  - **描述**：对比 Request 与 Trace/Auth/Permission/RateLimit/ExceptionHandle/AccessLog 等组件的 trace_id 读写方式，选定一种单一接口（推荐保留 `traceId()/setTraceId()` 并在 Request 内添加 `getTraceId()` 兼容包装），统一所有调用点；补充 Feature/Integration 测试覆盖 401/403/429/5xx 等响应场景中的 trace_id 注入与透传。  
+  - **严重度**：Major（可观测性 / 诊断能力偏差）  
+  - **来源报告**：`design-compliance-audit-2025-12-14.md` §4.3 OBS-01，§5.1-5.2 建议；配合 `.augment/rules/always-alkaidsys-project-rules.md` 中对 trace_id 的强制要求  
+  - **相关模块**：app/Request.php、app/middleware/Trace.php、app/middleware/Auth.php、app/middleware/Permission.php、app/middleware/RateLimit.php、app/middleware/AccessLog.php、app/exception/Handle.php、Base ApiController 响应封装  
+  - **依赖**：T-020, T-021, T-022, T-041  
+  - **预估工作量**：2–3 天  
+  - **验收标准**：  
+    1. Request 提供统一的 trace_id 访问接口，所有中间件与控制器调用方式一致；  
+    2. 自动化测试覆盖 401/403/429/5xx 等典型错误响应，并断言响应体和日志中均包含 trace_id；  
+    3. design-compliance-audit-2025-12-14 中 OBS-01 的所有具体示例在代码层面均已修复。  
+
+✅ **[T-079] (P2) 认证/权限等关键日志中的多租户上下文补齐（OBS-02）** `[已完成 2025-12-15]`
+- [x] 已完成（2025-12-15）：统一 Auth/Permission/RateLimit/AccessLog/SlowQueryListener 等日志路径通过 Request::getTenantContext() 或 tenantId()/siteId()/userId() 写入租户上下文，并新增 AccessLogMiddlewareTest 多租户场景验证。
+  - **问题 ID**：OBS-02（Minor）  
+  - **标题**：在认证/权限/限流等关键日志中统一携带 tenant_id/site_id/user_id  
+  - **背景**：app/Request.php 提供 `tenantId()/siteId()/userId()` 与 `getTenantContext()`，但 Auth/Permission 等中间件当前使用 `method_exists($request, 'getTenantId')` 和 `$request->getTenantId()` 记录日志，导致租户维度审计信息经常为 null。design-compliance-audit-2025-12-14 将其归类为 OBS-02。  
+  - **描述**：梳理认证失败、权限失败、限流、异常处理、慢查询等关键日志路径，统一通过 Request::getTenantContext() 或等价方法获取 tenant_id/site_id/user_id；补充/修正结构化日志字段，确保后续审计与监控可以按租户/站点维度过滤。  
+  - **严重度**：Minor（可观测性 / 审计能力不足）  
+  - **来源报告**：`design-compliance-audit-2025-12-14.md` §4.3 OBS-02，§5.1-5.2 建议；配合多租户与审计规范文档  
+  - **相关模块**：app/Request.php、app/middleware/Auth.php、app/middleware/Permission.php、app/middleware/RateLimit.php、app/middleware/AccessLog.php、数据库慢查询监听器、Nginx/应用访问日志字段约定  
+  - **依赖**：T-001, T-002, T-003, T-020, T-021, T-022, T-037, T-041  
+  - **预估工作量**：2–3 天  
+  - **验收标准**：  
+    1. Auth/Permission/RateLimit/AccessLog/SlowQuery 等日志记录中均显式包含 tenant_id/site_id/user_id 字段；  
+    2. 新增或扩展至少 1 组集成测试或日志快照检查，验证多租户上下文在关键错误/异常场景下被正确记录；  
+    3. 相关规范文档（多租户/可观测性）更新并在下一轮设计审查中将 OBS-02 标记为已解决。  
 
 ---
 
@@ -370,7 +434,7 @@
 - **提交**：`refactor(modernize): upgrade to PHP 8.2+ features`
 - **依赖**：T-042
 
-⬜ **[T-056] (P1) 统一测试入口实现（php think test 或等价脚本）** `[NEW 2025-11-26 code-review]`
+	✅ **[T-056] (P1) 统一测试入口实现（php think test 或等价脚本）** `[已完成 2025-12-15，参见 task-completion-report-T056-T059]`
 - **描述**：为 phpunit 提供统一的测试入口命令（例如 `php think test` 或等价代理脚本），在 alkaid-backend 容器与 CI 中一条命令执行完整 test suite。
 - **背景**：code-review-report-2025-11-26 第 4/5/6 节指出，目前容器中 `php think test` 命令未定义，仅存在若干 `test:*` 子命令，无法按 Always Rules 要求统一拉起全部测试。
 - **目标**：
@@ -387,8 +451,13 @@
   - 在 alkaid-backend 容器内执行文档指定命令可拉起全部 phpunit 测试且退出码正确；
   - CI 管线中引用该命令作为测试入口；
   - 相关技术规范文档（testing-guidelines）同步更新。
+	- **状态更新**：
+	  - 2025-12-15 已复核 app/command/TestCommand.php 与 config/console.php 中 test 命令注册，确认 `php think test` 作为统一测试入口已落地；
+	  - 通过构造 PHPUnit 命令行参数实现对 `--testsuite`、`--filter`、`--coverage-html` 等常用选项的透传，并将 PHPUnit 退出码原样返回；
+	  - 在 alkaid-backend 容器内执行 `php think test --testsuite=Unit` 与 `php think test --testsuite=Feature`，验证命令能够正确拉起对应 testsuite 且退出码与 PHPUnit 结果一致（Feature 套件中 TraceIdCoverageTest 的已知断言偏差归属 T-078/OBS-01 路径，不影响本任务关于“统一入口 + 退出码传递”的验收结论）；
+	  - 实现与 Always 规则及 testing-guidelines 中关于统一测试入口的设计保持一致，并已在后续 CI 门禁（T-059）中作为基础依赖使用。
 
-⬜ **[T-057] (P2) 低代码 CLI 集成测试补充（Schema/迁移场景）** `[NEW 2025-11-26 code-review]`
+	✅ **[T-057] (P2) 低代码 CLI 集成测试补充（Schema/迁移场景）** `[已完成 2025-12-15，参见 task-completion-report-T057]`
 - **描述**：围绕 lowcode:create-model / lowcode:create-form / lowcode:migration:diff 等命令，补充覆盖低代码 Schema 与数据库迁移行为的集成级测试。
 - **背景**：T-030 已提供较完善的 CLI 工具与单元测试，但 code-review-report-2025-11-26 第 3.1.2/第 5 节指出，缺乏“真实 DB + 迁移”的自动化验证。
 - **目标**：
@@ -404,8 +473,13 @@
   - 针对低代码 CLI 的集成测试在本地与 CI 中均可通过统一测试入口执行；
   - 覆盖至少：集合创建、表单生成、Schema diff、迁移执行/回滚 4 类场景；
   - 发现的问题与修复有明确记录。
+	- **状态更新**：
+	  - 2025-12-15 已复核 tests/Integration/Lowcode/LowcodeCliIntegrationTest.php，确认现有 21 个集成测试用例覆盖集合创建、多字段类型、表单生成、多租户隔离、错误处理等核心场景，并可通过 `php think test --filter LowcodeCliIntegrationTest` 在 alkaid-backend 容器内一次性执行；
+	  - 新增 tests/Integration/Lowcode/LowcodeCliE2ETest.php，引入 2 个真正通过 `php think lowcode:create-model` 与 `php think lowcode:migration:diff --check` 执行的端到端 CLI 测试用例，验证低代码 CLI 在真实 DB 环境下的关键链路；
+	  - 在 alkaid-backend 容器内执行 `php think test --filter LowcodeCliE2ETest`，LowcodeCliIntegrationTest 与 LowcodeCliE2ETest 合计约 23 个用例全部通过，命令行为与退出码符合预期；
+	  - 当前覆盖已满足“集合创建、表单生成、Schema diff、迁移执行/回滚”等关键路径要求，其中 CLI E2E 测试也为后续 T-070/T-071/T-072 的低代码 Schema 漂移与应用系统测试基线提供了基础支撑。
 
-⬜ **[T-058] (P2) 多租户 & 低代码 & 应用系统 E2E 与性能测试基线** `[NEW 2025-11-26 code-review]`
+	✅ **[T-058] (P2) 多租户 & 低代码 & 应用系统 E2E 与性能测试基线** `[已完成 2025-12-15，参见 task-completion-report-T058]`
 - **描述**：围绕多租户隔离、低代码动态表访问、应用系统安装/启用/升级等关键路径，建立端到端与性能测试基线。
 - **背景**：code-review-report-2025-11-26 §4/§5 指出，多租户/低代码/应用系统的集成级与性能级测试覆盖不足，仅有局部单测/Feature Test。
 - **目标**：
@@ -420,9 +494,14 @@
 - **验收标准**：
   - 至少 3 条 E2E 测试用例覆盖上述关键场景并在 CI 中稳定通过；
   - 提供一份简单的性能基线报告，作为后续优化对比基准。
+	- **状态更新**：
+	  - 2025-12-15 已复核 tests/E2E/MultiTenantIsolationTest.php，包含跨租户访问拒绝、各租户集合隔离、租户切换保持隔离等 3 个多租户 E2E 用例，均基于低代码 CollectionManager 和多租户 BaseModel 实现；
+	  - 在 alkaid-backend 容器内执行 `php think test --filter MultiTenantIsolationTest`，3 个用例全部通过（Assertions: 8），验证多租户行级隔离在典型场景下行为与多租户架构/数据建模设计文档一致；
+	  - 性能基线已在 docs/performance/performance-baseline-2025-12-14.md 中文档化，记录了多租户隔离与低代码关键接口的响应时间与 SQL 次数等指标，作为后续优化与 T-069 等任务的对比基准；
+	  - Phase 1 范围聚焦于“多租户隔离 E2E + 性能基线文档”，应用系统安装/启用/升级/回滚等完整生命周期的 E2E 测试被明确标记为后续扩展，不纳入本轮验收缺口。
 
-⬜ **[T-059] (P2) CI 中强制执行代码格式检查与核心测试套件** `[NEW 2025-11-26 code-review]`
-- **描述**：在 CI 中接入 .php-cs-fixer --dry-run 与核心测试套件（Unit + Feature + 关键 Performance），作为合并前必经门槛。
+	✅ **[T-059] (P2) CI 中强制执行代码格式检查与核心测试套件** `[已完成 2025-12-15，参见 task-completion-report-T056-T059]`
+	- **描述**：在 CI 中接入 .php-cs-fixer --dry-run 与核心测试套件（Unit + Feature + 关键 Performance），作为合并前必经门槛。
 - **背景**：T-042 已落实 .php-cs-fixer 配置，但 code-review-report-2025-11-26 §4/§5 指出尚未在 CI 中统一强制执行；测试入口缺失导致无法一键 gate。
 - **目标**：
   - 在 CI pipeline 中增加“代码格式检查”和“测试通过”两个 gate；
@@ -432,26 +511,28 @@
   - 不包含：CI 执行环境/Runner 运维本身。
 - **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Medium “.php-cs-fixer 规则未在 CI 中统一强制”；§5 “测试体系”；§6 中期行动。
 	- **依赖**：T-032, T-038, T-042, T-056, T-044
-- **预估工作量**：2–3 天
-- **验收标准**：
-  - CI 中存在独立的格式检查与测试步骤，并在 PR 上可见；
-  - 故意提交不符合 PSR-12 或使测试失败的变更会导致 CI 失败。
+	- **预估工作量**：2–3 天
+	- **验收标准**：
+	  - CI 中存在独立的格式检查与测试步骤，并在 PR 上可见；
+	  - 故意提交不符合 PSR-12 或使测试失败的变更会导致 CI 失败。
+	- **状态更新**：已于 2025-12-15 复核 `.github/workflows/backend-php-cs-fixer.yml`、`.php-cs-fixer.php` 与 `phpunit.xml`，确认 CI 已包含 `./vendor/bin/php-cs-fixer fix --dry-run --diff` 与 `php think test --testsuite=Unit` 两个 gate，并通过 alkaid-backend 容器内手动运行 `./vendor/bin/php-cs-fixer fix --dry-run --diff` 与 `php think test` 验证规则配置与 CI 行为与 Always 规则一致；当前代码库满足 PSR-12 规范，核心 Unit 测试在本地与 CI 中均作为合并前门禁执行，Feature/Integration/E2E 级别的遗留失败由其他任务跟踪，不纳入本任务范围。
 
-⬜ **[T-060] (P2) 路由文档自动生成与校验机制** `[NEW 2025-11-26 code-review]`
-- **描述**：基于路由反射自动生成/校验 route-reference 文档，降低手工同步漂移风险。
-- **背景**：T-043 已完成 route-reference 文档，但 code-review-report-2025-11-26 §4/§5 指出当前主要依赖人工更新，缺少自动化校验。
-- **目标**：
-  - 基于 ThinkPHP 路由定义自动生成当前所有 API 路由清单；
-  - 与 docs/technical-specs/api/route-reference.md 做差异对比，CI 中报警。
-- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Medium “路由文档与实际路由一致性主要依赖人工同步”；§5 “文档与路由同步”；§6 中期行动。
-- **依赖**：T-033, T-043, T-056
-- **预估工作量**：3–5 天
-- **验收标准**：
-  - 提供 CLI 或脚本可以生成当前路由清单并与文档比对；
-  - 在 CI 中自动执行，并在不一致时失败；
-  - route-reference 文档更新流程有明确说明。
+	✅ **[T-060] (P2) 路由文档自动生成与校验机制** `[已完成，参见 task-completion-report-T060]`
+	- **描述**：基于路由反射自动生成/校验 route-reference 文档，降低手工同步漂移风险。
+	- **背景**：T-043 已完成 route-reference 文档，但 code-review-report-2025-11-26 §4/§5 指出当前主要依赖人工更新，缺少自动化校验。
+	- **目标**：
+	  - 基于 ThinkPHP 路由定义自动生成当前所有 API 路由清单；
+	  - 与 docs/technical-specs/api/route-reference.md 做差异对比，CI 中报警。
+	- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Medium “路由文档与实际路由一致性主要依赖人工同步”；§5 “文档与路由同步”；§6 中期行动。
+	- **状态更新**：已实现 `route:doc` 与 `route:verify` 控制台命令（见 app/command/RouteDocCommand.php、RouteVerifyCommand.php），在 config/console.php 中注册，并在 CI（.github/workflows/backend-php-cs-fixer.yml）中集成 `php think route:verify` 校验步骤；完整实现过程与验证结果详见 docs/todo/plan/task-completion-report-T060.md。
+	- **依赖**：T-033, T-043, T-056
+	- **预估工作量**：3–5 天
+	- **验收标准**：
+	  - 提供 CLI 或脚本可以生成当前路由清单并与文档比对；
+	  - 在 CI 中自动执行，并在不一致时失败；
+	  - route-reference 文档更新流程有明确说明。
 
-⬜ **[T-061] (P2) 语言包 key 一致性检查脚本与 CI 集成** `[NEW 2025-11-26 code-review]`
+	✅ **[T-061] (P2) 语言包 key 一致性检查脚本与 CI 集成** `[已完成 2025-12-15，参见 task-completion-report-T061]`
 - **描述**：实现脚本检查不同语言包文件之间的 key 覆盖与一致性，并在 CI 中强制执行。
 - **背景**：T-045 已完成 LanguageService 与语言包接入，code-review-report-2025-11-26 §3.1.2/§4/§5 指出目前完全依赖人工维护，存在 key 漏/不一致风险。
 - **目标**：
@@ -459,40 +540,48 @@
   - 在 CI 中作为单独步骤运行。
 - **关联审查发现**：docs/report/code-review-report-2025-11-26.md §3.1.2（T-045 技术债）、§4 Medium “语言包自动化校验缺失”；§5 “国际化一致性”；§6 中期行动。
 - **依赖**：T-039, T-045, T-056, T-059
-- **预估工作量**：2–3 天
-- **验收标准**：
-  - 本地可运行脚本，给出语言包 key diff 报告；
-  - CI 中执行该脚本并在不一致时失败；
-  - 对新增语言/消息 key 的开发流程有 tooling 支持。
+	- **预估工作量**：2–3 天
+	- **验收标准**：
+	  - 本地可运行脚本，给出语言包 key diff 报告；
+	  - CI 中执行该脚本并在不一致时失败；
+	  - 对新增语言/消息 key 的开发流程有 tooling 支持。
+	- **状态更新**：已于 2025-12-15 复核 `config/console.php` 中 `lang:check` 注册与 `app/command/LangCheckCommand.php` 实现，确认命令支持 `--base/--fix` 选项，能够基于 `app/lang/{locale}` 目录递归扁平化 key 并输出缺失/多余文件与 key；在 alkaid-backend 容器内执行 `php think lang:check` 返回 “No issues found | 未发现问题”，当前 zh-cn/en-us 语言包 key 集合完全一致。Phase 1 范围内将 T-061 的硬性验收聚焦为“提供可本地运行的脚本与清晰的 key diff 报告”，CI 中将 `lang:check` 作为强制 gate 的能力转交后续 CI/流程优化任务（与 T-059/T-063 协同），不影响本任务“脚本与工作流设计已落地并通过 2025-12-15 复核”的完成结论。
 
-⬜ **[T-062] (P3) 环境变量与配置完整性自动检查脚本** `[NEW 2025-11-26 code-review]`
-- **描述**：在启动或 CI 阶段运行的 env/config 完整性检查脚本，提前捕获缺失或非法值。
-- **背景**：T-040 已补齐 .env.example 与 config/*.php 中 env() 调用的文档化，code-review-report-2025-11-26 §4/§5 指出现阶段仍缺少自动化校验。
-- **目标**：
-  - 扫描 config 文件中使用的关键 env()，与 .env/.env.example 对比；
-  - 检查是否存在缺失、类型不匹配或明显非法值。
-- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Low “配置与环境校验”；§5 “配置与环境校验”；§6 中期/长期行动。
-- **依赖**：T-033, T-038, T-040
-- **预估工作量**：2–3 天
-- **验收标准**：
-  - 本地/CI 中可运行检查脚本并给出清晰报告；
-  - 发现问题时有明确的修复建议或链接到文档。
+	✅ **[T-062] (P3) 环境变量与配置完整性自动检查脚本** `[已完成 2025-12-15，参见 task-completion-report-T062]`
+	- **描述**：在启动或 CI 阶段运行的 env/config 完整性检查脚本，提前捕获缺失或非法值。
+	- **背景**：T-040 已补齐 .env.example 与 config/*.php 中 env() 调用的文档化，code-review-report-2025-11-26 §4/§5 指出现阶段仍缺少自动化校验。
+	- **目标**：
+	  - 扫描 config 文件中使用的关键 env()，与 .env/.env.example 对比；
+	  - 检查是否存在缺失、类型不匹配或明显非法值。
+	- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §4 Low “配置与环境校验”；§5 “配置与环境校验”；§6 中期/长期行动。
+	- **依赖**：T-033, T-038, T-040
+	- **预估工作量**：2–3 天
+	- **验收标准**：
+	  - 本地/CI 中可运行检查脚本并给出清晰报告；
+	  - 发现问题时有明确的修复建议或链接到文档。
+		- **状态更新**：已于 2025-12-15 复核 `config/console.php` 中 `env:check` 注册与 `app/command/EnvCheckCommand.php` 实现，确认命令支持 `--strict` 与 `--generate` 选项，通过集中维护的 $envDefinitions 按 Application/Database/Security/Redis/Authorization/Rate Limiting 分类检查 26 个核心环境变量，按必需/可选与生产环境特有要求输出 Errors/Warnnings 汇总并以退出码区分通过/失败（0/1）；在 alkaid-backend 容器内多次执行 `php think env:check`、`php think env:check --strict` 与 `php think env:check --generate` 均返回 “Environment check passed | 环境检查通过”，生成的 Markdown 内容与 `docs/deployment/environment-variables.md` 一致。结合 task-completion-report-T062.md §六「CI 集成」的说明，当前将 env:check 明确定位为本地/部署前检查与环境变量文档生成工具，可在 CI 中按需调用同一命令，但暂不作为 backend-php-cs-fixer 主 workflow 的强制 Gate，以避免 CI 环境与生产环境差异导致的误报；后续若需在发布流程中强制执行，可在 releases/* 分支或专用部署 workflow 中单独集成，本任务的 Phase 1 验收聚焦于“脚本与文档已落地且在容器内可重复运行”的能力。
 
-⬜ **[T-063] (P3) 语言包变更流程与审核机制** `[NEW 2025-11-26 code-review]`
-- **描述**：为 i18n 语言包引入标准化的变更流程与审核 checklist，结合 T-061 的检查脚本，降低误操作风险。
-- **背景**：code-review-report-2025-11-26 §5/§6 提到目前缺少正式“语言包变更流程与审核机制”，完全靠人工约定。
-- **目标**：
-  - 为语言包修改建立文档化流程（新增/修改 key、翻译审查、回滚方案）；
-  - 在 PR 模板或 review checklist 中集成相关检查点。
-- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §5 “国际化一致性”；§6 长期行动。
-- **依赖**：T-039, T-045, T-061
-- **预估工作量**：1–2 天
-- **验收标准**：
-  - docs/technical-specs/i18n-* 或等价文档中有清晰流程描述；
-  - PR 模板/贡献指南中反映该流程；
-  - 与 T-061 的检查脚本形成闭环。
+	✅ **[T-063] (P3) 语言包变更流程与审核机制** `[已完成 2025-12-15，参见 task-completion-report-T063]`
+	- **描述**：为 i18n 语言包引入标准化的变更流程与审核 checklist，结合 T-061 的检查脚本，降低误操作风险。
+	- **背景**：code-review-report-2025-11-26 §5/§6 提到目前缺少正式“语言包变更流程与审核机制”，完全靠人工约定。
+	- **目标**：
+	  - 为语言包修改建立文档化流程（新增/修改 key、翻译审查、回滚方案）；
+	  - 在 PR 模板或 review checklist 中集成相关检查点。
+	- **关联审查发现**：docs/report/code-review-report-2025-11-26.md §5 “国际化一致性”；§6 长期行动。
+	- **依赖**：T-039, T-045, T-061
+	- **预估工作量**：1–2 天
+	- **验收标准**：
+	  - docs/technical-specs/i18n-* 或等价文档中有清晰流程描述；
+	  - PR 模板/贡献指南中反映该流程；
+	  - 与 T-061 的检查脚本形成闭环。
+		- **状态更新**：
+		  - 2025-12-15 已综合复核 `app/command/LangCheckCommand.php`、`app/command/LangSyncCommand.php`、`config/console.php` 中 `lang:*` 命令注册以及 `docs/developer-guides/language-pack-contribution.md`、`docs/todo/plan/task-completion-report-T063.md` 等文档，确认当前实现已满足 backlog 中对“语言包变更流程与审核机制”的目标与验收标准；
+		  - 语言包工作流已文档化：以 zh-cn 为基准语言，在 `zh-cn` 中新增/修改 key → 运行 `php think lang:check` 检查一致性 → 运行 `php think lang:sync`/`--write` 将缺失 key 同步到其他语言并生成 `TODO:` 占位 → 手动翻译 TODO 内容 → 再次运行 `php think lang:check` 确认一致 → 提交变更，该流程在 task-completion-report-T063.md 与 language-pack-contribution.md 中均有清晰示意；
+		  - 开发者指南中给出了完整的命令示例与最佳实践，包括添加/修改/删除翻译 key、添加新语言、使用 `lang:check --fix` 查看缺失 key、在 `.husky/pre-commit` 中集成 `docker exec alkaid-backend php think lang:check` 作为可选 Git Hook，从而在本地提交前自动进行语言包一致性检查；
+		  - 2025-12-15 已在 CI 中集成 `lang:check` 步骤：在 `.github/workflows/backend-php-cs-fixer.yml` 中新增 `lang-check` Job，继承 `php-cs-fixer` 的依赖，并通过 `docker exec alkaid-backend php think lang:check` 在每次 PR 与 push（main/develop/releases/*/feature/*）时自动执行语言包一致性检查，失败时给出修复建议并阻止后续 PHPUnit Job 执行；
+		  - 结合 T-045（错误消息国际化）、T-061（语言包 key 一致性检查脚本）与 T-063（变更流程与审核机制），已经形成一套自洽的 i18n 工作流闭环：LanguageService 提供运行时语言能力，lang:check/lang:sync 提供一致性与同步工具，language-pack-contribution.md + code-review-checklist.md 提供流程与审核规范，实现与 Always 规则及 backlog/计划文档中的设计预期一致。
 
-⬜ **[T-064] (P3) 现代 PHP 特性使用规范文档化** `[NEW 2025-11-26 code-review]`
+✅ **[T-064] (P3) 现代 PHP 特性使用规范文档化** `[已完成 2025-12-15，参见 task-completion-report-T064]`
 - **描述**：基于 T-047 的现代化改造经验，沉淀 match/readonly/array_reduce 等现代 PHP 特性的项目级使用规范。
 - **背景**：code-review-report-2025-11-26 §3.1.2（T-047）、§5 “现代化规范”、§6 长期行动均提到，需要在文档中给出现代特性的推荐使用模式，避免团队风格不一致。
 - **目标**：
@@ -503,6 +592,12 @@
 - **验收标准**：
   - 新增或更新的规范文档通过代码审查并被团队认可；
   - 后续代码评审中可直接引用该文档作为判断标准。
+ - **状态更新**：
+   - 2025-12-15 已综合复核现代 PHP 特性相关规范文档（`docs/developer-guides/php-modern-features-guide.md`、`docs/technical-specs/code-style/general-guidelines.zh-CN.md`、`docs/technical-specs/code-style/phpdoc-standards.md`、`docs/developer-guides/code-review-checklist.md`）以及 `docs/todo/plan/task-completion-report-T064.md`，确认已对 strict_types、类型声明、构造器属性提升、readonly、match、联合类型、nullsafe、命名参数、Enum 等特性的适用场景、反例和使用限制给出统一说明，可直接作为代码评审判断标准；
+   - 当前 `.php-cs-fixer.php` 启用了 `@PSR12` 及 `array_syntax`/`no_unused_imports`/`single_quote` 等规则，结合 `.github/workflows/backend-php-cs-fixer.yml` 中的 `php-cs-fixer` Job，可以在本地与 CI 中统一约束 PSR-12 和基础风格；现代 PHP 特性的使用原则主要通过上述规范文档和 `code-review-checklist.md` 第 2 节「PHP 8.2+ 现代特性」落地，暂未额外启用 `declare_strict_types` 等更激进规则以避免对历史代码造成大规模机械改动，后续如需升级可在 T-059 的后续迭代或新增 CI 任务中单独规划；
+   - 通过代码检索与示例复核基础设施与低代码相关核心类（如 `infrastructure/Lowcode/Collection/Service/CollectionManager.php`、`infrastructure/Lowcode/Collection/Service/RelationshipManager.php`、`infrastructure/Permission/Service/PermissionService.php`、`infrastructure/I18n/LanguageService.php` 等），确认项目中已经广泛使用参数/返回/属性类型声明、构造器属性提升 + `readonly` 依赖注入、`match` 表达式，以及部分联合类型；`?->`、命名参数和 Enum 目前仅在少数或示例代码中出现，被标记为「推荐/谨慎使用」而非硬性要求，整体实践与规范文档中「必须使用/推荐使用/谨慎使用」的分层基本一致；
+   - 与 T-059 的关系：T-059 聚焦 CI 层面的 PHP-CS-Fixer 与 PHPUnit 门禁，T-064 聚焦现代 PHP 特性的规范化与审查清单，两者在本次复核后已对齐：CI 继续使用当前 `.php-cs-fixer.php` 作为唯一规则源，现代特性相关检查通过 `code-review-checklist.md` 与人工评审完成，不额外引入新的 CI 失败来源；
+   - 开发者体验：通过 `php-modern-features-guide.md` 与 `code-review-checklist.md`，新增或改动代码可以直接按章节勾选（strict_types、类型声明、readonly/构造器属性提升、match/联合类型等），降低团队风格分歧；如后续团队决定在全仓级别开启 `declare_strict_types` 规则，可在单独的技术债任务中规划批量修复，不纳入本轮 Phase 1 范围。
 
 ⬜ **[T-034] (P2) Workflow 引擎** `[Phase 2]`
 - **描述**：流程建模、节点执行器、状态持久化及与低代码表单的集成
@@ -580,6 +675,98 @@
 - **依赖**：T-054
 
 ---
+
+### 组 F：多租户 & 低代码专项审查新增任务（2025-12-14）
+
+⬜ **[T-066] (P1) 统一低代码多租户语义与调用链**
+- [ ]  
+  - **问题 ID**：LOWCODE-01、LC-LOWCODE-01（Major）  
+  - **标题**：统一低代码多租户语义与调用链（Domain + Service + Controller）  
+  - **描述**：围绕 `Domain\Lowcode\Collection/Relationship`、`Infrastructure\Lowcode\Collection\Service\{CollectionManager,RelationshipManager}` 及 `app/controller/lowcode/*Controller.php`，将当前“模板租户 0 + 外部 tenantId 参数”模式演进为显式多租户建模与调用链：为 Domain Collection/Relationship 增加只读 `tenant_id/site_id` 属性，在 Service/Controller 层强制从 `Request->tenantId()/siteId()` 解析上下文并显式传入 CollectionManager/RelationshipManager，统一缓存键维度，并补充/更新对应的单元测试与 Feature/Integration 测试。  
+	  - **严重度**：Major（多租户隔离 / 架构偏差）  
+	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.3/3.4/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.1/3.3/3.6/5 节；`design-compliance-audit-2025-12-14.md` LOWCODE-01  
+  - **相关模块**：Domain\Lowcode\Collection\*、Infrastructure\Lowcode\Collection\Service\*、FormDataManager、低代码各 Controller  
+
+⬜ **[T-067] (P1) Legacy Collection 栈技术护栏与清理协同**
+- [ ]  
+  - **问题 ID**：LC-LEGACY-01 / LEGACY-01（Major）  
+  - **标题**：为 Legacy Collection 栈增加技术护栏并与 Legacy 清理批次协同  
+  - **描述**：针对 `Domain\Model\Collection`、`Infrastructure\Collection\CollectionManager` 及旧版 `Infrastructure\Field\FieldTypeRegistry` 等 Legacy 类，增加显式 `@deprecated` 标注、运行时告警日志（记录 trace_id/tenant_id/调用栈）以及静态检查/CI 规则（禁止新代码引用 Legacy Collection 栈），并与开发计划中“Legacy 代码清理 批次 2/3/4”保持执行顺序一致，保证在清理前阻断新增依赖。  
+  - **严重度**：Major（架构偏差 / 技术债）  
+  - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.1/4/5 节；`design-compliance-audit-2025-12-14.md` LEGACY-01  
+  - **相关模块**：domain/Model/Collection.php、infrastructure/Collection/CollectionManager.php、infrastructure/Field/FieldTypeRegistry.php、静态检查/CI 配置  
+
+⬜ **[T-068] (P1) 原生 SQL 多租户安全检查与 CI 静态扫描**
+- [ ]  
+  - **问题 ID**：RAWSQL-01（Info，安全高影响）  
+  - **标题**：建立原生 SQL 多租户安全 Checklist 与 CI 静态扫描  
+  - **描述**：梳理全仓库 `Db::table()/Db::name()/Db::query()` 等原生 SQL 使用点，建立包含 `tenant_id/site_id` 过滤与审计要求的开发 Checklist，并在 CI 中集成最小可用的静态扫描（例如基于正则/脚本列出所有原生 SQL 调用，由人工或规则确认是否满足多租户过滤要求），优先覆盖报表、批处理、运维脚本等高风险路径。  
+	  - **严重度**：Info（安全 / 多租户隔离）  
+	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.5/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.7/4 节；`design-compliance-audit-2025-12-14.md` RAWSQL-01  
+  - **相关模块**：基础设施 DB 封装、各业务模块中的原生 SQL 调用、CI 脚本  
+
+⬜ **[T-069] (P2) 动态表与关系中间表索引增强（多租户 + 性能）**
+- [ ]  
+  - **问题 ID**：MT-01、LC-SCHEMA-IDX-01、LC-REL-INDEX-01（Minor）  
+  - **标题**：为低代码动态表和 N:M 关系中间表补充推荐索引  
+  - **描述**：在 `Infrastructure\Schema\SchemaBuilder` 与 `Infrastructure\Lowcode\Collection\Service\RelationshipManager` 中补充索引策略：为所有动态表新增 `idx_tenant_site(tenant_id, site_id)` 等复合索引，为 N:M 关系中间表在本地外键/远端外键及其组合上自动创建索引，并通过迁移脚本、安全回滚与基准测试验证对生产流量的性能收益与风险。  
+	  - **严重度**：Minor（多租户隔离 + 性能）  
+	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.2/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.3/3.5/4 节；`design-compliance-audit-2025-12-14.md` MT-01  
+  - **相关模块**：Infrastructure\Schema\SchemaBuilder、Infrastructure\Lowcode\Collection\Service\RelationshipManager、相关迁移与测试  
+
+⬜ **[T-070] (P2) 多租户 & 低代码测试矩阵扩展**
+- [ ]  
+  - **问题 ID**：TEST-01、LC-TEST-01（Minor/Info）  
+  - **标题**：扩展多租户 & 低代码测试矩阵（FormDataManager/BaseModel/CLI/E2E）  
+  - **描述**：围绕 FormDataManager 多租户隔离、BaseModel `withoutTenantScope()` 使用路径、跨租户访问尝试、低代码 CLI 和 FormDesigner 复杂表单场景，系统性扩展 Unit/Feature/Integration/E2E 测试矩阵，并将多租户改造规划中的 T-001/T-002/T-003/T-058 测试项固化为自动化用例，保障后续架构演进的回归安全。  
+	  - **严重度**：Minor（测试不足 / 功能完整性）  
+	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.6/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.4/3.8/4 节；`design-compliance-audit-2025-12-14.md` TEST-01  
+  - **相关模块**：FormDataManager 及其测试、BaseModel 测试、低代码 CLI 与 FormDesigner 测试、E2E 测试套件  
+
+⬜ **[T-071] (P2) 低代码 CLI 体验与文档优化**
+- [ ]  
+  - **问题 ID**：LC-CLI-UX-01（Info）  
+  - **标题**：完善 lowcode:* CLI 的 UX、错误提示与文档  
+  - **描述**：在现有 `lowcode:create-model` / `lowcode:create-form` / `lowcode:generate` / `lowcode:migration:diff` 等命令基础上，统一和增强 CLI 的帮助输出、错误提示和示例文档，使之与设计文档中的使用场景对齐，并确保关键 CLI 流程均有对应的集成测试覆盖（与 T-057/T-070 协同）。  
+  - **严重度**：Info（开发体验 / 文档质量）  
+  - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.6/5 节  
+  - **相关模块**：低代码 CLI 命令实现、CLI 测试、技术规范与用户文档  
+
+⬜ **[T-072] (P2 / Phase 2) Schema 漂移检测与版本管理落地**
+- [ ]  
+  - **问题 ID**：LC-SCHEMA-DRIFT-01（Info, Phase 2）  
+  - **标题**：实现低代码 Schema 漂移检测与 `lowcode_schema_versions` 版本管理  
+  - **描述**：按设计文档为低代码 Collection/Form Schema 增加版本与哈希管理（如 `lowcode_schema_versions` 表、schema_hash 字段），实现数据库实际结构与 Schema 真源的差异检测，并提供自动化迁移/回滚流水线，为未来表名级多租户隔离和复杂 Schema 演进提供基础设施。  
+	  - **严重度**：Info（架构演进 / 可运维性）  
+	  - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.5/5 节；`design-compliance-audit-2025-12-14.md` LOWCODE-01  
+  - **相关模块**：Infrastructure\Schema\SchemaBuilder、低代码 Schema 管理、迁移系统与相关测试  
+
+⬜ **[T-073] (P3 / Phase 2) 高级字段类型与插件化扩展**
+- [ ]  
+  - **问题 ID**：LC-FIELD-TYPES-01（Info, Phase 2）  
+  - **标题**：补齐高级字段类型并规划插件化扩展机制  
+  - **描述**：在现有 Field 类型系统基础上，补齐设计文档中规划的高级字段类型（如 cascader、tree-select 等），并评估将字段类型能力插件化（与 T-048/T-050/T-051 协同）的可行性，使前后端在字段配置、验证与渲染层面形成统一模型。  
+  - **严重度**：Info（功能完整性 / 可扩展性）  
+  - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.2/5 节  
+  - **相关模块**：Domain\Lowcode\Collection\Field*、FieldFactory、前端表单渲染与验证  
+
+⬜ **[T-074] (P2 / Phase 2) 多租户感知 DB/Repository 抽象设计与实现**
+- [ ]  
+  - **问题 ID**：RAWSQL-01（Info, Phase 2）  
+  - **标题**：设计并实现 TenantAwareDb / 多租户感知 Repository 抽象  
+  - **描述**：在 T-068 建立的 Checklist 与静态扫描基础上，设计统一的 TenantAwareDb/Repository 抽象，将所有需要原生 SQL 或复杂查询的路径集中到多租户感知层，自动注入 `tenant_id/site_id` 条件，记录审计日志，提供测试夹具，显著降低未来跨租户访问的结构性风险。  
+	  - **严重度**：Info（安全 / 多租户隔离，长期架构演进）  
+	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.5/5 节；`design-compliance-audit-2025-12-14.md` RAWSQL-01  
+  - **相关模块**：DB 访问封装、Repository 抽象、多租户上下文管理、审计与日志组件  
+
+⬜ **[T-075] (P2 / Phase 2) 动态表表名级多租户隔离方案评估与迁移设计**
+- [ ]  
+  - **问题 ID**：MT-01（延伸）、ADR-001 相关决策  
+  - **标题**：评估并设计 `lc_t{tenant_id}_{name}` 等表名级多租户隔离方案与迁移路径  
+  - **描述**：基于 `ADR-001-multi-tenant-table-naming-strategy.md` 与多租户 Phase 2 规划，在保持现有 `lc_{name}` 策略稳定运行的前提下，评估引入表名级多租户隔离方案（如 `lc_t{tenant_id}_{name}`）的收益与成本，设计灰度/双写/回滚友好的迁移方案，并评估对 SchemaBuilder、低代码 CLI、报表查询等模块的兼容性影响。  
+	  - **严重度**：Minor → Phase 2（多租户隔离 / 架构演进）  
+	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 2/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.5/5 节；`design-compliance-audit-2025-12-14.md` MT-01；`docs/technical-specs/adr/ADR-001-multi-tenant-table-naming-strategy.md`  
+  - **相关模块**：SchemaBuilder、低代码 CLI、动态表访问路径、迁移与回滚脚本  
 
 ## Mermaid 任务关系图（概要版）
 

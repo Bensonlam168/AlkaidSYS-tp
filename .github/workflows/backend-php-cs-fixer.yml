@@ -50,13 +50,44 @@ jobs:
           ./vendor/bin/php-cs-fixer fix --dry-run --diff
 
   # ============================================================================
-  # Job 2: PHPUnit Tests
+  # Job 2: Language Pack Consistency Check (i18n)
+  # ============================================================================
+  lang-check:
+    name: Language Pack Consistency Check (i18n)
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+    needs: php-cs-fixer
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Start backend container (docker compose)
+        run: |
+          docker compose -f docker-compose.yml up -d backend
+          docker ps
+
+      - name: Check language pack consistency
+        run: |
+          docker exec alkaid-backend php think lang:check || {
+            echo "❌ Language pack consistency check failed"
+            echo "Please run the following commands locally:"
+            echo "  docker compose up -d backend"
+            echo "  docker exec -it alkaid-backend php think lang:sync --write"
+            echo "Then translate TODO: markers and commit the changes."
+            exit 1
+          }
+
+  # ============================================================================
+  # Job 3: PHPUnit Tests
   # ============================================================================
   phpunit:
     name: PHPUnit Tests
     runs-on: ubuntu-latest
     if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
-    needs: php-cs-fixer
+    needs: [php-cs-fixer, lang-check]
 
     services:
       mysql:

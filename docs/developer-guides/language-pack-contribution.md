@@ -140,6 +140,33 @@ docker exec alkaid-backend php think lang:check
    docker exec alkaid-backend php think lang:check
    ```
 
+## CI 集成
+
+在 GitHub Actions 的后端 CI 工作流（`.github/workflows/backend-php-cs-fixer.yml`）中，已经新增 `lang-check` Job，用于在每次 Pull Request 以及 push 到 `main` / `develop` / `releases/*` / `feature/*` 分支时自动执行语言包一致性检查：
+
+```yaml
+lang-check:
+  needs: php-cs-fixer
+  steps:
+    - name: Check language pack consistency
+      run: |
+        docker exec alkaid-backend php think lang:check || {
+          echo "❌ Language pack consistency check failed"
+          echo "Please run: docker compose up -d backend"
+          echo "Then run: docker exec -it alkaid-backend php think lang:sync --write"
+          echo "Finally translate TODO: markers and commit the changes"
+          exit 1
+        }
+```
+
+当 CI 中的 `lang-check` Job 失败时，说明当前分支上的语言包 key 存在缺失或冗余：
+
+1. 在本地启动后端容器：`docker compose up -d backend`
+2. 运行同步命令：`docker exec -it alkaid-backend php think lang:sync --write`
+3. 按照占位的 `TODO:` 标记完成翻译
+4. 再次运行：`docker exec -it alkaid-backend php think lang:check`
+5. 提交并推送变更，CI 应该恢复为通过状态
+
 ## 常见问题
 
 ### Q: 如何查看缺失的 key？
@@ -156,7 +183,8 @@ docker exec alkaid-backend ./vendor/bin/php-cs-fixer fix app/lang/
 
 ### Q: CI 检查失败怎么办？
 
-1. 运行 `php think lang:check` 查看问题
-2. 修复缺失的 key 或删除多余的 key
-3. 重新提交
+1. 在本地运行 `docker exec alkaid-backend php think lang:check` 查看 CI 中报告的问题
+2. 如有缺失 key，可先运行 `docker exec -it alkaid-backend php think lang:sync --write` 生成 `TODO:` 占位并补全翻译
+3. 删除多余的 key 或按需要调整语言文件
+4. 再次运行 `docker exec alkaid-backend php think lang:check` 确认通过后重新提交
 

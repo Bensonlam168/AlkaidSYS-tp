@@ -120,6 +120,6 @@ Found 2 locales: en-us, zh-cn
 
 1. 添加自动翻译集成（如 Google Translate API）
 2. 支持嵌套 key 的同步
-3. 添加 CI 流水线检查步骤
+3. 添加 CI 流水线检查步骤（已于 2025-12-15 在 `.github/workflows/backend-php-cs-fixer.yml` 中新增 `lang-check` Job，使用 `docker exec alkaid-backend php think lang:check` 作为语言包一致性自动化门禁）
 4. 创建语言包变更 PR 模板
 
