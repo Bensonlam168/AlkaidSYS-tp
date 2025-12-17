@@ -8,6 +8,7 @@ use Closure;
 use think\Request;
 use Infrastructure\Auth\JwtService;
 use Infrastructure\I18n\LanguageService;
+use app\constant\ErrorCode;
 use think\facade\Log;
 
 /**
@@ -49,19 +50,55 @@ class Auth
         // Get trace_id for observability | 获取 trace_id 用于可观测性
         $traceId = $this->getTraceId($request);
 
-        // Get tenant_id if available | 获取 tenant_id（如果可用）
+        // Get multi-tenant context if available | 获取多租户上下文（如果可用）
         $tenantId = null;
-        if (method_exists($request, 'getTenantId')) {
-            $tenantId = $request->getTenantId();
+        $siteId   = null;
+        $userId   = null;
+
+        if (method_exists($request, 'getTenantContext')) {
+            try {
+                $tenantContext = $request->getTenantContext();
+                $tenantId      = $tenantContext['tenant_id'] ?? null;
+                $siteId        = $tenantContext['site_id'] ?? null;
+                $userId        = $tenantContext['user_id'] ?? null;
+            } catch (\Throwable $e) {
+                // Fallback to individual getters below | 回退到单个 getter
+            }
         }
+
+        if ($tenantId === null && method_exists($request, 'tenantId')) {
+            try {
+                $tenantId = $request->tenantId();
+            } catch (\Throwable $e) {
+                $tenantId = null;
+            }
+        }
+        if ($siteId === null && method_exists($request, 'siteId')) {
+            try {
+                $siteId = $request->siteId();
+            } catch (\Throwable $e) {
+                $siteId = null;
+            }
+        }
+        if ($userId === null && method_exists($request, 'userId')) {
+            try {
+                $userId = $request->userId();
+            } catch (\Throwable $e) {
+                $userId = null;
+            }
+        }
+
+        $path = '/' . ltrim($request->pathinfo(), '/');
 
         Log::warning('Authentication failed', array_merge([
             'reason'     => $reason,
             'trace_id'   => $traceId,
             'tenant_id'  => $tenantId,
+            'site_id'    => $siteId,
+            'user_id'    => $userId,
             'client_ip'  => $request->ip(),
             'user_agent' => $request->header('User-Agent'),
-            'path'       => $request->path(),
+            'path'       => $path,
             'method'     => $request->method(),
             'timestamp'  => time(),
         ], $context));
@@ -92,7 +129,7 @@ class Auth
             $traceId = $this->getTraceId($request);
 
             return ResponseHelper::jsonError(
-                2001,
+                ErrorCode::UNAUTHORIZED,
                 $this->langService->trans('error.token_missing'),
                 401,
                 $traceId
@@ -117,27 +154,27 @@ class Auth
             return $next($request);
         } catch (\Exception $e) {
             // Determine failure reason based on exception | 根据异常确定失败原因
-            $reason = 'token_invalid';
-            $errorCode = 2001;
+            $reason       = 'token_invalid';
+            $errorCode    = ErrorCode::UNAUTHORIZED;
             $errorMessage = $this->langService->trans('error.token_invalid');
 
             // Classify error type | 分类错误类型
             $exceptionMessage = $e->getMessage();
             if (strpos($exceptionMessage, 'Expired') !== false || strpos($exceptionMessage, 'expired') !== false) {
-                $reason = 'token_expired';
-                $errorCode = 2002;
+                $reason       = 'token_expired';
+                $errorCode    = ErrorCode::UNAUTHORIZED;
                 $errorMessage = $this->langService->trans('error.token_expired');
             } elseif (strpos($exceptionMessage, 'revoked') !== false || strpos($exceptionMessage, 'Revoked') !== false) {
-                $reason = 'token_revoked';
-                $errorCode = 2003;
-                $errorMessage = 'Token has been revoked';
+                $reason       = 'token_revoked';
+                $errorCode    = ErrorCode::UNAUTHORIZED;
+                $errorMessage = $this->langService->trans('error.token_revoked');
             } elseif (strpos($exceptionMessage, 'decode') !== false || strpos($exceptionMessage, 'Decode') !== false) {
                 $reason = 'decode_error';
             }
 
             // Log authentication failure with exception details | 记录认证失败及异常详情
             $this->logAuthFailure($request, $reason, [
-                'exception' => get_class($e),
+                'exception'     => get_class($e),
                 'error_message' => $exceptionMessage,
             ]);
 

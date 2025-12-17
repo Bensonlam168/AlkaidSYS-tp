@@ -42,15 +42,28 @@ class SlowQueryListener
 
             // Only log queries that exceed threshold | 仅记录超过阈值的查询
             if ($runtime > $this->threshold) {
-                // Get trace_id if available | 获取 trace_id（如果可用）
-                $traceId = null;
+                // Get trace_id and tenant context if available | 获取 trace_id 和多租户上下文（如果可用）
+                $traceId  = null;
+                $tenantId = null;
+                $siteId   = null;
+                $userId   = null;
+
                 try {
                     $request = request();
-                    if ($request && method_exists($request, 'getTraceId')) {
-                        $traceId = $request->getTraceId();
+                    if ($request) {
+                        if (method_exists($request, 'getTraceId')) {
+                            $traceId = $request->getTraceId();
+                        }
+
+                        if (method_exists($request, 'getTenantContext')) {
+                            $context  = $request->getTenantContext();
+                            $tenantId = $context['tenant_id'] ?? null;
+                            $siteId   = $context['site_id'] ?? null;
+                            $userId   = $context['user_id'] ?? null;
+                        }
                     }
                 } catch (\Throwable $e) {
-                    // Ignore trace ID retrieval errors
+                    // Ignore context retrieval errors
                 }
 
                 // Get SQL and bindings | 获取 SQL 和绑定参数
@@ -63,6 +76,9 @@ class SlowQueryListener
                     'runtime_ms'   => $runtime,
                     'threshold_ms' => $this->threshold,
                     'trace_id'     => $traceId,
+                    'tenant_id'    => $tenantId,
+                    'site_id'      => $siteId,
+                    'user_id'      => $userId,
                     'timestamp'    => time(),
                 ]);
             }

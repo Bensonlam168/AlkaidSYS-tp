@@ -157,4 +157,19 @@ return [
     |
     */
     'enabled' => env('CASBIN_ENABLED', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | 租户过滤（可选）
+    | Tenant Filter (Optional)
+    |--------------------------------------------------------------------------
+    |
+    | 当设置 tenant_id 时，DatabaseAdapter 在加载 g/p 策略时会仅加载指定租户的数据，
+    | 避免多租户混查；未设置时加载全部租户（与现有行为一致）。
+    |
+    | When tenant_id is set, DatabaseAdapter will only load policies for that
+    | tenant to avoid cross-tenant mixing. If not set, all tenants are loaded.
+    |
+    */
+    'tenant_id' => env('CASBIN_TENANT_ID', null),
 ];

@@ -42,19 +42,30 @@ class RelationshipManager
      *
      * @param string $collectionName Collection name | Collection名称
      * @param RelationshipInterface $relationship Relationship to add | 要添加的关系
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
-    public function addRelationship(string $collectionName, RelationshipInterface $relationship): void
-    {
-        $collection = $this->collectionManager->get($collectionName);
+    public function addRelationship(
+        string $collectionName,
+        RelationshipInterface $relationship,
+        ?int $tenantId = null,
+        ?int $siteId = null
+    ): void {
+        $effectiveTenantId = $tenantId ?? 0;
+
+        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }
 
-        // Verify target collection exists | 验证目标Collection存在
-        $targetCollection = $this->collectionManager->get($relationship->getTargetCollection());
+        // Verify target collection exists in same tenant | 验证同一租户下目标Collection存在
+        $targetCollection = $this->collectionManager->get(
+            $relationship->getTargetCollection(),
+            $effectiveTenantId
+        );
         if (!$targetCollection) {
             throw new \InvalidArgumentException(
                 "Target collection not found: {$relationship->getTargetCollection()}"
@@ -68,13 +79,15 @@ class RelationshipManager
         $collection->addRelationship($relationship->getName(), $relationship);
         $this->relationshipRepo->save($relationship, $collection->getId());
 
-        // Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.relationship.added', [
             'collection' => $collection,
             'relationship' => $relationship,
+            'tenant_id' => $effectiveTenantId,
+            'site_id' => $siteId,
         ]);
     }
 
@@ -84,15 +97,21 @@ class RelationshipManager
      * @param string $collectionName Collection name | Collection名称
      * @param string $relationshipName Relationship name | 关系名称
      * @param bool $dropPivotTable Drop pivot table for belongsToMany | 是否删除belongsToMany的中间表
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
     public function removeRelationship(
         string $collectionName,
         string $relationshipName,
-        bool $dropPivotTable = true
+        bool $dropPivotTable = true,
+        ?int $tenantId = null,
+        ?int $siteId = null
     ): void {
-        $collection = $this->collectionManager->get($collectionName);
+        $effectiveTenantId = $tenantId ?? 0;
+
+        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -115,13 +134,15 @@ class RelationshipManager
         // Delete relationship metadata | 删除关系元数据
         $this->relationshipRepo->delete($collection->getId(), $relationshipName);
 
-        // Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.relationship.removed', [
             'collection' => $collection,
             'relationship_name' => $relationshipName,
+            'tenant_id' => $effectiveTenantId,
+            'site_id' => $siteId,
         ]);
     }
 
@@ -181,6 +202,9 @@ class RelationshipManager
             return;
         }
 
+        $localKey = $relationship->getLocalKey();
+        $foreignKey = $relationship->getForeignKey();
+
         $columns = [
             'id' => [
                 'type' => 'INT',
@@ -188,12 +212,12 @@ class RelationshipManager
                 'auto_increment' => true,
                 'unsigned' => true,
             ],
-            $relationship->getLocalKey() => [
+            $localKey => [
                 'type' => 'INT',
                 'unsigned' => true,
                 'comment' => "Foreign key to {$sourceCollection->getTableName()}",
             ],
-            $relationship->getForeignKey() => [
+            $foreignKey => [
                 'type' => 'INT',
                 'unsigned' => true,
                 'comment' => "Foreign key to {$targetCollection->getTableName()}",
@@ -204,10 +228,23 @@ class RelationshipManager
             ],
         ];
 
-        $this->schemaBuilder->createTable($pivotTable, $columns);
+        // Indexes for many-to-many lookups | 为多对多查询添加索引
+        $indexes = [
+            'idx_pivot_local' => [
+                'columns' => [$localKey],
+                'unique' => false,
+            ],
+            'idx_pivot_foreign' => [
+                'columns' => [$foreignKey],
+                'unique' => false,
+            ],
+            'idx_pivot_local_foreign' => [
+                'columns' => [$localKey, $foreignKey],
+                'unique' => false,
+            ],
+        ];
 
-        // TODO: Add indexes for better query performance
-        // 添加索引以提高查询性能
+        $this->schemaBuilder->createTable($pivotTable, $columns, $indexes);
     }
 
     /**

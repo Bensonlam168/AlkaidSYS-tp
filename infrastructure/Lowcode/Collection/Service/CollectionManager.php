@@ -10,6 +10,8 @@ use Domain\Schema\Interfaces\SchemaBuilderInterface;
 use Infrastructure\Lowcode\Collection\Repository\CollectionRepository;
 use Infrastructure\Lowcode\Collection\Repository\FieldRepository;
 use Infrastructure\Lowcode\Collection\Repository\RelationshipRepository;
+use Infrastructure\Lowcode\Collection\Service\TableNameGenerator;
+use Infrastructure\Lowcode\Schema\SchemaVersionService;
 use think\facade\Cache;
 use think\facade\Db;
 use think\facade\Event;
@@ -27,23 +29,18 @@ class CollectionManager
     protected string $cachePrefix = 'lowcode:collection:';
     protected int $cacheTtl = 3600; // 1 hour | 1小时
 
-    /**
-     * Constructor | 构造函数
-     *
-     * Uses constructor property promotion for cleaner dependency injection.
-     * 使用构造器属性提升实现更简洁的依赖注入。
-     *
-     * @param SchemaBuilderInterface $schemaBuilder Schema builder | Schema构建器
-     * @param CollectionRepository $collectionRepo Collection repository | Collection仓储
-     * @param FieldRepository $fieldRepo Field repository | 字段仓储
-     * @param RelationshipRepository $relationshipRepo Relationship repository | 关系仓储
-     */
+    protected SchemaVersionService $schemaVersionService;
+    protected TableNameGenerator $tableNameGenerator;
+
     public function __construct(
         protected readonly SchemaBuilderInterface $schemaBuilder,
         protected readonly CollectionRepository $collectionRepo,
         protected readonly FieldRepository $fieldRepo,
         protected readonly RelationshipRepository $relationshipRepo
     ) {
+        // 按需惰性构造，避免破坏现有 DI 配置
+        $this->schemaVersionService = new SchemaVersionService();
+        $this->tableNameGenerator = new TableNameGenerator();
     }
 
     /**
@@ -60,10 +57,26 @@ class CollectionManager
     {
         Db::startTrans();
         try {
-            // 1. Create physical table | 创建物理表
-            $columns = $this->buildColumns($collection->getFields());
-            $indexes = $this->buildIndexes();
-            $this->schemaBuilder->createTable($collection->getTableName(), $columns, $indexes);
+            // 1. Create physical table if it does not exist yet | 若物理表不存在则创建
+            //
+            // NOTE(MT-01/T-069): 动态业务表目前采用单库多租户行级隔离策略，所有租户共享同一张
+            // lc_{name} 物理表，通过 tenant_id/site_id 进行隔离。因此当多个租户使用相同的
+            // Collection 名称时，应复用同一张物理表，而不是重复执行 CREATE TABLE。
+            //
+            // 这里通过 SchemaBuilder::hasTable() 进行显式存在性检查，仅在表尚未存在时执行
+            // createTable()，以避免 MySQL 抛出 "Table already exists" 异常。
+            // 表名策略：支持租户前缀（Phase 2 评估中）或共享表
+            $tableName = $this->tableNameGenerator->generate(
+                $collection->getName(),
+                $collection->getTenantId() ?? 0,
+                $collection->getSiteId() ?? 0
+            );
+            $collection->setTableName($tableName);
+            if (!$this->schemaBuilder->hasTable($tableName)) {
+                $columns = $this->buildColumns($collection->getFields());
+                $indexes = $this->buildIndexes();
+                $this->schemaBuilder->createTable($tableName, $columns, $indexes);
+            }
 
             // 2. Save collection metadata | 保存Collection元数据
             $collectionId = $this->collectionRepo->save($collection);
@@ -78,6 +91,9 @@ class CollectionManager
             foreach ($collection->getRelationships() as $relationship) {
                 $this->relationshipRepo->save($relationship, $collectionId);
             }
+
+            // 5. 记录 Schema 版本与哈希
+            $this->schemaVersionService->recordCollection($collection);
 
             // 5. Cache the collection | 缓存Collection
             $this->cache($collection);
@@ -167,6 +183,9 @@ class CollectionManager
             foreach ($collection->getRelationships() as $relationship) {
                 $this->relationshipRepo->save($relationship, $collection->getId());
             }
+
+            // 4. 记录 Schema 版本与哈希
+            $this->schemaVersionService->recordCollection($collection);
 
             // 4. Clear cache | 清除缓存
             $this->clearCache($collection->getName());
@@ -318,6 +337,11 @@ class CollectionManager
             // Main lookup index: tenant-scoped primary key access | 主查询索引：按租户范围的主键访问
             'idx_tenant_id_id' => [
                 'columns' => ['tenant_id', 'id'],
+                'unique' => false,
+            ],
+            // Composite index for tenant + site scoped queries | 租户 + 站点维度复合索引
+            'idx_tenant_site' => [
+                'columns' => ['tenant_id', 'site_id'],
                 'unique' => false,
             ],
         ];

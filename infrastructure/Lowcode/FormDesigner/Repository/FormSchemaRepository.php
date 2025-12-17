@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infrastructure\Lowcode\FormDesigner\Repository;
 
 use think\facade\Db;
+use Infrastructure\Tenant\TenantAwareDb;
 
 /**
  * Form Schema Repository | 表单Schema仓储
@@ -19,6 +20,12 @@ use think\facade\Db;
 class FormSchemaRepository
 {
     protected string $table = 'lowcode_forms';
+    protected TenantAwareDb $tenantDb;
+
+    public function __construct(?TenantAwareDb $tenantDb = null)
+    {
+        $this->tenantDb = $tenantDb ?? new TenantAwareDb();
+    }
 
     /**
      * Save form schema | 保存表单Schema
@@ -35,9 +42,12 @@ class FormSchemaRepository
 
         if (isset($data['id']) && $data['id']) {
             // Update existing | 更新已存在的
-            Db::name($this->table)
-                ->where('id', $data['id'])
-                ->update($data);
+            $tenantId = (int)($data['tenant_id'] ?? 0);
+            $query = $tenantId > 0
+                ? $this->tenantDb->name($this->table, $tenantId)
+                : Db::name($this->table);
+
+            $query->where('id', $data['id'])->update($data);
             return (int)$data['id'];
         } else {
             // Insert new | 插入新的
@@ -80,9 +90,9 @@ class FormSchemaRepository
      */
     public function findByName(string $name, int $tenantId, ?int $siteId = null): ?array
     {
-        $query = Db::name($this->table)
-            ->where('name', $name)
-            ->where('tenant_id', $tenantId);
+        $query = $this->tenantDb
+            ->name($this->table, $tenantId, $siteId)
+            ->where('name', $name);
 
         if ($siteId !== null) {
             $query->where('site_id', $siteId);
@@ -106,9 +116,9 @@ class FormSchemaRepository
      */
     public function findByCollectionName(string $collectionName, int $tenantId): array
     {
-        $list = Db::name($this->table)
+        $list = $this->tenantDb
+            ->name($this->table, $tenantId)
             ->where('collection_name', $collectionName)
-            ->where('tenant_id', $tenantId)
             ->select()
             ->toArray();
 
@@ -126,7 +136,7 @@ class FormSchemaRepository
      */
     public function list(int $tenantId, array $filters = [], int $page = 1, int $pageSize = 20): array
     {
-        $query = Db::name($this->table)->where('tenant_id', $tenantId);
+        $query = $this->tenantDb->name($this->table, $tenantId);
 
         // Apply filters | 应用筛选
         if (isset($filters['name'])) {

@@ -52,10 +52,37 @@ class Permission
         // Get trace_id for observability | 获取 trace_id 用于可观测性
         $traceId = $this->getTraceId($request);
 
-        // Get tenant_id if available | 获取 tenant_id（如果可用）
+        // Get multi-tenant context if available | 获取多租户上下文（如果可用）
         $tenantId = null;
-        if (method_exists($request, 'getTenantId')) {
-            $tenantId = $request->getTenantId();
+        $siteId   = null;
+
+        if (method_exists($request, 'getTenantContext')) {
+            try {
+                $context  = $request->getTenantContext();
+                $tenantId = $context['tenant_id'] ?? null;
+                $siteId   = $context['site_id'] ?? null;
+                if ($userId === null && array_key_exists('user_id', $context)) {
+                    $userId = $context['user_id'];
+                }
+            } catch (\Throwable $e) {
+                $tenantId = null;
+                $siteId   = null;
+            }
+        } else {
+            if (method_exists($request, 'tenantId')) {
+                try {
+                    $tenantId = $request->tenantId();
+                } catch (\Throwable $e) {
+                    $tenantId = null;
+                }
+            }
+            if (method_exists($request, 'siteId')) {
+                try {
+                    $siteId = $request->siteId();
+                } catch (\Throwable $e) {
+                    $siteId = null;
+                }
+            }
         }
 
         // Parse permission to extract resource and action | 解析权限以提取资源和动作
@@ -63,14 +90,17 @@ class Permission
         $resource = $parts[0] ?? 'unknown';
         $action = $parts[1] ?? 'unknown';
 
+        $path = '/' . ltrim($request->pathinfo(), '/');
+
         Log::warning('Permission denied', [
             'reason'     => $reason,
             'user_id'    => $userId,
             'tenant_id'  => $tenantId,
+            'site_id'    => $siteId,
             'permission' => $permission,
             'resource'   => $resource,
             'action'     => $action,
-            'path'       => $request->path(),
+            'path'       => $path,
             'method'     => $request->method(),
             'trace_id'   => $traceId,
             'client_ip'  => $request->ip(),

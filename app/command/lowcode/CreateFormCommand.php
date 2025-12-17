@@ -40,7 +40,10 @@ class CreateFormCommand extends LowcodeCommand
             ->addOption('description', 'd', Option::VALUE_OPTIONAL, 'Form description | 表单描述')
             ->addOption('tenant-id', null, Option::VALUE_OPTIONAL, 'Tenant ID (default: 0) | 租户ID（默认：0）', '0')
             ->addOption('site-id', null, Option::VALUE_OPTIONAL, 'Site ID (default: 0) | 站点ID（默认：0）', '0')
-            ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if form exists | 如果表单存在则强制覆盖');
+            ->addOption('fields', null, Option::VALUE_OPTIONAL, 'Comma separated fields to include | 包含的字段（逗号分隔）')
+            ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if form exists | 如果表单存在则强制覆盖')
+            ->addOption('format', null, Option::VALUE_OPTIONAL, 'Output format (text|json) | 输出格式（text|json）', 'text')
+            ->addOption('audit-out', null, Option::VALUE_OPTIONAL, 'Audit JSON output file path | 审计JSON输出文件路径');
     }
 
     /**
@@ -63,6 +66,17 @@ class CreateFormCommand extends LowcodeCommand
             $tenantId = $this->getTenantId();
             $siteId = $this->getSiteId();
             $force = $input->getOption('force');
+
+            $fieldsOption = $input->getOption('fields');
+            $includedFields = null;
+            if (is_string($fieldsOption) && $fieldsOption !== '') {
+                $includedFields = array_values(
+                    array_filter(
+                        array_map('trim', explode(',', (string) $fieldsOption)),
+                        static fn (string $fieldName): bool => $fieldName !== ''
+                    )
+                );
+            }
 
             // Validate form name | 验证表单名称
             if (!$this->isValidFormName($name)) {
@@ -93,7 +107,7 @@ class CreateFormCommand extends LowcodeCommand
             }
 
             // Generate form schema | 生成表单Schema
-            $schema = $this->generateFormSchema($collection);
+            $schema = $this->generateFormSchema($collection, $includedFields);
 
             // Display summary | 显示摘要
             $this->displaySummary($name, $title, $description, $collectionName, $tenantId, $siteId, $schema);
@@ -117,18 +131,32 @@ class CreateFormCommand extends LowcodeCommand
                 'site_id' => $siteId,
             ];
 
+            $createdOrUpdatedForm = null;
+
             if ($existing) {
                 // Update existing form | 更新现有表单
                 $formManager->update($existing['id'], $formData, $tenantId);
+                $createdOrUpdatedForm = $formManager->get($name, $tenantId, $siteId);
                 $this->success("Form '{$name}' updated successfully!");
             } else {
                 // Create new form | 创建新表单
                 $formManager->create($formData);
+                $createdOrUpdatedForm = $formManager->get($name, $tenantId, $siteId);
                 $this->success("Form '{$name}' created successfully!");
             }
 
-            // Show next steps | 显示下一步操作
-            $this->showNextSteps($name, $collectionName);
+            // Structured output | 结构化输出
+            $this->writeStructuredOutput([
+                'form' => $createdOrUpdatedForm,
+                'schema' => $schema,
+                'tenant_id' => $tenantId,
+                'site_id' => $siteId,
+            ]);
+
+            // Show next steps | 显示下一步操作（仅文本模式有意义）
+            if ($this->getOutputFormat() === 'text') {
+                $this->showNextSteps($name, $collectionName);
+            }
 
             return 0;
         } catch (\Throwable $e) {
@@ -151,9 +179,10 @@ class CreateFormCommand extends LowcodeCommand
      * Generate form schema from collection | 从Collection生成表单Schema
      *
      * @param \Domain\Lowcode\Collection\Interfaces\CollectionInterface|null $collection Collection instance | Collection实例
+     * @param array<string>|null $includedFields Fields to include or null for all | 需要包含的字段名称列表，null 表示全部字段
      * @return array Form schema | 表单Schema
      */
-    protected function generateFormSchema($collection): array
+    protected function generateFormSchema($collection, ?array $includedFields = null): array
     {
         if (!$collection) {
             // Return empty schema | 返回空Schema
@@ -169,6 +198,10 @@ class CreateFormCommand extends LowcodeCommand
 
         foreach ($collection->getFields() as $field) {
             $fieldName = $field->getName();
+
+            if ($includedFields !== null && !in_array($fieldName, $includedFields, true)) {
+                continue;
+            }
             $fieldType = $field->getType();
             $fieldArray = $field->toArray();
 
@@ -236,6 +269,8 @@ class CreateFormCommand extends LowcodeCommand
             'checkbox' => 'array',
             'file' => 'string',
             'image' => 'string',
+            'cascader' => 'array',
+            'tree-select' => 'array',
         ];
 
         return $mapping[$fieldType] ?? 'string';

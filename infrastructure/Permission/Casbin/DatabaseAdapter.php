@@ -280,7 +280,7 @@ class DatabaseAdapter implements Adapter
 
         // 查询用户角色关联
         // Query user-role associations
-        $roleAssignments = Db::table('user_roles')
+        $roleAssignmentsQuery = Db::table('user_roles')
             ->alias('ur')
             ->join('users u', 'ur.user_id = u.id')
             ->join('roles r', 'ur.role_id = r.id')
@@ -289,7 +289,15 @@ class DatabaseAdapter implements Adapter
                 'ur.user_id',
                 'ur.role_id',
                 'u.tenant_id',
-            ])
+            ]);
+
+        // 可选租户过滤（避免多租户混查）
+        $tenantFilter = (int) Config::get('casbin.tenant_id', 0);
+        if ($tenantFilter > 0) {
+            $roleAssignmentsQuery->where('u.tenant_id', $tenantFilter);
+        }
+
+        $roleAssignments = $roleAssignmentsQuery
             ->select()
             ->toArray();
 
@@ -352,7 +360,7 @@ class DatabaseAdapter implements Adapter
 
         // 查询角色权限关联
         // Query role-permission associations
-        $permissionAssignments = Db::table('role_permissions')
+        $permissionAssignmentsQuery = Db::table('role_permissions')
             ->alias('rp')
             ->join('roles r', 'rp.role_id = r.id')
             ->join('permissions p', 'rp.permission_id = p.id')
@@ -361,7 +369,15 @@ class DatabaseAdapter implements Adapter
                 'r.tenant_id',
                 'p.resource',
                 'p.action',
-            ])
+            ]);
+
+        // 可选租户过滤（避免多租户混查）
+        $tenantFilter = (int) Config::get('casbin.tenant_id', 0);
+        if ($tenantFilter > 0) {
+            $permissionAssignmentsQuery->where('r.tenant_id', $tenantFilter);
+        }
+
+        $permissionAssignments = $permissionAssignmentsQuery
             ->select()
             ->toArray();
 

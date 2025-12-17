@@ -6,6 +6,7 @@ namespace Infrastructure\Lowcode\Collection\Repository;
 
 use Domain\Lowcode\Collection\Interfaces\RelationshipInterface;
 use Domain\Lowcode\Collection\Model\Relationship;
+use Infrastructure\Tenant\TenantAwareDb;
 use think\facade\Db;
 
 /**
@@ -19,15 +20,22 @@ use think\facade\Db;
 class RelationshipRepository
 {
     protected string $table = 'lowcode_relationships';
+    protected TenantAwareDb $tenantDb;
+
+    public function __construct(?TenantAwareDb $tenantDb = null)
+    {
+        $this->tenantDb = $tenantDb ?? new TenantAwareDb();
+    }
 
     /**
      * Save relationship | 保存关系
      *
      * @param RelationshipInterface $relationship Relationship to save | 要保存的关系
      * @param int $collectionId Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return int Relationship ID | 关系ID
      */
-    public function save(RelationshipInterface $relationship, int $collectionId): int
+    public function save(RelationshipInterface $relationship, int $collectionId, ?int $tenantId = null): int
     {
         $data = [
             'collection_id' => $collectionId,
@@ -39,10 +47,11 @@ class RelationshipRepository
             'options' => json_encode($relationship->getOptions()),
         ];
 
+        $this->assertCollectionTenant($collectionId, $tenantId);
+
         // Check if relationship exists | 检查关系是否存在
-        $exists = Db::name($this->table)
-            ->where('collection_id', $collectionId)
-            ->where('name', $relationship->getName())
+        $exists = $this->scopedQuery($collectionId, $tenantId)
+            ->where('r.name', $relationship->getName())
             ->find();
 
         if ($exists) {
@@ -61,13 +70,13 @@ class RelationshipRepository
      * Find relationships by collection ID | 按Collection ID查找关系
      *
      * @param int $collectionId Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return array<string, RelationshipInterface>
      */
-    public function findByCollectionId(int $collectionId): array
+    public function findByCollectionId(int $collectionId, ?int $tenantId = null): array
     {
-        $rows = Db::name($this->table)
-            ->where('collection_id', $collectionId)
-            ->order('id', 'asc')
+        $rows = $this->scopedQuery($collectionId, $tenantId)
+            ->order('r.id', 'asc')
             ->select()
             ->toArray();
 
@@ -85,10 +94,13 @@ class RelationshipRepository
      *
      * @param int $collectionId Collection ID | Collection ID
      * @param string $relationshipName Relationship name | 关系名称
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function delete(int $collectionId, string $relationshipName): bool
+    public function delete(int $collectionId, string $relationshipName, ?int $tenantId = null): bool
     {
+        $this->assertCollectionTenant($collectionId, $tenantId);
+
         return (bool)Db::name($this->table)
             ->where('collection_id', $collectionId)
             ->where('name', $relationshipName)
@@ -99,10 +111,13 @@ class RelationshipRepository
      * Delete all relationships by collection ID | 按Collection ID删除所有关系
      *
      * @param int $collectionId Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function deleteByCollectionId(int $collectionId): bool
+    public function deleteByCollectionId(int $collectionId, ?int $tenantId = null): bool
     {
+        $this->assertCollectionTenant($collectionId, $tenantId);
+
         return (bool)Db::name($this->table)
             ->where('collection_id', $collectionId)
             ->delete();
@@ -132,5 +147,41 @@ class RelationshipRepository
                 'updated_at' => $data['updated_at'] ?? null,
             ]
         );
+    }
+
+    /**
+     * 构造多租户感知查询 | Build tenant-scoped query
+     */
+    protected function scopedQuery(int $collectionId, ?int $tenantId = null)
+    {
+        $query = Db::name($this->table)
+            ->alias('r')
+            ->where('r.collection_id', $collectionId);
+
+        if ($tenantId !== null) {
+            $query->join('lowcode_collections c', 'c.id = r.collection_id')
+                ->where('c.tenant_id', $tenantId);
+        }
+
+        return $query;
+    }
+
+    /**
+     * 校验集合租户归属，防止跨租户访问
+     */
+    protected function assertCollectionTenant(int $collectionId, ?int $tenantId = null): void
+    {
+        if ($tenantId === null) {
+            return;
+        }
+
+        $exists = $this->tenantDb
+            ->name('lowcode_collections', $tenantId)
+            ->where('id', $collectionId)
+            ->find();
+
+        if (!$exists) {
+            throw new \InvalidArgumentException("Collection {$collectionId} not found in tenant {$tenantId}");
+        }
     }
 }

@@ -50,6 +50,20 @@ interface CollectionInterface
     public function getDescription(): string;
 
     /**
+     * Get tenant ID | 获取租户ID
+     *
+     * @return int|null Tenant ID or null when not bound | 租户ID，未绑定时为 null
+     */
+    public function getTenantId(): ?int;
+
+    /**
+     * Get site ID | 获取站点ID
+     *
+     * @return int|null Site ID or null when not bound | 站点ID，未绑定时为 null
+     */
+    public function getSiteId(): ?int;
+
+    /**
      * Get all fields | 获取所有字段
      *
      * @return array<string, FieldInterface>

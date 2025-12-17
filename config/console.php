@@ -36,5 +36,11 @@ return [
 
         // Environment check commands | 环境检查命令 (T-062)
         'env:check' => \app\command\EnvCheckCommand::class,
+
+        // Plugin commands | 插件命令 (T-035)
+        'plugin:list' => \app\command\plugin\PluginListCommand::class,
+        'plugin:enable' => \app\command\plugin\PluginEnableCommand::class,
+        'plugin:disable' => \app\command\plugin\PluginDisableCommand::class,
+        'plugin:scan' => \app\command\plugin\PluginScanCommand::class,
     ],
 ];

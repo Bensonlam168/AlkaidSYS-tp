@@ -19,8 +19,8 @@ use think\console\Table;
  *
  * @package app\command\base
  */
-abstract class LowcodeCommand extends Command
-{
+    abstract class LowcodeCommand extends Command
+    {
     /**
      * Output success message | 输出成功消息
      *
@@ -186,7 +186,7 @@ abstract class LowcodeCommand extends Command
             'string', 'text', 'integer', 'decimal', 'boolean',
             'date', 'datetime', 'timestamp', 'json', 'select',
             'multiselect', 'file', 'image', 'email', 'url',
-            'phone', 'color', 'password',
+            'phone', 'color', 'password', 'cascader', 'tree-select',
         ];
 
         return in_array(strtolower($type), $validTypes, true);
@@ -235,24 +235,37 @@ abstract class LowcodeCommand extends Command
         return $str;
     }
 
-    /**
-     * Handle command exception | 处理命令异常
-     *
-     * @param \Throwable $e Exception | 异常
-     * @return int Exit code | 退出码
-     */
-    protected function handleException(\Throwable $e): int
-    {
-        $this->error($e->getMessage());
+        /**
+         * Handle command exception | 处理命令异常
+         *
+         * @param \Throwable $e Exception | 异常
+         * @return int Exit code | 退出码
+         */
+        protected function handleException(\Throwable $e): int
+        {
+            $format = $this->getOutputFormat();
 
-        if ($this->output->isVerbose()) {
-            $this->output->writeln('');
-            $this->output->writeln('<comment>Stack trace:</comment>');
-            $this->output->writeln($e->getTraceAsString());
+            if ($format === 'json') {
+                $this->writeStructuredOutput(
+                    ['exception' => [
+                        'class' => $e::class,
+                        'message' => $e->getMessage(),
+                    ]],
+                    1,
+                    'Command execution failed'
+                );
+            } else {
+                $this->error($e->getMessage());
+
+                if ($this->output->isVerbose()) {
+                    $this->output->writeln('');
+                    $this->output->writeln('<comment>Stack trace:</comment>');
+                    $this->output->writeln($e->getTraceAsString());
+                }
+            }
+
+            return 1;
         }
-
-        return 1;
-    }
 
     /**
      * Validate required options | 验证必需选项
@@ -276,5 +289,66 @@ abstract class LowcodeCommand extends Command
         }
 
         return true;
+    }
+
+    /**
+     * Get output format option | 获取输出格式
+     */
+    protected function getOutputFormat(): string
+    {
+        $format = (string) ($this->input instanceof Input ? $this->input->getOption('format') : 'text');
+        $format = strtolower($format ?: 'text');
+
+        return in_array($format, ['text', 'json'], true) ? $format : 'text';
+    }
+
+    /**
+     * Get audit output file path | 获取审计输出文件路径
+     */
+    protected function getAuditOutPath(): ?string
+    {
+        if (!$this->input instanceof Input) {
+            return null;
+        }
+
+        $path = (string) $this->input->getOption('audit-out');
+
+        return $path !== '' ? $path : null;
+    }
+
+    /**
+     * Build CLI envelope | 构建 CLI 输出包裹结构
+     *
+     * @param array $data    Payload data
+     * @param int   $code    Business code (0 = success)
+     * @param string $message Human readable message
+     */
+    protected function buildCliEnvelope(array $data, int $code = 0, string $message = 'OK'): array
+    {
+        return [
+            'code' => $code,
+            'message' => $message,
+            'data' => $data,
+            'timestamp' => date('c'),
+            'command' => $this->getName(),
+        ];
+    }
+
+    /**
+     * Write structured output to stdout / audit file | 写入结构化输出
+     */
+    protected function writeStructuredOutput(array $data, int $code = 0, string $message = 'OK'): void
+    {
+        $envelope = $this->buildCliEnvelope($data, $code, $message);
+        $json = json_encode($envelope, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+
+        $auditOut = $this->getAuditOutPath();
+        if ($auditOut !== null) {
+            @file_put_contents($auditOut, $json . PHP_EOL);
+        }
+
+        if ($this->getOutputFormat() === 'json') {
+            $this->output->writeln($json);
+        }
     }
 }

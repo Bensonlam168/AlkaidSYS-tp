@@ -297,6 +297,8 @@ class Collection implements CollectionInterface
             'table_name' => $this->tableName,
             'title' => $this->title,
             'description' => $this->description,
+            'tenant_id' => $this->tenantId,
+            'site_id' => $this->siteId,
             'fields' => array_map(fn ($field) => $field->toArray(), $this->fields),
             'relationships' => array_map(fn ($rel) => $rel->toArray(), $this->relationships),
             'options' => $this->options,
@@ -336,6 +338,14 @@ class Collection implements CollectionInterface
 
         if (isset($data['updated_at'])) {
             $this->updatedAt = $data['updated_at'];
+        }
+
+        if (isset($data['tenant_id'])) {
+            $this->tenantId = (int) $data['tenant_id'];
+        }
+
+        if (isset($data['site_id'])) {
+            $this->siteId = (int) $data['site_id'];
         }
 
         return $this;

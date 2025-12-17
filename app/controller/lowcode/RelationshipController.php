@@ -62,7 +62,10 @@ class RelationshipController extends ApiController
         }
 
         try {
-            $collection = $this->collectionManager->get($collectionName);
+            $tenantId = $this->request->tenantId();
+            $siteId = method_exists($this->request, 'siteId') ? $this->request->siteId() : null;
+
+            $collection = $this->collectionManager->get($collectionName, $tenantId);
 
             if (!$collection) {
                 // Use unified API response format for not found | 使用统一未找到响应格式
@@ -82,8 +85,8 @@ class RelationshipController extends ApiController
                 ]
             );
 
-            // Add relationship to collection | 添加关系到Collection
-            $this->relationshipManager->addRelationship($collectionName, $relationship);
+            // Add relationship to collection (tenant scoped) | 在当前租户范围内为Collection添加关系
+            $this->relationshipManager->addRelationship($collectionName, $relationship, $tenantId, $siteId);
 
             return $this->success($relationship->toArray(), 'Relationship added successfully');
         } catch (\Exception $e) {
@@ -103,11 +106,16 @@ class RelationshipController extends ApiController
     public function delete(string $collectionName, string $relationshipName): Response
     {
         try {
+            $tenantId = $this->request->tenantId();
+            $siteId = method_exists($this->request, 'siteId') ? $this->request->siteId() : null;
+
             $dropPivotTable = (bool)$this->request->delete('drop_pivot_table', true);
             $this->relationshipManager->removeRelationship(
                 $collectionName,
                 $relationshipName,
-                $dropPivotTable
+                $dropPivotTable,
+                $tenantId,
+                $siteId
             );
 
             return $this->success(null, 'Relationship removed successfully');

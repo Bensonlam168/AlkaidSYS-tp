@@ -6,6 +6,7 @@ namespace Infrastructure\Lowcode\Collection\Repository;
 
 use Domain\Lowcode\Collection\Interfaces\FieldInterface;
 use Infrastructure\Lowcode\Collection\Field\FieldFactory;
+use Infrastructure\Tenant\TenantAwareDb;
 use think\facade\Db;
 
 /**
@@ -19,15 +20,22 @@ use think\facade\Db;
 class FieldRepository
 {
     protected string $table = 'lowcode_fields';
+    protected TenantAwareDb $tenantDb;
+
+    public function __construct(?TenantAwareDb $tenantDb = null)
+    {
+        $this->tenantDb = $tenantDb ?? new TenantAwareDb();
+    }
 
     /**
      * Save field | 保存字段
      *
      * @param FieldInterface $field Field to save | 要保存的字段
      * @param int $collectionId Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID for isolation | 用于隔离的租户ID
      * @return int Field ID | 字段ID
      */
-    public function save(FieldInterface $field, int $collectionId): int
+    public function save(FieldInterface $field, int $collectionId, ?int $tenantId = null): int
     {
         $data = [
             'collection_id' => $collectionId,
@@ -40,10 +48,11 @@ class FieldRepository
             'options' => json_encode($field->getOptions()),
         ];
 
+        $this->assertCollectionTenant($collectionId, $tenantId);
+
         // Check if field exists | 检查字段是否存在
-        $exists = Db::name($this->table)
-            ->where('collection_id', $collectionId)
-            ->where('name', $field->getName())
+        $exists = $this->scopedQuery($collectionId, $tenantId)
+            ->where('f.name', $field->getName())
             ->find();
 
         if ($exists) {
@@ -62,14 +71,14 @@ class FieldRepository
      * Find fields by collection ID | 按Collection ID查找字段
      *
      * @param int $collectionId Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return array<string, FieldInterface>
      */
-    public function findByCollectionId(int $collectionId): array
+    public function findByCollectionId(int $collectionId, ?int $tenantId = null): array
     {
-        $rows = Db::name($this->table)
-            ->where('collection_id', $collectionId)
-            ->order('sort', 'asc')
-            ->order('id', 'asc')
+        $rows = $this->scopedQuery($collectionId, $tenantId)
+            ->order('f.sort', 'asc')
+            ->order('f.id', 'asc')
             ->select()
             ->toArray();
 
@@ -87,10 +96,13 @@ class FieldRepository
      *
      * @param int $collectionId Collection ID | Collection ID
      * @param string $fieldName Field name | 字段名称
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function delete(int $collectionId, string $fieldName): bool
+    public function delete(int $collectionId, string $fieldName, ?int $tenantId = null): bool
     {
+        $this->assertCollectionTenant($collectionId, $tenantId);
+
         return (bool)Db::name($this->table)
             ->where('collection_id', $collectionId)
             ->where('name', $fieldName)
@@ -101,10 +113,13 @@ class FieldRepository
      * Delete all fields by collection ID | 按Collection ID删除所有字段
      *
      * @param int $collectionId Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function deleteByCollectionId(int $collectionId): bool
+    public function deleteByCollectionId(int $collectionId, ?int $tenantId = null): bool
     {
+        $this->assertCollectionTenant($collectionId, $tenantId);
+
         return (bool)Db::name($this->table)
             ->where('collection_id', $collectionId)
             ->delete();
@@ -128,5 +143,42 @@ class FieldRepository
             $data['name'],
             $options
         );
+    }
+
+    /**
+     * 构造多租户感知的查询 | Build tenant-scoped query
+     */
+    protected function scopedQuery(int $collectionId, ?int $tenantId = null)
+    {
+        $query = Db::name($this->table)
+            ->alias('f')
+            ->where('f.collection_id', $collectionId);
+
+        if ($tenantId !== null) {
+            // 通过关联元数据表确保租户隔离
+            $query->join('lowcode_collections c', 'c.id = f.collection_id')
+                ->where('c.tenant_id', $tenantId);
+        }
+
+        return $query;
+    }
+
+    /**
+     * 校验集合是否属于指定租户（防止跨租户访问）
+     */
+    protected function assertCollectionTenant(int $collectionId, ?int $tenantId = null): void
+    {
+        if ($tenantId === null) {
+            return;
+        }
+
+        $exists = $this->tenantDb
+            ->name('lowcode_collections', $tenantId)
+            ->where('id', $collectionId)
+            ->find();
+
+        if (!$exists) {
+            throw new \InvalidArgumentException("Collection {$collectionId} not found in tenant {$tenantId}");
+        }
     }
 }

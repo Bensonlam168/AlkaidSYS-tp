@@ -57,6 +57,9 @@ class FieldController extends ApiController
         }
 
         try {
+            $tenantId = $this->request->tenantId();
+            $siteId = method_exists($this->request, 'siteId') ? $this->request->siteId() : null;
+
             // Create field | 创建字段
             $field = FieldFactory::create(
                 $data['type'],
@@ -64,8 +67,8 @@ class FieldController extends ApiController
                 $data['options'] ?? []
             );
 
-            // Add field to collection | 添加字段到Collection
-            $this->fieldManager->addField($collectionName, $field);
+            // Add field to collection (tenant scoped) | 在当前租户范围内为Collection添加字段
+            $this->fieldManager->addField($collectionName, $field, $tenantId, $siteId);
 
             return $this->success($field->toArray(), 'Field added successfully');
         } catch (\Exception $e) {
@@ -85,7 +88,10 @@ class FieldController extends ApiController
     public function delete(string $collectionName, string $fieldName): Response
     {
         try {
-            $this->fieldManager->removeField($collectionName, $fieldName);
+            $tenantId = $this->request->tenantId();
+            $siteId = method_exists($this->request, 'siteId') ? $this->request->siteId() : null;
+
+            $this->fieldManager->removeField($collectionName, $fieldName, $tenantId, $siteId);
 
             return $this->success(null, 'Field removed successfully');
         } catch (\Exception $e) {

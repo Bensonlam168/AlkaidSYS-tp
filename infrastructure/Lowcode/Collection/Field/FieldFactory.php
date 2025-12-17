@@ -39,6 +39,10 @@ class FieldFactory
         'select' => SelectField::class,
         'radio' => RadioField::class,
         'checkbox' => CheckboxField::class,
+
+        // P2 Advanced types | P2高级类型（Phase 2）
+        'cascader' => CascaderField::class,
+        'tree-select' => TreeSelectField::class,
     ];
 
     /**

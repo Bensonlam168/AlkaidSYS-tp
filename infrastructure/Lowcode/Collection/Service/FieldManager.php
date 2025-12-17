@@ -45,12 +45,16 @@ class FieldManager
      *
      * @param string $collectionName Collection name | Collection名称
      * @param FieldInterface $field Field to add | 要添加的字段
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
-    public function addField(string $collectionName, FieldInterface $field): void
+    public function addField(string $collectionName, FieldInterface $field, ?int $tenantId = null, ?int $siteId = null): void
     {
-        $collection = $this->collectionManager->get($collectionName);
+        $effectiveTenantId = $tenantId ?? 0;
+
+        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -67,13 +71,15 @@ class FieldManager
         $collection->addField($field);
         $this->fieldRepo->save($field, $collection->getId());
 
-        // 3. Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // 3. Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
 
         // 4. Trigger event | 触发事件
         Event::trigger('lowcode.field.added', [
             'collection' => $collection,
             'field' => $field,
+            'tenant_id' => $effectiveTenantId,
+            'site_id' => $siteId,
         ]);
     }
 
@@ -87,12 +93,21 @@ class FieldManager
      * @param string $collectionName Collection name | Collection名称
      * @param string $fieldName Field name | 字段名称
      * @param array $changes Changes to apply | 要应用的更改
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
-    public function updateField(string $collectionName, string $fieldName, array $changes): void
-    {
-        $collection = $this->collectionManager->get($collectionName);
+    public function updateField(
+        string $collectionName,
+        string $fieldName,
+        array $changes,
+        ?int $tenantId = null,
+        ?int $siteId = null
+    ): void {
+        $effectiveTenantId = $tenantId ?? 0;
+
+        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -110,14 +125,16 @@ class FieldManager
         // Update field metadata | 更新字段元数据
         $this->fieldRepo->save($field, $collection->getId());
 
-        // Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.field.updated', [
             'collection' => $collection,
             'field_name' => $fieldName,
             'changes' => $changes,
+            'tenant_id' => $effectiveTenantId,
+            'site_id' => $siteId,
         ]);
     }
 
@@ -126,12 +143,16 @@ class FieldManager
      *
      * @param string $collectionName Collection name | Collection名称
      * @param string $fieldName Field name to remove | 要移除的字段名
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
-    public function removeField(string $collectionName, string $fieldName): void
+    public function removeField(string $collectionName, string $fieldName, ?int $tenantId = null, ?int $siteId = null): void
     {
-        $collection = $this->collectionManager->get($collectionName);
+        $effectiveTenantId = $tenantId ?? 0;
+
+        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -144,13 +165,15 @@ class FieldManager
         $collection->removeField($fieldName);
         $this->fieldRepo->delete($collection->getId(), $fieldName);
 
-        // 3. Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // 3. Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
 
         // 4. Trigger event | 触发事件
         Event::trigger('lowcode.field.removed', [
             'collection' => $collection,
             'field_name' => $fieldName,
+            'tenant_id' => $effectiveTenantId,
+            'site_id' => $siteId,
         ]);
     }
 }

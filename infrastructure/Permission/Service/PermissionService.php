@@ -111,6 +111,12 @@ class PermissionService
      */
     protected function getUserPermissionsFromDatabase(int $userId): array
     {
+        // 获取用户租户ID，作为后续查询的强制过滤条件
+        $tenantId = $this->getTenantId($userId);
+        if ($tenantId === null) {
+            return [];
+        }
+
         // Step 1: Get user's role IDs with tenant isolation
         // 使用用户仓储在多租户上下文中安全地获取角色ID，确保只返回与用户租户匹配的角色
         $userRepository = new UserRepository();
@@ -123,8 +129,11 @@ class PermissionService
 
         // Step 2: Get permission IDs from roles | 从角色获取权限ID
         $permissionIds = Db::table('role_permissions')
-            ->whereIn('role_id', $roleIds)
-            ->column('permission_id');
+            ->alias('rp')
+            ->join('roles r', 'rp.role_id = r.id')
+            ->where('r.tenant_id', $tenantId) // 强制租户过滤
+            ->whereIn('rp.role_id', $roleIds)
+            ->column('rp.permission_id');
 
         // If no permissions assigned to roles, return empty array | 如果角色没有分配权限，返回空数组
         if (empty($permissionIds)) {

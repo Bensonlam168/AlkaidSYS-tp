@@ -42,7 +42,9 @@ class CreateModelCommand extends LowcodeCommand
             ->addOption('table-name', null, Option::VALUE_OPTIONAL, 'Custom table name | 自定义表名')
             ->addOption('tenant-id', null, Option::VALUE_OPTIONAL, 'Tenant ID (default: 0) | 租户ID（默认：0）', '0')
             ->addOption('site-id', null, Option::VALUE_OPTIONAL, 'Site ID (default: 0) | 站点ID（默认：0）', '0')
-            ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if collection exists | 如果Collection存在则强制覆盖');
+            ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if collection exists | 如果Collection存在则强制覆盖')
+            ->addOption('format', null, Option::VALUE_OPTIONAL, 'Output format (text|json) | 输出格式（text|json）', 'text')
+            ->addOption('audit-out', null, Option::VALUE_OPTIONAL, 'Audit JSON output file path | 审计JSON输出文件路径');
     }
 
     /**
@@ -137,8 +139,18 @@ class CreateModelCommand extends LowcodeCommand
             $this->success("Collection '{$name}' created successfully!");
             $this->success("Table '{$collection->getTableName()}' created in database.");
 
-            // Show next steps | 显示下一步操作
-            $this->showNextSteps($name);
+            // Structured output | 结构化输出
+            $this->writeStructuredOutput([
+                'collection' => method_exists($collection, 'toArray') ? $collection->toArray() : null,
+                'table_name' => $collection->getTableName(),
+                'tenant_id' => $tenantId,
+                'site_id' => $siteId,
+            ]);
+
+            // Show next steps | 显示下一步操作（仅文本模式有意义）
+            if ($this->getOutputFormat() === 'text') {
+                $this->showNextSteps($name);
+            }
 
             return 0;
         } catch (\Throwable $e) {
@@ -203,6 +215,8 @@ class CreateModelCommand extends LowcodeCommand
             'timestamp' => ['nullable' => true],
             'json' => ['nullable' => true],
             'select' => ['nullable' => true, 'options' => []],
+            'cascader' => ['nullable' => true, 'multiple' => false],
+            'tree-select' => ['nullable' => true, 'multiple' => false],
         ];
 
         return $defaults[$type] ?? ['nullable' => true];
@@ -224,7 +238,7 @@ class CreateModelCommand extends LowcodeCommand
                 break;
             }
 
-            $type = $this->ask('Field type (string/integer/decimal/boolean/date/datetime/text/json/select)', 'string');
+            $type = $this->ask('Field type (string/integer/decimal/boolean/date/datetime/text/json/select/cascader/tree-select)', 'string');
             if (!$this->isValidFieldType($type)) {
                 $this->warning("Invalid field type: {$type}");
                 continue;

@@ -6,6 +6,7 @@ namespace Infrastructure\Lowcode\Collection\Repository;
 
 use Domain\Lowcode\Collection\Interfaces\CollectionInterface;
 use Domain\Lowcode\Collection\Model\Collection;
+use Infrastructure\Tenant\TenantAwareDb;
 use think\facade\Db;
 
 /**
@@ -19,6 +20,12 @@ use think\facade\Db;
 class CollectionRepository
 {
     protected string $table = 'lowcode_collections';
+    protected TenantAwareDb $tenantDb;
+
+    public function __construct(?TenantAwareDb $tenantDb = null)
+    {
+        $this->tenantDb = $tenantDb ?? new TenantAwareDb();
+    }
 
     /**
      * Save collection | 保存Collection
@@ -59,6 +66,7 @@ class CollectionRepository
             // Update existing | 更新已存在的
             Db::name($this->table)
                 ->where('id', $collection->getId())
+                ->where('tenant_id', $data['tenant_id'])
                 ->update($data);
             return $collection->getId();
         } else {
@@ -79,9 +87,9 @@ class CollectionRepository
     {
         $effectiveTenantId = $tenantId ?? 0;
 
-        $query = Db::name($this->table)
-            ->where('name', $name)
-            ->where('tenant_id', $effectiveTenantId);
+        $query = $this->tenantDb
+            ->name($this->table, $effectiveTenantId)
+            ->where('name', $name);
 
         if ($siteId !== null) {
             $query->where('site_id', $siteId);
@@ -100,13 +108,16 @@ class CollectionRepository
      * Find by ID | 按ID查找
      *
      * @param int $id Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID (optional) | 租户ID
      * @return CollectionInterface|null
      */
-    public function findById(int $id): ?CollectionInterface
+    public function findById(int $id, ?int $tenantId = null): ?CollectionInterface
     {
-        $data = Db::name($this->table)
-            ->where('id', $id)
-            ->find();
+        $query = $tenantId !== null
+            ? $this->tenantDb->name($this->table, $tenantId)
+            : Db::name($this->table);
+
+        $data = $query->where('id', $id)->find();
 
         if (!$data) {
             return null;
@@ -119,13 +130,16 @@ class CollectionRepository
      * Delete collection | 删除Collection
      *
      * @param int $id Collection ID | Collection ID
+     * @param int|null $tenantId Tenant ID (optional) | 租户ID
      * @return bool
      */
-    public function delete(int $id): bool
+    public function delete(int $id, ?int $tenantId = null): bool
     {
-        return (bool)Db::name($this->table)
-            ->where('id', $id)
-            ->delete();
+        $query = $tenantId !== null
+            ? $this->tenantDb->name($this->table, $tenantId)
+            : Db::name($this->table);
+
+        return (bool)$query->where('id', $id)->delete();
     }
 
     /**
@@ -147,8 +161,7 @@ class CollectionRepository
     ): array {
         $effectiveTenantId = $tenantId ?? 0;
 
-        $query = Db::name($this->table)
-            ->where('tenant_id', $effectiveTenantId);
+        $query = $this->tenantDb->name($this->table, $effectiveTenantId);
 
         if ($siteId !== null) {
             $query->where('site_id', $siteId);

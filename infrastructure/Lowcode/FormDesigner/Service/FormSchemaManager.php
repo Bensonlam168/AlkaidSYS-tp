@@ -6,6 +6,7 @@ namespace Infrastructure\Lowcode\FormDesigner\Service;
 
 use Infrastructure\Lowcode\FormDesigner\Repository\FormSchemaRepository;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
+use Infrastructure\Lowcode\Schema\SchemaVersionService;
 use think\facade\Cache;
 use think\facade\Event;
 
@@ -23,6 +24,7 @@ class FormSchemaManager
 {
     protected string $cachePrefix = 'lowcode:form:';
     protected int $cacheTtl = 3600; // 1 hour | 1小时
+    protected SchemaVersionService $schemaVersionService;
 
     /**
      * Constructor | 构造函数
@@ -37,6 +39,8 @@ class FormSchemaManager
         protected readonly FormSchemaRepository $repository,
         protected readonly ?CollectionManager $collectionManager = null
     ) {
+        // 按需惰性构造，避免破坏现有 DI 配置
+        $this->schemaVersionService = new SchemaVersionService();
     }
 
     /**
@@ -75,6 +79,9 @@ class FormSchemaManager
         Event::trigger('lowcode.form.created', [
             'form' => $data,
         ]);
+
+        // 记录 Schema 版本与哈希（不阻断主流程）
+        $this->schemaVersionService->recordForm($data);
 
         return $this->repository->findById($formId, $data['tenant_id'] ?? null);
     }
@@ -177,6 +184,9 @@ class FormSchemaManager
             'form_id' => $id,
             'updated_data' => $data,
         ]);
+
+        // 记录 Schema 版本与哈希（不阻断主流程）
+        $this->schemaVersionService->recordForm(array_merge($existingForm, $data));
 
         return $this->repository->findById($id, $tenantId);
     }

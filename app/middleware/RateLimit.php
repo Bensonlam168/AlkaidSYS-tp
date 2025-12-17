@@ -431,8 +431,44 @@ class RateLimit
     protected function passThroughOnError(Request $request, Closure $next, \Throwable $e)
     {
         try {
+            $traceId  = null;
+            $tenantId = null;
+            $siteId   = null;
+            $userId   = null;
+
+            try {
+                if (method_exists($request, 'getTraceId')) {
+                    $traceId = $request->getTraceId();
+                } elseif (method_exists($request, 'header')) {
+                    $traceId = $request->header('X-Trace-Id');
+                }
+
+                if (method_exists($request, 'getTenantContext')) {
+                    $context  = $request->getTenantContext();
+                    $tenantId = $context['tenant_id'] ?? null;
+                    $siteId   = $context['site_id'] ?? null;
+                    $userId   = $context['user_id'] ?? null;
+                } else {
+                    if (method_exists($request, 'tenantId')) {
+                        $tenantId = $request->tenantId();
+                    }
+                    if (method_exists($request, 'siteId')) {
+                        $siteId = $request->siteId();
+                    }
+                    if (method_exists($request, 'userId')) {
+                        $userId = $request->userId();
+                    }
+                }
+            } catch (\Throwable $inner) {
+                // Ignore context resolution errors
+            }
+
             Log::warning('RateLimit cache error, fallback to pass-through', [
                 'exception' => $e->getMessage(),
+                'trace_id'  => $traceId,
+                'tenant_id' => $tenantId,
+                'site_id'   => $siteId,
+                'user_id'   => $userId,
             ]);
         } catch (\Throwable) {
             // ignore

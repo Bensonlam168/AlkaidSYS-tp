@@ -29,6 +29,17 @@ interface RelationshipInterface
     public function getName(): string;
 
     /**
+     * Get collection ID | 获取所属 Collection ID
+     *
+     * NOTE: Collection ID is the owning collection's primary key, used for
+     * tenant isolation via lowcode_collections. | 注意：Collection ID 为所属
+     * Collection 的主键，通过 lowcode_collections 间接承载多租户语义。
+     *
+     * @return int
+     */
+    public function getCollectionId(): int;
+
+    /**
      * Get relationship type | 获取关系类型
      *
      * @return string Type: hasOne, hasMany, belongsTo, belongsToMany | 类型
