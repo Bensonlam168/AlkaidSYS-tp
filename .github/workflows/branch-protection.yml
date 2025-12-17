@@ -1,0 +1,525 @@
+name: 分支保护与代码质量检查
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    types: [ opened, synchronize, reopened ]
+
+env:
+  NODE_VERSION: '18'
+  PHP_VERSION: '8.2'
+  # 缓存版本，用于在配置更新时失效缓存
+  CACHE_VERSION: 'v1'
+
+jobs:
+  # 预检查作业 - 快速失败机制
+  pre-checks:
+    runs-on: ubuntu-latest
+    outputs:
+      should-continue: ${{ steps.check-changes.outputs.should-continue }}
+      changed-files: ${{ steps.check-changes.outputs.changed-files }}
+    timeout-minutes: 5
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: 检查文件变更
+        id: check-changes
+        run: |
+          # 获取变更的文件
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | tr '\n' ' ')
+          echo "changed-files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+          
+          # 检查是否有需要跳过检查的变更（如仅文档变更）
+          if echo "$CHANGED_FILES" | grep -qE "\.(md|txt)$"; then
+            ONLY_DOCS=true
+          else
+            ONLY_DOCS=false
+          fi
+          
+          # 检查PR大小
+          PR_SIZE=$(git diff --stat HEAD~1 HEAD | tail -1 | grep -o '[0-9]\+' | head -1)
+          if [ "$PR_SIZE" -gt 1000 ]; then
+            echo "⚠️ PR较大 ($PR_SIZE 行)，可能需要更多时间"
+          fi
+          
+          # 决定是否继续完整检查
+          if [ "$ONLY_DOCS" = "true" ] && [ "$PR_SIZE" -lt 100 ]; then
+            echo "should-continue=false" >> $GITHUB_OUTPUT
+            echo "📄 仅文档变更且PR较小，跳过部分检查"
+          else
+            echo "should-continue=true" >> $GITHUB_OUTPUT
+          fi
+
+  # 并行作业1: 提交信息规范检查
+  commitlint:
+    runs-on: ubuntu-latest
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-continue == 'true'
+    timeout-minutes: 3
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置Node.js缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-node-${{ env.NODE_VERSION }}-
+            ${{ runner.os }}-node-
+
+      - name: 设置Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 安装commitlint
+        run: |
+          npm install -g @commitlint/cli @commitlint/config-conventional
+
+      - name: 检查提交信息规范
+        run: |
+          echo "🔍 检查提交信息规范..."
+          
+          # 获取PR的提交信息
+          COMMITS=$(git log --format=%s origin/main..HEAD)
+          
+          # 检查每个提交信息
+          FAILED_COMMITS=0
+          while IFS= read -r commit; do
+            if ! echo "$commit" | npx commitlint; then
+              echo "❌ 提交信息不符合规范: $commit"
+              FAILED_COMMITS=$((FAILED_COMMITS + 1))
+            fi
+          done <<< "$COMMITS"
+          
+          if [ $FAILED_COMMITS -gt 0 ]; then
+            echo "❌ 有 $FAILED_COMMITS 个提交信息不符合规范"
+            exit 1
+          else
+            echo "✅ 所有提交信息符合规范"
+          fi
+
+  # 并行作业2: 安全扫描
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-continue == 'true'
+    timeout-minutes: 8
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置PHP缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: 设置PHP环境
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, dom, filter, gd, hash, json, pcre, session, simplexml, spl, tokenizer, curl
+
+      - name: 安装PHP依赖
+        run: |
+          composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: 敏感信息泄露检查
+        run: |
+          echo "🔍 检查敏感信息泄露..."
+          
+          # 定义敏感信息模式
+          PATTERNS=(
+            "sk-[a-zA-Z0-9]{20,}"
+            "AIza[a-zA-Z0-9_-]{35}"
+            "ghp_[a-zA-Z0-9]{36}"
+            "xoxb-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24}"
+            "password\s*=\s*['\"][^'\"]{8,}['\"]"
+            "secret\s*=\s*['\"][^'\"]{8,}['\"]"
+            "token\s*=\s*['\"][^'\"]{8,}['\"]"
+          )
+          
+          FOUND_SECRETS=0
+          for pattern in "${PATTERNS[@]}"; do
+            if grep -r -E "$pattern" --include="*.php" --include="*.js" --include="*.ts" --include="*.env*" --exclude-dir=vendor --exclude-dir=node_modules .; then
+              echo "❌ 发现敏感信息模式: $pattern"
+              FOUND_SECRETS=$((FOUND_SECRETS + 1))
+            fi
+          done
+          
+          if [ $FOUND_SECRETS -gt 0 ]; then
+            echo "❌ 发现 $FOUND_SECRETS 处潜在敏感信息泄露"
+            exit 1
+          else
+            echo "✅ 未发现敏感信息泄露"
+          fi
+
+      - name: SQL注入风险检查
+        run: |
+          echo "🔍 检查SQL注入风险..."
+          
+          SQL_PATTERNS=(
+            "\$_GET.*SELECT.*FROM"
+            "\$_POST.*SELECT.*FROM"
+            "\$_REQUEST.*SELECT.*FROM"
+            "mysql_query.*\$_GET"
+            "mysql_query.*\$_POST"
+            "mysqli_query.*\$_GET"
+            "mysqli_query.*\$_POST"
+            "SELECT.*\$_GET"
+            "SELECT.*\$_POST"
+          )
+          
+          FOUND_RISKS=0
+          for pattern in "${SQL_PATTERNS[@]}"; do
+            if grep -r -E "$pattern" --include="*.php" --exclude-dir=vendor --exclude-dir=tests .; then
+              echo "⚠️ 发现潜在SQL注入风险: $pattern"
+              FOUND_RISKS=$((FOUND_RISKS + 1))
+            fi
+          done
+          
+          if [ $FOUND_RISKS -gt 0 ]; then
+            echo "⚠️ 发现 $FOUND_RISKS 处潜在SQL注入风险，请检查"
+            # 不阻止构建，仅警告
+          else
+            echo "✅ 未发现明显的SQL注入风险"
+          fi
+
+      - name: 硬编码密钥检查
+        run: |
+          echo "🔍 检查硬编码密钥..."
+          
+          HARDCODED_PATTERNS=(
+            "JWT_SECRET\s*=\s*['\"][^'\"]{10,}['\"]"
+            "API_KEY\s*=\s*['\"][^'\"]{10,}['\"]"
+            "SECRET_KEY\s*=\s*['\"][^'\"]{10,}['\"]"
+            "ENCRYPTION_KEY\s*=\s*['\"][^'\"]{10,}['\"]"
+          )
+          
+          FOUND_HARDCODED=0
+          for pattern in "${HARDCODED_PATTERNS[@]}"; do
+            if grep -r -E "$pattern" --include="*.php" --include="*.js" --include="*.ts" --exclude-dir=vendor --exclude-dir=node_modules .; then
+              echo "⚠️ 发现硬编码密钥: $pattern"
+              FOUND_HARDCODED=$((FOUND_HARDCODED + 1))
+            fi
+          done
+          
+          if [ $FOUND_HARDCODED -gt 0 ]; then
+            echo "⚠️ 发现 $FOUND_HARDCODED 处硬编码密钥，建议使用环境变量"
+            # 不阻止构建，仅警告
+          else
+            echo "✅ 未发现硬编码密钥"
+          fi
+
+      - name: 调试代码检查
+        run: |
+          echo "🔍 检查调试代码残留..."
+          
+          DEBUG_PATTERNS=(
+            "var_dump\("
+            "print_r\("
+            "die\("
+            "exit\("
+            "console\.log\("
+            "console\.debug\("
+            "dd\("
+            "dump\("
+          )
+          
+          FOUND_DEBUG=0
+          for pattern in "${DEBUG_PATTERNS[@]}"; do
+            if grep -r -E "$pattern" --include="*.php" --include="*.js" --include="*.ts" --exclude-dir=vendor --exclude-dir=node_modules --exclude-dir=tests .; then
+              echo "⚠️ 发现调试代码: $pattern"
+              FOUND_DEBUG=$((FOUND_DEBUG + 1))
+            fi
+          done
+          
+          if [ $FOUND_DEBUG -gt 0 ]; then
+            echo "⚠️ 发现 $FOUND_DEBUG 处调试代码，请移除"
+            # 不阻止构建，仅警告
+          else
+            echo "✅ 未发现调试代码残留"
+          fi
+
+  # 并行作业3: 代码质量检查
+  code-quality:
+    runs-on: ubuntu-latest
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-continue == 'true'
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置PHP缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.composer/cache
+            .php-cs-fixer.cache
+          key: ${{ runner.os }}-php-cs-fixer-${{ env.CACHE_VERSION }}-${{ hashFiles('.php-cs-fixer.php') }}
+          restore-keys: |
+            ${{ runner.os }}-php-cs-fixer-${{ env.CACHE_VERSION }}-
+            ${{ runner.os }}-php-cs-fixer-
+
+      - name: 设置PHP环境
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, dom, filter, gd, hash, json, pcre, session, simplexml, spl, tokenizer, curl
+
+      - name: 安装PHP-CS-Fixer
+        run: |
+          composer require --working-dir=/tmp friendsofphp/php-cs-fixer
+
+      - name: 检查PHP代码风格
+        run: |
+          echo "🔍 检查PHP代码风格..."
+          
+          # 只检查变更的PHP文件
+          CHANGED_PHP_FILES=$(git diff --name-only HEAD~1 HEAD | grep '\.php$' || true)
+          
+          if [ -z "$CHANGED_PHP_FILES" ]; then
+            echo "📄 没有PHP文件变更，跳过代码风格检查"
+          else
+            echo "检查的PHP文件:"
+            echo "$CHANGED_PHP_FILES"
+            
+            # 运行PHP-CS-Fixer检查
+            /tmp/vendor/bin/php-cs-fixer fix --dry-run --diff --using-cache=no $CHANGED_PHP_FILES --config=.php-cs-fixer.php
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ PHP代码风格检查通过"
+            else
+              echo "❌ PHP代码风格检查失败"
+              exit 1
+            fi
+          fi
+
+      - name: 检查前端代码风格（如果存在）
+        run: |
+          if [ -d "frontend" ]; then
+            echo "🔍 检查前端代码风格..."
+            
+            cd frontend
+            
+            # 设置Node.js缓存
+            if command -v pnpm &> /dev/null; then
+              pnpm install --frozen-lockfile
+              pnpm lint || echo "⚠️ 前端代码风格检查有问题"
+            else
+              npm ci
+              npm run lint || echo "⚠️ 前端代码风格检查有问题"
+            fi
+            
+            cd ..
+          else
+            echo "📄 没有前端目录，跳过前端代码风格检查"
+          fi
+
+  # 并行作业4: 依赖漏洞扫描
+  dependency-scan:
+    runs-on: ubuntu-latest
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-continue == 'true'
+    timeout-minutes: 6
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置PHP缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-audit-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-composer-audit-
+
+      - name: 设置PHP环境
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+
+      - name: 扫描PHP依赖漏洞
+        run: |
+          echo "🔍 扫描PHP依赖漏洞..."
+          
+          # 安装audit工具
+          composer global require enlightn/security-checker
+          
+          # 检查依赖漏洞
+          if composer audit; then
+            echo "✅ PHP依赖安全检查通过"
+          else
+            echo "⚠️ 发现PHP依赖安全问题，请检查"
+            # 不阻止构建，仅警告
+          fi
+
+      - name: 扫描前端依赖漏洞（如果存在）
+        run: |
+          if [ -d "frontend" ]; then
+            echo "🔍 扫描前端依赖漏洞..."
+            
+            cd frontend
+            
+            if command -v pnpm &> /dev/null; then
+              pnpm audit --audit-level moderate || echo "⚠️ 前端依赖存在安全问题"
+            else
+              npm audit --audit-level moderate || echo "⚠️ 前端依赖存在安全问题"
+            fi
+            
+            cd ..
+          else
+            echo "📄 没有前端目录，跳过前端依赖扫描"
+          fi
+
+  # 并行作业5: PR合规性检查
+  pr-compliance:
+    runs-on: ubuntu-latest
+    needs: pre-checks
+    if: needs.pre-checks.outputs.should-continue == 'true'
+    timeout-minutes: 3
+    steps:
+      - name: 检查PR大小
+        run: |
+          echo "🔍 检查PR大小..."
+          
+          # 获取PR变更行数
+          PR_SIZE=$(git diff --stat HEAD~1 HEAD | tail -1 | grep -o '[0-9]\+' | head -1)
+          
+          if [ "$PR_SIZE" -gt 2000 ]; then
+            echo "❌ PR过大 ($PR_SIZE 行)，请拆分为更小的PR"
+            exit 1
+          elif [ "$PR_SIZE" -gt 1000 ]; then
+            echo "⚠️ PR较大 ($PR_SIZE 行)，建议拆分"
+          else
+            echo "✅ PR大小合适 ($PR_SIZE 行)"
+          fi
+
+      - name: 检查PR描述质量
+        run: |
+          echo "🔍 检查PR描述质量..."
+          
+          # 获取PR描述
+          PR_BODY=$(jq -r '.pull_request.body' "$GITHUB_EVENT_PATH")
+          
+          # 检查描述长度
+          if [ ${#PR_BODY} -lt 50 ]; then
+            echo "❌ PR描述太短，请提供详细的变更说明"
+            exit 1
+          fi
+          
+          # 检查是否包含任务编号
+          if ! echo "$PR_BODY" | grep -qE "T-[0-9]+"; then
+            echo "⚠️ 建议在PR描述中关联任务编号 (T-XXX)"
+          fi
+          
+          echo "✅ PR描述质量检查通过"
+
+      - name: 检查任务编号关联
+        run: |
+          echo "🔍 检查任务编号关联..."
+          
+          # 检查提交信息中的任务编号
+          COMMITS=$(git log --format=%s origin/main..HEAD)
+          HAS_TASK_NUMBER=false
+          
+          while IFS= read -r commit; do
+            if echo "$commit" | grep -qE "T-[0-9]+"; then
+              HAS_TASK_NUMBER=true
+              break
+            fi
+          done <<< "$COMMITS"
+          
+          if [ "$HAS_TASK_NUMBER" = "true" ]; then
+            echo "✅ 提交信息包含任务编号"
+          else
+            echo "⚠️ 建议在提交信息中包含任务编号 (T-XXX)"
+          fi
+
+  # 汇总作业
+  summary:
+    runs-on: ubuntu-latest
+    needs: [pre-checks, commitlint, security-scan, code-quality, dependency-scan, pr-compliance]
+    if: always()
+    steps:
+      - name: 生成检查结果汇总
+        run: |
+          echo "## 📊 分支保护检查结果汇总" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # 提交信息检查
+          if [ "${{ needs.commitlint.result }}" = "success" ]; then
+            echo "✅ 提交信息规范检查: 通过" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.commitlint.result }}" = "failure" ]; then
+            echo "❌ 提交信息规范检查: 失败" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ 提交信息规范检查: 跳过" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # 安全扫描
+          if [ "${{ needs.security-scan.result }}" = "success" ]; then
+            echo "✅ 安全扫描: 通过" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.security-scan.result }}" = "failure" ]; then
+            echo "❌ 安全扫描: 失败" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ 安全扫描: 跳过" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # 代码质量检查
+          if [ "${{ needs.code-quality.result }}" = "success" ]; then
+            echo "✅ 代码质量检查: 通过" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.code-quality.result }}" = "failure" ]; then
+            echo "❌ 代码质量检查: 失败" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ 代码质量检查: 跳过" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # 依赖扫描
+          if [ "${{ needs.dependency-scan.result }}" = "success" ]; then
+            echo "✅ 依赖漏洞扫描: 通过" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.dependency-scan.result }}" = "failure" ]; then
+            echo "❌ 依赖漏洞扫描: 失败" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ 依赖漏洞扫描: 跳过" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # PR合规性检查
+          if [ "${{ needs.pr-compliance.result }}" = "success" ]; then
+            echo "✅ PR合规性检查: 通过" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.pr-compliance.result }}" = "failure" ]; then
+            echo "❌ PR合规性检查: 失败" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⏭️ PR合规性检查: 跳过" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📈 性能统计" >> $GITHUB_STEP_SUMMARY
+          echo "- 预检查耗时: ${{ needs.pre-checks.outputs.changed-files != '' && '完成' || '跳过' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- 并行检查作业: 5个" >> $GITHUB_STEP_SUMMARY
+          echo "- 缓存版本: ${{ env.CACHE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: 检查整体状态
+        run: |
+          # 检查关键作业是否都通过
+          if [[ "${{ needs.commitlint.result }}" == "success" && 
+                "${{ needs.security-scan.result }}" == "success" && 
+                "${{ needs.code-quality.result }}" == "success" && 
+                "${{ needs.pr-compliance.result }}" == "success" ]]; then
+            echo "✅ 所有关键检查都通过了"
+            exit 0
+          else
+            echo "❌ 部分检查失败，请查看详细结果"
+            exit 1
+          fi

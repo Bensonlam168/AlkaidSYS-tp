@@ -1,0 +1,365 @@
+name: Git工作流监控指标
+
+on:
+  schedule:
+    # 每天UTC 02:00运行（北京时间10:00）
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      period:
+        description: '统计周期'
+        required: false
+        default: '7d'
+        type: choice
+        options:
+        - 1d
+        - 7d
+        - 30d
+        - 90d
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  # 收集Git工作流指标
+  collect-metrics:
+    runs-on: ubuntu-latest
+    outputs:
+      metrics-data: ${{ steps.analyze.outputs.metrics-data }}
+      quality-score: ${{ steps.analyze.outputs.quality-score }}
+      performance-score: ${{ steps.analyze.outputs.performance-score }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 收集PR指标
+        id: collect-pr-metrics
+        run: |
+          echo "📊 收集PR指标..."
+          
+          # 设置统计周期
+          PERIOD="${{ github.event.inputs.period || '7d' }}"
+          SINCE_DATE=$(date -d "$PERIOD ago" --iso-8601)
+          
+          echo "统计周期: $PERIOD (自 $SINCE_DATE)"
+          
+          # 收集PR数据
+          PR_DATA=$(gh pr list \
+            --repo ${{ github.repository }} \
+            --state all \
+            --limit 100 \
+            --search "created:>$SINCE_DATE" \
+            --json)
+          
+          # 分析PR数据
+          TOTAL_PRS=$(echo "$PR_DATA" | jq '. | length')
+          OPEN_PRS=$(echo "$PR_DATA" | jq '[.[] | select(.state == "open")] | length')
+          CLOSED_PRS=$(echo "$PR_DATA" | jq '[.[] | select(.state == "closed")] | length')
+          MERGED_PRS=$(echo "$PR_DATA" | jq '[.[] | select(.merged == true)] | length')
+          
+          # 计算平均PR生命周期
+          AVG_LIFETIME=$(echo "$PR_DATA" | jq '[.[] | select(.state == "closed")] | map(.createdAt | fromdateiso8601) as $start | .mergedAt | fromdateiso8601) as $end | ($end - $start) / 86400 | floor' | jq -s 'add/length')
+          
+          # 计算PR大小分布
+          LARGE_PRS=$(echo "$PR_DATA" | jq '[.[] | select(.additions > 1000 or .deletions > 1000)] | length')
+          
+          echo "total-prs=$TOTAL_PRS" >> $GITHUB_OUTPUT
+          echo "open-prs=$OPEN_PRS" >> $GITHUB_OUTPUT
+          echo "closed-prs=$CLOSED_PRS" >> $GITHUB_OUTPUT
+          echo "merged-prs=$MERGED_PRS" >> $GITHUB_OUTPUT
+          echo "avg-lifetime=$AVG_LIFETIME" >> $GITHUB_OUTPUT
+          echo "large-prs=$LARGE_PRS" >> $GITHUB_OUTPUT
+
+      - name: 收集提交指标
+        id: collect-commit-metrics
+        run: |
+          echo "📊 收集提交指标..."
+          
+          PERIOD="${{ github.event.inputs.period || '7d' }}"
+          SINCE_DATE=$(date -d "$PERIOD ago" --iso-8601)
+          
+          # 收集提交数据
+          COMMITS=$(git log --since="$SINCE_DATE" --pretty=format:'%H|%s|%an|%ad' --date=iso)
+          
+          TOTAL_COMMITS=$(echo "$COMMITS" | wc -l)
+          
+          # 分析提交类型分布
+          FEAT_COMMITS=$(echo "$COMMITS" | grep -c "^feat(" || true)
+          FIX_COMMITS=$(echo "$COMMITS" | grep -c "^fix(" || true)
+          DOCS_COMMITS=$(echo "$COMMITS" | grep -c "^docs(" || true)
+          REFACTOR_COMMITS=$(echo "$COMMITS" | grep -c "^refactor(" || true)
+          TEST_COMMITS=$(echo "$COMMITS" | grep -c "^test(" || true)
+          CHORE_COMMITS=$(echo "$COMMITS" | grep -c "^chore(" || true)
+          
+          # 检查提交信息质量
+          VALID_COMMITS=$(echo "$COMMITS" | grep -cE "^(feat|fix|docs|refactor|test|chore|perf|style)\(" || true)
+          
+          echo "total-commits=$TOTAL_COMMITS" >> $GITHUB_OUTPUT
+          echo "feat-commits=$FEAT_COMMITS" >> $GITHUB_OUTPUT
+          echo "fix-commits=$FIX_COMMITS" >> $GITHUB_OUTPUT
+          echo "docs-commits=$DOCS_COMMITS" >> $GITHUB_OUTPUT
+          echo "refactor-commits=$REFACTOR_COMMITS" >> $GITHUB_OUTPUT
+          echo "test-commits=$TEST_COMMITS" >> $GITHUB_OUTPUT
+          echo "chore-commits=$CHORE_COMMITS" >> $GITHUB_OUTPUT
+          echo "valid-commits=$VALID_COMMITS" >> $GITHUB_OUTPUT
+
+      - name: 收集CI/CD指标
+        id: collect-ci-metrics
+        run: |
+          echo "📊 收集CI/CD指标..."
+          
+          PERIOD="${{ github.event.inputs.period || '7d' }}"
+          
+          # 获取工作流运行记录
+          WORKFLOWS=$(gh run list \
+            --repo ${{ github.repository }} \
+            --limit 100 \
+            --json)
+          
+          # 分析工作流性能
+          TOTAL_RUNS=$(echo "$WORKFLOWS" | jq '. | length')
+          SUCCESSFUL_RUNS=$(echo "$WORKFLOWS" | jq '[.[] | select(.status == "completed")] | length')
+          FAILED_RUNS=$(echo "$WORKFLOWS" | jq '[.[] | select(.conclusion == "failure")] | length')
+          
+          # 计算平均运行时间
+          AVG_DURATION=$(echo "$WORKFLOWS" | jq '[.[] | select(.duration != null)] | map(.duration / 60000) | add / length | floor' | jq -s 'add/length')
+          
+          echo "total-runs=$TOTAL_RUNS" >> $GITHUB_OUTPUT
+          echo "successful-runs=$SUCCESSFUL_RUNS" >> $GITHUB_OUTPUT
+          echo "failed-runs=$FAILED_RUNS" >> $GITHUB_OUTPUT
+          echo "avg-duration=$AVG_DURATION" >> $GITHUB_OUTPUT
+
+      - name: 分析指标数据
+        id: analyze
+        run: |
+          echo "📈 分析Git工作流指标..."
+          
+          # 计算质量分数（0-100）
+          # 基于提交规范性、PR质量、CI成功率等
+          COMMIT_QUALITY=$(echo "scale=2; (${{ steps.collect-commit-metrics.outputs.valid-commits }} / ${{ steps.collect-commit-metrics.outputs.total-commits }}) * 100" | bc)
+          PR_MERGE_RATE=$(echo "scale=2; (${{ steps.collect-pr-metrics.outputs.merged-prs }} / ${{ steps.collect-pr-metrics.outputs.closed-prs }}) * 100" | bc)
+          CI_SUCCESS_RATE=$(echo "scale=2; (${{ steps.collect-ci-metrics.outputs.successful-runs }} / ${{ steps.collect-ci-metrics.outputs.total-runs }}) * 100" | bc)
+          
+          QUALITY_SCORE=$(echo "scale=2; ($COMMIT_QUALITY * 0.4 + $PR_MERGE_RATE * 0.3 + $CI_SUCCESS_RATE * 0.3)" | bc)
+          
+          # 计算性能分数（0-100）
+          # 基于PR生命周期、CI运行时间、大PR比例等
+          PR_LIFETIME_SCORE=$(echo "scale=2; (100 - (${{ steps.collect-pr-metrics.outputs.avg-lifetime }} / 24 * 100))" | bc)
+          CI_DURATION_SCORE=$(echo "scale=2; (100 - (${{ steps.collect-ci-metrics.outputs.avg-duration }} / 30 * 100))" | bc)
+          LARGE_PR_PENALTY=$(echo "scale=2; (${{ steps.collect-pr-metrics.outputs.large-prs }} / ${{ steps.collect-pr-metrics.outputs.total-prs }}) * 20" | bc)
+          
+          PERFORMANCE_SCORE=$(echo "scale=2; ($PR_LIFETIME_SCORE * 0.4 + $CI_DURATION_SCORE * 0.4 + (100 - $LARGE_PR_PENALTY) * 0.2)" | bc)
+          
+          # 确保分数在0-100范围内
+          QUALITY_SCORE=$(echo "if ($QUALITY_SCORE < 0) 0; if ($QUALITY_SCORE > 100) 100; $QUALITY_SCORE" | bc)
+          PERFORMANCE_SCORE=$(echo "if ($PERFORMANCE_SCORE < 0) 0; if ($PERFORMANCE_SCORE > 100) 100; $PERFORMANCE_SCORE" | bc)
+          
+          # 构建指标数据JSON
+          METRICS_DATA=$(cat << EOF
+          {
+            "period": "${{ github.event.inputs.period || '7d' }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "pull_requests": {
+              "total": ${{ steps.collect-pr-metrics.outputs.total-prs }},
+              "open": ${{ steps.collect-pr-metrics.outputs.open-prs }},
+              "closed": ${{ steps.collect-pr-metrics.outputs.closed-prs }},
+              "merged": ${{ steps.collect-pr-metrics.outputs.merged-prs }},
+              "merge_rate": $(echo "scale=2; (${{ steps.collect-pr-metrics.outputs.merged-prs }} / ${{ steps.collect-pr-metrics.outputs.closed-prs }}) * 100" | bc),
+              "average_lifetime_days": ${{ steps.collect-pr-metrics.outputs.avg-lifetime }},
+              "large_prs": ${{ steps.collect-pr-metrics.outputs.large-prs }}
+            },
+            "commits": {
+              "total": ${{ steps.collect-commit-metrics.outputs.total-commits }},
+              "feat": ${{ steps.collect-commit-metrics.outputs.feat-commits }},
+              "fix": ${{ steps.collect-commit-metrics.outputs.fix-commits }},
+              "docs": ${{ steps.collect-commit-metrics.outputs.docs-commits }},
+              "refactor": ${{ steps.collect-commit-metrics.outputs.refactor-commits }},
+              "test": ${{ steps.collect-commit-metrics.outputs.test-commits }},
+              "chore": ${{ steps.collect-commit-metrics.outputs.chore-commits }},
+              "validity_rate": $(echo "scale=2; (${{ steps.collect-commit-metrics.outputs.valid-commits }} / ${{ steps.collect-commit-metrics.outputs.total-commits }}) * 100" | bc)
+            },
+            "ci_cd": {
+              "total_runs": ${{ steps.collect-ci-metrics.outputs.total-runs }},
+              "successful_runs": ${{ steps.collect-ci-metrics.outputs.successful-runs }},
+              "failed_runs": ${{ steps.collect-ci-metrics.outputs.failed-runs }},
+              "success_rate": $(echo "scale=2; (${{ steps.collect-ci-metrics.outputs.successful-runs }} / ${{ steps.collect-ci-metrics.outputs.total-runs }}) * 100" | bc),
+              "average_duration_minutes": ${{ steps.collect-ci-metrics.outputs.avg-duration }}
+            },
+            "scores": {
+              "quality": $QUALITY_SCORE,
+              "performance": $PERFORMANCE_SCORE,
+              "overall": $(echo "scale=2; ($QUALITY_SCORE + $PERFORMANCE_SCORE) / 2" | bc)
+            }
+          }
+          EOF
+          )
+          
+          echo "metrics-data=$METRICS_DATA" >> $GITHUB_OUTPUT
+          echo "quality-score=$QUALITY_SCORE" >> $GITHUB_OUTPUT
+          echo "performance-score=$PERFORMANCE_SCORE" >> $GITHUB_OUTPUT
+          
+          echo "📊 指标分析完成:"
+          echo "质量分数: $QUALITY_SCORE/100"
+          echo "性能分数: $PERFORMANCE_SCORE/100"
+          echo "综合分数: $(echo "scale=2; ($QUALITY_SCORE + $PERFORMANCE_SCORE) / 2" | bc)/100"
+
+  # 生成指标报告
+  generate-report:
+    runs-on: ubuntu-latest
+    needs: collect-metrics
+    steps:
+      - name: 生成指标报告
+        run: |
+          echo "📋 生成Git工作流指标报告..."
+          
+          cat > metrics-report.md << 'EOF'
+          # Git工作流指标报告
+          
+          ## 📊 指标概览
+          
+          **统计周期**: ${{ needs.collect-metrics.outputs.metrics-data }}
+          
+          ### 🎯 质量分数: ${{ needs.collect-metrics.outputs.quality-score }}/100
+          ### ⚡ 性能分数: ${{ needs.collect-metrics.outputs.performance-score }}/100
+          ### 📈 综合分数: $(echo "scale=2; (${{ needs.collect-metrics.outputs.quality-score }} + ${{ needs.collect-metrics.outputs.performance-score }}) / 2" | bc)/100
+          
+          ## 📋 详细指标
+          
+          ### Pull Request 指标
+          - 总PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.total' }}
+          - 开放PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.open' }}
+          - 已关闭PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.closed' }}
+          - 已合并PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.merged' }}
+          - 合并率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.merge_rate' }}%
+          - 平均生命周期: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.average_lifetime_days' }} 天
+          - 大型PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.large_prs' }}
+          
+          ### 提交指标
+          - 总提交数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.total' }}
+          - 功能提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.feat' }}
+          - 修复提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.fix' }}
+          - 文档提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.docs' }}
+          - 重构提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.refactor' }}
+          - 测试提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.test' }}
+          - 维护提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.chore' }}
+          - 提交规范率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.validity_rate' }}%
+          
+          ### CI/CD 指标
+          - 总运行次数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.total_runs' }}
+          - 成功运行次数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.successful_runs' }}
+          - 失败运行次数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.failed_runs' }}
+          - 成功率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.success_rate' }}%
+          - 平均运行时间: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.average_duration_minutes' }} 分钟
+          
+          ## 📈 趋势分析
+          
+          ### 质量趋势
+          - 提交规范性: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.validity_rate' }}%
+          - PR合并率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.merge_rate' }}%
+          - CI成功率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.success_rate' }}%
+          
+          ### 性能趋势
+          - PR处理速度: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.average_lifetime_days' }} 天
+          - CI运行效率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.average_duration_minutes' }} 分钟
+          - 大型PR比例: $(echo "scale=2; (${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.large_prs' }} / ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.total' }}) * 100" | bc)%
+          
+          ## 🎯 改进建议
+          
+          ### 质量改进
+          - 继续强化提交信息规范培训
+          - 提高PR描述质量要求
+          - 加强代码审查流程
+          
+          ### 性能改进
+          - 优化CI/CD流水线性能
+          - 鼓励小型、频繁的PR
+          - 减少大型PR的数量
+          
+          ### 流程改进
+          - 定期回顾指标数据
+          - 建立质量门禁标准
+          - 加强团队协作效率
+          
+          ---
+          *报告生成时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)*
+          EOF
+          
+          echo "📄 指标报告已生成"
+          cat metrics-report.md
+
+      - name: 上传指标报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: git-metrics-report
+          path: metrics-report.md
+          retention-days: 90
+
+      - name: 更新指标到仓库
+        run: |
+          echo "📊 更新指标数据到仓库..."
+          
+          # 创建或更新指标数据文件
+          mkdir -p .github/metrics
+          echo '${{ needs.collect-metrics.outputs.metrics-data }}' > .github/metrics/latest-metrics.json
+          
+          # 提交指标数据
+          git config --local user.name "Metrics Bot"
+          git config --local user.email "metrics@alkaidsys.com"
+          git add .github/metrics/latest-metrics.json
+          git commit -m "chore(metrics): 更新Git工作流指标数据 $(date +'%Y-%m-%d')" || true
+          git push origin main --follow-tags || true
+
+  # 发送指标通知（如果分数低于阈值）
+  notify-low-scores:
+    runs-on: ubuntu-latest
+    needs: collect-metrics
+    if: |
+      ${{ needs.collect-metrics.outputs.quality-score < 70 || 
+          needs.collect-metrics.outputs.performance-score < 70 }}
+    steps:
+      - name: 发送低分通知
+        run: |
+          echo "🚨 发送低分通知..."
+          
+          # 构建通知消息
+          MESSAGE="🚨 Git工作流指标预警
+
+          📊 **指标概览**
+          - 质量分数: ${{ needs.collect-metrics.outputs.quality-score }}/100
+          - 性能分数: ${{ needs.collect-metrics.outputs.performance-score }}/100
+          - 综合分数: $(echo "scale=2; (${{ needs.collect-metrics.outputs.quality-score }} + ${{ needs.collect-metrics.outputs.performance-score }}) / 2" | bc)/100
+
+          📋 **需要关注的问题**
+          "
+          
+          if [ ${{ needs.collect-metrics.outputs.quality-score }} -lt 70 ]; then
+            MESSAGE="$MESSAGE
+          - ❌ 质量分数低于70，需要检查提交规范和PR质量
+          "
+          fi
+          
+          if [ ${{ needs.collect-metrics.outputs.performance-score }} -lt 70 ]; then
+            MESSAGE="$MESSAGE
+          - ⚡ 性能分数低于70，需要优化CI/CD流程和PR处理速度
+          "
+          fi
+          
+          MESSAGE="$MESSAGE
+
+          🎯 **建议行动**
+          1. 立即检查最近的失败PR和CI运行
+          2. 加强团队培训和流程宣导
+          3. 考虑调整工作流程以提高效率
+          "
+          
+          echo "$MESSAGE"
+          
+          # 这里可以集成Slack、钉钉等通知系统
+          # curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"$MESSAGE\"}" $WEBHOOK_URL
