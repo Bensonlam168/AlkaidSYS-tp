@@ -78,8 +78,12 @@ class CollectionManager
      * @return void
      * @throws \Exception If table creation fails | 如果创建表失败
      */
-    public function create(Collection $collection): void
+    public function create(Collection $collection, ?int $tenantId = null, ?int $siteId = null): void
     {
+        // 解析租户/站点上下文，默认回落到 0（系统模板）
+        // Resolve tenant/site context, default to 0 (system template)
+        [$effectiveTenantId, $effectiveSiteId] = $this->resolveTenantContext($collection, $tenantId, $siteId);
+
         // 1. Create physical table | 创建物理表
         $columns = [];
 
@@ -114,12 +118,14 @@ class CollectionManager
             'name' => $collection->getName(),
             'table_name' => $collection->getTableName(),
             'schema' => json_encode($collection->toArray()),
+            'tenant_id' => $effectiveTenantId,
+            'site_id' => $effectiveSiteId,
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
 
         // 3. Clear cache | 清除缓存
-        $this->clearCache($collection->getName());
+        $this->clearCache($collection->getName(), $effectiveTenantId, $effectiveSiteId);
     }
 
     /**
@@ -135,13 +141,19 @@ class CollectionManager
      * 2. 如果未缓存，从数据库加载
      * 3. 缓存结果供将来使用
      *
-     * @param string $name Collection name | 集合名称
+     * @param string   $name     Collection name | 集合名称
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId   Site ID (null means default site) | 站点ID（null 表示默认站点）
      * @return Collection|null
      */
-    public function get(string $name): ?Collection
+    public function get(string $name, ?int $tenantId = null, ?int $siteId = null): ?Collection
     {
+        // 解析租户/站点上下文，默认回落到 0（系统模板）
+        // Resolve tenant/site context, default to 0 (system template)
+        [$effectiveTenantId, $effectiveSiteId] = $this->resolveTenantContext(null, $tenantId, $siteId);
+
         // 1. Try cache first | 首先尝试缓存
-        $cached = Cache::get($this->cacheKey($name));
+        $cached = Cache::get($this->cacheKey($name, $effectiveTenantId, $effectiveSiteId));
         if ($cached) {
             return unserialize($cached);
         }
@@ -149,6 +161,8 @@ class CollectionManager
         // 2. Load from database | 从数据库加载
         $data = Db::name('lowcode_collections')
             ->where('name', $name)
+            ->where('tenant_id', $effectiveTenantId)
+            ->where('site_id', $effectiveSiteId)
             ->find();
 
         if (!$data) {
@@ -160,7 +174,7 @@ class CollectionManager
         $collection = new Collection($name, $schema);
 
         // 4. Cache it | 缓存
-        Cache::set($this->cacheKey($name), serialize($collection), $this->cacheTtl);
+        Cache::set($this->cacheKey($name, $effectiveTenantId, $effectiveSiteId), serialize($collection), $this->cacheTtl);
 
         return $collection;
     }
@@ -169,10 +183,16 @@ class CollectionManager
      * Update an existing collection | 更新现有集合
      *
      * @param Collection $collection Collection instance | 集合实例
+     * @param int|null   $tenantId   Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null   $siteId     Site ID (null means default site) | 站点ID（null 表示默认站点）
      * @return void
      */
-    public function update(Collection $collection): void
+    public function update(Collection $collection, ?int $tenantId = null, ?int $siteId = null): void
     {
+        // 解析租户/站点上下文，默认回落到 0（系统模板）
+        // Resolve tenant/site context, default to 0 (system template)
+        [$effectiveTenantId, $effectiveSiteId] = $this->resolveTenantContext($collection, $tenantId, $siteId);
+
         // 1. Update table structure (incremental field changes) | 更新表结构（增量字段变更）
         // TODO: Implement incremental field updates (add/drop columns)
         // TODO: 实现增量字段更新（添加/删除列）
@@ -180,13 +200,15 @@ class CollectionManager
         // 2. Update metadata | 更新元数据
         Db::name('lowcode_collections')
             ->where('name', $collection->getName())
+            ->where('tenant_id', $effectiveTenantId)
+            ->where('site_id', $effectiveSiteId)
             ->update([
                 'schema' => json_encode($collection->toArray()),
                 'updated_at' => date('Y-m-d H:i:s'),
             ]);
 
         // 3. Clear cache | 清除缓存
-        $this->clearCache($collection->getName());
+        $this->clearCache($collection->getName(), $effectiveTenantId, $effectiveSiteId);
     }
 
     /**
@@ -202,24 +224,32 @@ class CollectionManager
      * 2. 删除元数据
      * 3. 清除缓存
      *
-     * @param string $name Collection name | 集合名称
+     * @param string   $name     Collection name | 集合名称
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId   Site ID (null means default site) | 站点ID（null 表示默认站点）
      * @return void
      */
-    public function delete(string $name): void
+    public function delete(string $name, ?int $tenantId = null, ?int $siteId = null): void
     {
-        $collection = $this->get($name);
+        $collection = $this->get($name, $tenantId, $siteId);
         if (!$collection) {
             return;
         }
+
+        [$effectiveTenantId, $effectiveSiteId] = $this->resolveTenantContext($collection, $tenantId, $siteId);
 
         // 1. Drop physical table | 删除物理表
         $this->schemaBuilder->dropTable($collection->getTableName());
 
         // 2. Delete metadata | 删除元数据
-        Db::name('lowcode_collections')->where('name', $name)->delete();
+        Db::name('lowcode_collections')
+            ->where('name', $name)
+            ->where('tenant_id', $effectiveTenantId)
+            ->where('site_id', $effectiveSiteId)
+            ->delete();
 
         // 3. Clear cache | 清除缓存
-        $this->clearCache($name);
+        $this->clearCache($name, $effectiveTenantId, $effectiveSiteId);
     }
 
     /**
@@ -261,22 +291,76 @@ class CollectionManager
     /**
      * Get cache key for a collection | 获取集合的缓存键
      *
-     * @param string $name Collection name | 集合名称
+     * @param string   $name     Collection name | 集合名称
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId   Site ID (null means default site) | 站点ID（null 表示默认站点）
      * @return string
      */
-    protected function cacheKey(string $name): string
+    protected function cacheKey(string $name, ?int $tenantId = null, ?int $siteId = null): string
     {
-        return $this->cachePrefix . $name;
+        $effectiveTenantId = $tenantId ?? 0;
+        $effectiveSiteId = $siteId ?? 0;
+
+        return $this->cachePrefix . $effectiveTenantId . ':' . $effectiveSiteId . ':' . $name;
     }
 
     /**
      * Clear cache for a collection | 清除集合的缓存
      *
-     * @param string $name Collection name | 集合名称
+     * @param string   $name     Collection name | 集合名称
+     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int|null $siteId   Site ID (null means default site) | 站点ID（null 表示默认站点）
      * @return void
      */
-    protected function clearCache(string $name): void
+    protected function clearCache(string $name, ?int $tenantId = null, ?int $siteId = null): void
     {
-        Cache::delete($this->cacheKey($name));
+        Cache::delete($this->cacheKey($name, $tenantId, $siteId));
+    }
+
+    /**
+     * 解析租户/站点上下文，统一回落为非负整数
+     * Resolve tenant/site context and normalize to non-negative integers
+     */
+    protected function resolveTenantContext(?Collection $collection, ?int $tenantId = null, ?int $siteId = null): array
+    {
+        $resolvedTenant = $tenantId;
+        $resolvedSite = $siteId;
+
+        // 从集合对象读取租户/站点信息（若存在）
+        // Read tenant/site from collection object when available
+        if ($collection !== null) {
+            if ($resolvedTenant === null && method_exists($collection, 'getTenantId')) {
+                $resolvedTenant = $collection->getTenantId();
+            }
+            if ($resolvedSite === null && method_exists($collection, 'getSiteId')) {
+                $resolvedSite = $collection->getSiteId();
+            }
+        }
+
+        // 尝试从请求上下文获取（兼容旧调用链）
+        // Try to get from request context for legacy callers
+        try {
+            $request = request();
+            if ($resolvedTenant === null && method_exists($request, 'tenantId')) {
+                $resolvedTenant = $request->tenantId();
+            }
+            if ($resolvedSite === null && method_exists($request, 'siteId')) {
+                $resolvedSite = $request->siteId();
+            }
+        } catch (\Throwable $e) {
+            // ignore if request unavailable
+        }
+
+        // 默认落到 0 表示系统模板/默认站点
+        // Default to 0 meaning system template/default site
+        $resolvedTenant = $resolvedTenant ?? 0;
+        $resolvedSite = $resolvedSite ?? 0;
+
+        // 统一约束为非负整数
+        // Normalize to non-negative integers
+        $resolvedTenant = max(0, (int) $resolvedTenant);
+        $resolvedSite = max(0, (int) $resolvedSite);
+
+        return [$resolvedTenant, $resolvedSite];
     }
 }
