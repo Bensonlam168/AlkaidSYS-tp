@@ -10,6 +10,7 @@ use Infrastructure\Permission\Service\PermissionService;
 use Domain\User\Model\User;
 use think\Response;
 use think\facade\Log;
+use think\facade\Db;
 
 /**
  * Auth Controller | 认证控制器
@@ -136,6 +137,10 @@ class AuthController extends ApiController
         $tenantId = $request->tenantId();
 
         try {
+            // 确保当前租户有默认 user 角色，避免跨租户复用 tenant=1 的系统角色
+            // Ensure default user role exists per tenant to avoid reusing tenant=1 system role
+            $defaultRoleId = $this->resolveOrCreateDefaultUserRoleId($tenantId);
+
             // Check if user exists | 检查用户是否存在
             $existingUser = $this->userRepository->findByEmail($tenantId, $data['email']);
             if ($existingUser) {
@@ -158,8 +163,8 @@ class AuthController extends ApiController
             $userId = $this->userRepository->save($user);
             $user->setId($userId);
 
-            // Assign default user role (ID: 2) | 分配默认用户角色
-            $this->userRepository->assignRole($userId, 2);
+            // 分配默认 user 角色（按租户隔离）| Assign default user role per tenant
+            $this->userRepository->assignRole($userId, $defaultRoleId);
 
             // Generate JWT tokens | 生成 JWT 令牌（Access/Refresh）
             $accessToken = $this->jwtService->generateAccessToken(
@@ -307,7 +312,9 @@ class AuthController extends ApiController
         }
 
         try {
-            $user = $this->userRepository->findById($userId);
+            // 按当前租户范围查询用户，避免跨租户信息泄露
+            // Query user within current tenant to prevent cross-tenant leakage
+            $user = $this->userRepository->findById($userId, $request->tenantId());
 
             if (!$user) {
                 return $this->error($this->langService->trans('auth.user_not_found'), 404);
@@ -388,5 +395,88 @@ class AuthController extends ApiController
 
         // Generic internal error response | 通用内部错误响应
         return $this->error($this->langService->trans('error.internal_server_error'), 5000, [], 500);
+    }
+
+    /**
+     * 获取或创建指定租户的默认 user 角色 ID
+     * - 若已存在 slug=user 的角色则直接返回
+     * - 否则从租户1模板角色复制并同步角色权限
+     */
+    protected function resolveOrCreateDefaultUserRoleId(int $tenantId): int
+    {
+        $role = Db::name('roles')
+            ->where('tenant_id', $tenantId)
+            ->where('slug', 'user')
+            ->find();
+
+        if ($role) {
+            return (int) $role['id'];
+        }
+
+        $templateRole = Db::name('roles')
+            ->where('tenant_id', 1)
+            ->where('slug', 'user')
+            ->find();
+
+        if (!$templateRole) {
+            throw new \RuntimeException('默认 user 角色模板缺失');
+        }
+
+        Db::startTrans();
+        try {
+            // Double check under transaction to avoid duplicates | 事务内二次检查避免重复插入
+            $existing = Db::name('roles')
+                ->where('tenant_id', $tenantId)
+                ->where('slug', 'user')
+                ->find();
+
+            if ($existing) {
+                Db::commit();
+                return (int) $existing['id'];
+            }
+
+            $now = date('Y-m-d H:i:s');
+            $newRoleId = (int) Db::name('roles')->insertGetId([
+                'tenant_id' => $tenantId,
+                'name' => $templateRole['name'] ?? 'User',
+                'slug' => 'user',
+                'description' => $templateRole['description'] ?? 'Regular user with basic access',
+                // 延用模板的 is_system 语义，按租户维度落盘
+                'is_system' => $templateRole['is_system'] ?? 1,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            $permissionIds = Db::name('role_permissions')
+                ->where('role_id', (int) $templateRole['id'])
+                ->column('permission_id');
+
+            if (!empty($permissionIds)) {
+                $rows = [];
+                foreach ($permissionIds as $permissionId) {
+                    $rows[] = [
+                        'role_id' => $newRoleId,
+                        'permission_id' => (int) $permissionId,
+                        'created_at' => $now,
+                    ];
+                }
+                Db::name('role_permissions')->insertAll($rows);
+            }
+
+            Db::commit();
+            return $newRoleId;
+        } catch (\Throwable $e) {
+            Db::rollback();
+
+            $existing = Db::name('roles')
+                ->where('tenant_id', $tenantId)
+                ->where('slug', 'user')
+                ->find();
+            if ($existing) {
+                return (int) $existing['id'];
+            }
+
+            throw $e;
+        }
     }
 }

@@ -23,6 +23,7 @@ class UserRepository
             'tenant_id' => $user->getTenantId(),
             'username' => $user->getUsername(),
             'email' => $user->getEmail(),
+            'password' => $user->getPassword(),
             'name' => $user->getName(),
             'status' => $user->getStatus(),
         ];
