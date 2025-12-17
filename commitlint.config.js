@@ -13,7 +13,7 @@ module.exports = {
     'scope-enum': [
       1,
       'always',
-      ['auth', 'api', 'db', 'lowcode', 'workflow', 'security', 'performance', 'deployment', 'testing', 'git', 'augment', 'ci'],
+      ['auth', 'api', 'db', 'lowcode', 'workflow', 'security', 'performance', 'deployment', 'testing', 'git', 'augment', 'ci', 'config'],
     ],
     // Enforce maximum header length
     'header-max-length': [2, 'always', 72],
