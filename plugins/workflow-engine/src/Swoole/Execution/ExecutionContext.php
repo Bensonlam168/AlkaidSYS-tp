@@ -547,11 +547,15 @@ class ExecutionContext
     /**
      * 取消执行
      *
+     * @param string|null $reason 取消原因
      * @return $this
      */
-    public function cancel(): static
+    public function cancel(?string $reason = null): static
     {
         $this->cancelled = true;
+        if ($reason !== null) {
+            $this->setMeta('cancel_reason', $reason);
+        }
         return $this;
     }
 
@@ -568,12 +572,27 @@ class ExecutionContext
     /**
      * 暂停执行
      *
+     * @param string|null $reason 暂停原因
      * @return $this
      */
-    public function suspend(): static
+    public function suspend(?string $reason = null): static
     {
         $this->suspended = true;
+        if ($reason !== null) {
+            $this->setMeta('suspend_reason', $reason);
+        }
         return $this;
+    }
+
+    /**
+     * 暂停执行（别名）
+     *
+     * @param string|null $reason 暂停原因
+     * @return $this
+     */
+    public function pause(?string $reason = null): static
+    {
+        return $this->suspend($reason);
     }
 
     /**
@@ -595,6 +614,16 @@ class ExecutionContext
     public function isSuspended(): bool
     {
         return $this->suspended;
+    }
+
+    /**
+     * 检查是否已暂停（别名）
+     *
+     * @return bool
+     */
+    public function isPaused(): bool
+    {
+        return $this->isSuspended();
     }
 
     /**
