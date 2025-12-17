@@ -125,9 +125,10 @@ interface NodeInterface
     /**
      * 验证节点配置
      *
+     * @param array $config 可选的配置数组，如果为空则验证当前配置
      * @return bool
      */
-    public function validateConfig(): bool;
+    public function validateConfig(array $config = []): bool;
 
     /**
      * 获取配置验证错误

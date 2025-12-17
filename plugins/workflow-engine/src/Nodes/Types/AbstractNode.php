@@ -298,6 +298,18 @@ abstract class AbstractNode implements NodeInterface
     }
 
     /**
+     * 获取单个配置项值
+     *
+     * @param string $key 配置键
+     * @param mixed $default 默认值
+     * @return mixed
+     */
+    protected function getConfigValue(string $key, mixed $default = null): mixed
+    {
+        return $this->config[$key] ?? $default;
+    }
+
+    /**
      * {@inheritDoc}
      */
     public function setConfig(array $config): static
@@ -310,16 +322,17 @@ abstract class AbstractNode implements NodeInterface
     /**
      * {@inheritDoc}
      */
-    public function validateConfig(): bool
+    public function validateConfig(array $config = []): bool
     {
         $this->validationErrors = [];
+        $configToValidate = !empty($config) ? $config : $this->config;
 
         // 基础验证：检查必需的配置项
         $schema = $this->getConfigSchema();
         $required = $schema['required'] ?? [];
 
         foreach ($required as $field) {
-            if (!isset($this->config[$field])) {
+            if (!isset($configToValidate[$field])) {
                 $this->validationErrors[] = "缺少必需的配置项: {$field}";
             }
         }
