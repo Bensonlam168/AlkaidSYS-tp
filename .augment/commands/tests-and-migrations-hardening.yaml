@@ -1,0 +1,47 @@
+# Auggie Command: 关键路径测试覆盖与迁移体系补强
+# 对应 Backlog [P1] 关键路径测试覆盖 + 数据库迁移体系补齐
+
+name: tests-and-migrations-hardening
+version: 1.0.0
+status: stable
+description: "补齐 Auth/Permission/多租户等关键路径测试，并建立核心表完整 Migration 链"
+
+# 工具使用约定
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+references:
+  - .augment/rules/always-alkaidsys-project-rules.md
+  - docs/todo/development-backlog-2025-11-23.md
+
+steps:
+  - name: inventory_current_schema_and_migrations
+    description: "使用 exa/context7 枚举 database/migrations 与实际表结构，对比缺失的迁移文件与核心业务表"
+
+  - name: plan_migration_chain
+    description: "根据多租户与低代码规范，为核心表（用户/角色/权限/低代码相关表等）设计完整的迁移链，避免手写 DDL"
+
+  - name: add_auth_permission_tenant_tests
+    description: "为 Auth/Permission/TenantIdentify/SiteIdentify/ExceptionHandle 等关键中间件与控制器补充 Feature & Unit Test"
+
+  - name: add_lowcode_core_tests
+    description: "为低代码核心服务和路由补充/完善测试，确保路由顺序、权限控制与多租户隔离符合设计"
+
+  - name: integrate_into_ci
+    description: "将新增测试与迁移检查脚本集成进 CI，作为受保护分支合并前的必经步骤"
+
+outputs:
+  - migrations: database/migrations/*.php
+  - tests_auth: tests/Feature/Auth 与 tests/Unit/Auth
+  - tests_permission: tests/Feature/Permission 与 tests/Unit/Permission
+  - tests_lowcode: tests/Feature/Lowcode 与 tests/Unit/Lowcode
+
+examples:
+  - description: "为当前项目执行一次测试与迁移体系加固"
+    command: "auggie --print '执行 tests-and-migrations-hardening 命令，补齐关键路径测试与迁移'"

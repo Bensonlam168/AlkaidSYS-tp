@@ -1,0 +1,203 @@
+# Skill: 创建表单 Schema
+# 用于为 Collection 创建前端表单配置
+
+name: create-form-schema
+version: 1.0.0
+status: stable
+description: 为 Collection 创建表单 Schema，用于前端表单渲染和验证
+
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
+# 输入参数
+parameters:
+  - name: collection_name
+    type: string
+    required: true
+    description: Collection 名称（如：Product、Order）
+    example: Product
+
+  - name: form_type
+    type: string
+    required: true
+    description: 表单类型
+    allowed_values:
+      - create    # 创建表单
+      - edit      # 编辑表单
+      - search    # 搜索表单
+      - filter    # 筛选表单
+    example: create
+
+  - name: fields
+    type: array
+    required: false
+    description: 要包含的字段列表（不指定则包含所有字段）
+    example:
+      - name
+      - price
+      - stock
+      - status
+
+  - name: layout
+    type: string
+    required: false
+    default: vertical
+    description: 表单布局
+    allowed_values:
+      - vertical    # 垂直布局
+      - horizontal  # 水平布局
+      - inline      # 内联布局
+      - grid        # 网格布局
+
+  - name: columns
+    type: integer
+    required: false
+    default: 1
+    description: 表单列数（用于 grid 布局）
+    example: 2
+
+  - name: groups
+    type: array
+    required: false
+    description: 字段分组配置
+    example:
+      - title: 基本信息
+        fields: [name, price]
+      - title: 库存信息
+        fields: [stock, status]
+
+# 执行步骤
+steps:
+  - name: align_design_specs
+    description: 对齐设计与规范
+    actions:
+      - 阅读 design/**、docs/technical-specs/** 与 docs/report/design-compliance-audit-2025-12-14.md，确保表单字段/校验符合设计
+      - 确认低代码 Schema 为单一事实来源，避免与数据库/前端配置漂移
+
+  - name: validate_collection
+    description: 验证 Collection 是否存在
+    actions:
+      - 使用 codebase-retrieval 查找 Collection 定义
+      - 检查 lowcode_collections 表中是否存在该 Collection
+      - 获取 Collection 的所有字段定义
+
+  - name: generate_form_schema
+    description: 生成表单 Schema
+    actions:
+      - 根据字段类型生成对应的表单组件配置
+      - 设置字段验证规则
+      - 配置字段显示属性（label、placeholder、help text）
+      - 处理字段依赖关系（如级联选择）
+      - 应用布局配置
+
+  - name: generate_validation_rules
+    description: 生成验证规则
+    actions:
+      - 根据字段定义生成前端验证规则
+      - 生成后端验证规则
+      - 处理自定义验证逻辑
+
+  - name: save_form_schema
+    description: 保存表单 Schema
+    actions:
+      - 在 lowcode_form_schemas 表中保存配置
+      - 关联到对应的 Collection
+      - 设置表单类型和版本
+
+  - name: generate_frontend_config
+    description: 生成前端配置文件
+    actions:
+      - 创建文件：frontend/src/views/lowcode/{collection_name}/form-schema.ts
+      - 生成 TypeScript 类型定义
+      - 生成表单配置对象
+      - 添加使用示例
+
+  - name: create_test
+    description: 创建测试用例
+    actions:
+      - 创建文件：tests/Unit/Lowcode/FormSchema/{CollectionName}FormSchemaTest.php
+      - 测试 Schema 生成
+      - 测试验证规则
+      - 测试字段渲染配置
+
+  - name: run_tests
+    description: 运行测试验证
+    command: docker exec -it alkaid-backend php think test tests/Unit/Lowcode/FormSchema/{CollectionName}FormSchemaTest.php
+
+# 输出
+outputs:
+  - form_schema_id: 创建的表单 Schema ID
+  - frontend_config: frontend/src/views/lowcode/{collection_name}/form-schema.ts
+  - validation_rules: 生成的验证规则
+  - success_message: "表单 Schema 已成功创建"
+
+# 使用示例
+examples:
+  - description: 为 Product Collection 创建创建表单
+    command: |
+      auggie --print "使用 create-form-schema skill 为 Product Collection 创建 create 表单，
+      包含字段：name、price、stock、status，使用垂直布局"
+
+  - description: 创建带分组的编辑表单
+    command: |
+      auggie --print "使用 create-form-schema skill 为 Product Collection 创建 edit 表单，
+      分组：基本信息(name, price)、库存信息(stock, status)，使用网格布局，2列"
+
+  - description: 通过配置创建表单
+    config: |
+      collection_name: Product
+      form_type: create
+      layout: grid
+      columns: 2
+      groups:
+        - title: 基本信息
+          fields: [name, price, description]
+        - title: 库存信息
+          fields: [stock, status]
+
+# 字段类型与表单组件映射
+field_component_mapping:
+  string: Input          # 文本输入框
+  text: Textarea         # 文本域
+  integer: InputNumber   # 数字输入框
+  decimal: InputNumber   # 数字输入框（支持小数）
+  boolean: Switch        # 开关
+  date: DatePicker       # 日期选择器
+  datetime: DatePicker   # 日期时间选择器
+  select: Select         # 下拉选择
+  multiselect: Select    # 多选下拉
+  file: Upload           # 文件上传
+  image: Upload          # 图片上传
+
+# 依赖的文件和服务
+dependencies:
+  - Infrastructure\Lowcode\Collection\Service\CollectionManager
+  - Infrastructure\Lowcode\Field\Service\FieldManager
+  - Infrastructure\Lowcode\FormSchema\Service\FormSchemaBuilder
+  - Domain\Lowcode\FormSchema\Model\FormSchema
+  - Domain\Lowcode\FormSchema\Interfaces\FormSchemaInterface
+
+# 错误处理
+error_handling:
+  - Collection 不存在：提示用户检查 Collection 名称
+  - 字段不存在：列出可用的字段
+  - 布局配置无效：提示正确的布局选项
+  - 分组配置错误：提示正确的分组格式
+
+# 注意事项
+notes:
+  - 表单 Schema 支持动态更新
+  - 前端组件基于 Ant Design Vue
+  - 验证规则同时应用于前端和后端
+  - 支持自定义组件和验证器
+  - 表单 Schema 可以导出为 JSON 格式

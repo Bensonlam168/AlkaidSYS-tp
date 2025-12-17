@@ -3,6 +3,7 @@
 
 name: lowcode-developer
 version: 1.0.0
+status: stable
 description: |
   AlkaidSYS 低代码开发专家，专注于 Collection、Field、Form、Workflow 等低代码功能的开发和维护。
   精通 ThinkPHP 8.0、领域驱动设计（DDD）和低代码架构模式。
@@ -77,6 +78,8 @@ context_files:
   - design/09-lowcode-framework/42-lowcode-data-modeling.md
   - design/02-domain-layer/domain-model-unification-plan.md
   - docs/technical-specs/code-style/php-coding-standards.md
+  - docs/report/design-compliance-audit-2025-12-14.md
+  - docs/technical-specs/api/restful-api-guidelines.md
 
 # 示例对话
 examples:
@@ -118,4 +121,3 @@ security:
   - SQL 注入防护
   - XSS 防护
   - 租户数据隔离
-

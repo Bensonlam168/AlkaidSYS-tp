@@ -63,9 +63,14 @@ class UserRepositoryTest extends ThinkPHPTestCase
     {
         $this->cleanupData();
 
+        // 确保测试所需租户存在（避免外键约束导致插入失败）
+        // Ensure required tenants exist (avoid FK insertion failures)
+        $this->ensureTenantExists(1, 'Test Tenant 1', 'test-tenant-1');
+        $this->ensureTenantExists(2, 'Test Tenant 2', 'test-tenant-2');
+
         Db::name('roles')->insertAll([
-            ['id' => 7201, 'tenant_id' => 1, 'name' => 't1_admin', 'code' => 't1_admin'],
-            ['id' => 7202, 'tenant_id' => 2, 'name' => 't2_admin', 'code' => 't2_admin'],
+            ['id' => 7201, 'tenant_id' => 1, 'name' => 't1_admin', 'slug' => 't1_admin'],
+            ['id' => 7202, 'tenant_id' => 2, 'name' => 't2_admin', 'slug' => 't2_admin'],
         ]);
 
         Db::name('users')->insert([
@@ -75,6 +80,26 @@ class UserRepositoryTest extends ThinkPHPTestCase
             'email' => 'u1@test.com',
             'password' => 'pwd',
             'status' => 'active',
+        ]);
+    }
+
+    protected function ensureTenantExists(int $id, string $name, string $slug): void
+    {
+        $exists = Db::name('tenants')->where('id', $id)->find();
+        if ($exists) {
+            return;
+        }
+
+        Db::name('tenants')->insert([
+            'id' => $id,
+            'name' => $name,
+            'slug' => $slug,
+            'status' => 'active',
+            'config' => json_encode([]),
+            'max_sites' => 10,
+            'max_users' => 100,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
         ]);
     }
 

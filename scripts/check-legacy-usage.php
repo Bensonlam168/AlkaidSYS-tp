@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+
 /**
  * Check Legacy Code Usage | Legacy 代码使用检查
  *
@@ -147,7 +148,7 @@ if (empty($violations)) {
     echo colorize("✓ No legacy code usage found!\n", 'green');
     exit(0);
 } else {
-    echo colorize("✗ Found " . count($violations) . " legacy code usage(s):\n\n", 'red');
+    echo colorize('✗ Found ' . count($violations) . " legacy code usage(s):\n\n", 'red');
 
     $groupedByFile = [];
     foreach ($violations as $violation) {

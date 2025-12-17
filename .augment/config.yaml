@@ -134,9 +134,9 @@ testing:
   
   # 测试命令
   commands:
-    unit: php think test tests/Unit
-    feature: php think test tests/Feature
-    all: php think test
+    unit: docker exec -it alkaid-backend php think test tests/Unit
+    feature: docker exec -it alkaid-backend php think test tests/Feature
+    all: docker exec -it alkaid-backend php think test
 
 # 文档生成
 documentation:
@@ -191,4 +191,3 @@ ai_assistance:
     create_collection: "创建 {name} Collection，包含字段 {fields}"
     fix_bug: "修复 {description} 的问题"
     optimize: "优化 {component} 的性能"
-

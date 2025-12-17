@@ -1,0 +1,56 @@
+# Auggie Command: Casbin 授权引擎 Phase 2 落地
+# 在 PermissionService 已稳定的前提下，按 Phase 规划接入 PHP-Casbin
+
+name: casbin-phase2-rollout
+version: 1.0.0
+status: stable
+description: "在保持现有 RBAC 行为兼容的前提下，将 Casbin 接入 PermissionService 作为 Phase 2 授权引擎"
+
+# 工具使用约定
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+parameters:
+  - name: mode
+    type: string
+    required: false
+    default: poc
+    description: "casbin 接入模式：poc/core/all（PoC → 核心资源 → 全量接入）"
+
+references:
+  - .augment/rules/always-alkaidsys-project-rules.md
+  - .augment/skills/auth-permission-best-practices.yaml
+  - design/04-security-performance/11-security-design.md
+
+steps:
+  - name: confirm_permissionservice_boundary
+    description: "使用 Serena + context7 确认 PermissionService API 与调用点，保证控制器/中间件只依赖该抽象，不直接使用 Casbin"
+
+  - name: design_casbin_model_and_policy
+    description: "根据安全设计文档与多租户规则，设计 Casbin model/policy 结构（含租户、用户、角色、资源、action、域等维度）"
+
+  - name: implement_casbin_adapter
+    description: "实现或配置 Casbin 适配器，将现有角色/权限关系映射为 Policy，确保与 slug=resource.action、code=resource:action 规范兼容"
+
+  - name: integrate_into_permissionservice
+    description: "在 PermissionService 内部接入 Casbin，支持在 Phase2 期间与 DB RBAC 双读/比对，保持行为兼容并记录差异"
+
+  - name: add_tests_and_migration_plan
+    description: "为 Casbin 行为编写单元/集成测试，并在文档中给出从 DB RBAC 迁移到 Casbin 完全托管的升级路径"
+
+outputs:
+  - casbin_config: config/casbin.php 或等效配置文件
+  - casbin_model: resources/casbin/model.conf
+  - casbin_policy: resources/casbin/policy.conf 或基于 DB 的策略表
+  - permission_service: app/service/PermissionService.php
+  - tests: tests/Unit/Casbin 与 tests/Feature/Auth/ 下新增用例
+
+examples:
+  - description: "为核心资源先做 Casbin PoC 接入"
+    command: "auggie --print '执行 casbin-phase2-rollout 命令，mode=poc，只针对核心资源做 Casbin 授权 PoC'"

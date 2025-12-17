@@ -3,6 +3,7 @@
 
 name: lowcode-init
 version: 1.0.0
+status: stable
 description: 初始化 AlkaidSYS 低代码开发环境，包括数据库迁移、种子数据和示例 Collection
 
 # 工具使用约定
@@ -52,7 +53,7 @@ steps:
     description: 运行数据库迁移
     condition: skip_migration == false
     actions:
-      - 运行命令：php think migrate:run
+      - 运行命令：docker exec -it alkaid-backend php think migrate:run
       - 创建低代码相关表：
         - lowcode_collections
         - lowcode_fields
@@ -64,7 +65,7 @@ steps:
   - name: seed_data
     description: 填充初始数据
     actions:
-      - 运行命令：php think seed:run
+      - 运行命令：docker exec -it alkaid-backend php think seed:run
       - 创建默认租户
       - 创建管理员用户
       - 创建默认角色和权限

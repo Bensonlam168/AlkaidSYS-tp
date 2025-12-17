@@ -3,6 +3,7 @@
 
 name: generate-crud
 version: 1.0.0
+status: stable
 description: 基于已存在的 Collection 自动生成完整的 CRUD 代码，包括控制器、路由、验证器和测试
 
 # 工具使用约定
@@ -193,4 +194,3 @@ success_message: |
   - POST   /{api_version}/lowcode/{collection_name}      - 创建
   - PUT    /{api_version}/lowcode/{collection_name}/:id  - 更新
   - DELETE /{api_version}/lowcode/{collection_name}/:id  - 删除
-

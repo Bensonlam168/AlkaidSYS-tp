@@ -3,6 +3,7 @@
 
 name: create-api-endpoint
 version: 1.0.0
+status: stable
 description: 创建一个新的 RESTful API 端点，包括路由、控制器、验证器和测试
 
 # 工具使用约定
@@ -65,6 +66,12 @@ parameters:
 
 # 执行步骤
 steps:
+  - name: align_design_specs
+    description: 对齐设计与规范
+    actions:
+      - 阅读 design/**、docs/technical-specs/** 与 docs/report/design-compliance-audit-2025-12-14.md，确认接口设计/错误码/多租户要求
+      - 确认权限码使用 resource.action（内部）/resource:action（前端），并确保响应包含 trace_id
+
   - name: create_controller
     description: 创建 API 控制器
     actions:
@@ -72,6 +79,7 @@ steps:
       - 继承 ApiController 基类
       - 实现指定的操作方法
       - 添加 PHPDoc 注释
+      - 确保所有查询/写入包含 tenant_id（必要时 site_id）过滤，并通过 PermissionService 进行权限校验
     template: |
       <?php
 
@@ -214,4 +222,3 @@ validation:
   - 路由必须符合 RESTful 规范
   - 所有方法必须有 PHPDoc 注释
   - 必须使用统一的响应格式
-

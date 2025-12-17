@@ -1,0 +1,340 @@
+# Command: 项目部署
+# 用于将 AlkaidSYS 项目部署到目标环境
+
+name: deploy
+version: 1.0.0
+status: beta
+description: 部署 AlkaidSYS 项目到指定环境，支持多种部署策略和回滚机制
+
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
+# 输入参数
+parameters:
+  - name: environment
+    type: string
+    required: true
+    description: 部署目标环境
+    allowed_values:
+      - staging     # 预发布环境
+      - production  # 生产环境
+    example: staging
+
+  - name: branch
+    type: string
+    required: false
+    default: main
+    description: 部署的 Git 分支
+    example: main
+
+  - name: strategy
+    type: string
+    required: false
+    default: rolling
+    description: 部署策略
+    allowed_values:
+      - rolling     # 滚动部署
+      - blue-green  # 蓝绿部署
+      - canary      # 金丝雀部署
+    example: rolling
+
+  - name: skip_tests
+    type: boolean
+    required: false
+    default: false
+    description: 是否跳过测试（不推荐）
+
+  - name: skip_backup
+    type: boolean
+    required: false
+    default: false
+    description: 是否跳过备份（不推荐）
+
+  - name: maintenance_mode
+    type: boolean
+    required: false
+    default: true
+    description: 部署期间是否启用维护模式
+
+  - name: rollback_on_failure
+    type: boolean
+    required: false
+    default: true
+    description: 失败时是否自动回滚
+
+# 执行步骤
+steps:
+  - name: pre_deployment_checks
+    description: 部署前检查
+    actions:
+      - 验证部署权限
+      - 检查目标环境状态
+      - 验证 Git 分支存在
+      - 检查磁盘空间
+      - 验证数据库连接
+      - 检查依赖服务状态（Redis、队列等）
+
+  - name: run_tests
+    description: 运行测试（如果不跳过）
+    actions:
+      - 运行单元测试
+      - 运行功能测试
+      - 验证测试覆盖率
+      - 检查测试结果
+    command: docker exec -it alkaid-backend php think test
+    condition: 仅在 skip_tests=false 时执行
+    on_failure: 终止部署
+
+  - name: backup_current_version
+    description: 备份当前版本（如果不跳过）
+    actions:
+      - 备份当前代码
+      - 备份数据库
+      - 备份配置文件
+      - 记录备份信息
+    condition: 仅在 skip_backup=false 时执行
+
+  - name: enable_maintenance_mode
+    description: 启用维护模式（如果指定）
+    actions:
+      - 启用维护模式
+      - 显示维护页面
+      - 通知用户
+    command: docker exec -it alkaid-backend php think down
+    condition: 仅在 maintenance_mode=true 时执行
+
+  - name: pull_latest_code
+    description: 拉取最新代码
+    actions:
+      - 切换到指定分支
+      - 拉取最新代码
+      - 验证代码完整性
+    commands:
+      - git fetch origin
+      - git checkout {branch}
+      - git pull origin {branch}
+
+  - name: install_dependencies
+    description: 安装依赖
+    actions:
+      - 安装 Composer 依赖（生产模式）
+      - 安装前端依赖
+      - 优化自动加载
+    commands:
+      - docker exec -it alkaid-backend composer install --no-dev --optimize-autoloader
+      - cd frontend && pnpm install --prod
+
+  - name: build_frontend
+    description: 构建前端资源
+    actions:
+      - 构建生产版本
+      - 优化资源
+      - 生成资源清单
+    command: cd frontend && pnpm build
+
+  - name: run_migrations
+    description: 运行数据库迁移
+    actions:
+      - 检查待执行的迁移
+      - 执行迁移
+      - 验证迁移结果
+    command: docker exec -it alkaid-backend php think migrate:run --force
+    on_failure: 触发回滚
+
+  - name: clear_cache
+    description: 清除缓存
+    actions:
+      - 清除应用缓存
+      - 清除配置缓存
+      - 清除路由缓存
+      - 清除视图缓存
+    command: docker exec -it alkaid-backend php think cache:clear
+
+  - name: optimize_application
+    description: 优化应用
+    actions:
+      - 缓存配置
+      - 缓存路由
+      - 优化类加载
+    commands:
+      - docker exec -it alkaid-backend php think config:cache
+      - docker exec -it alkaid-backend php think route:cache
+      - docker exec -it alkaid-backend composer dump-autoload --optimize
+
+  - name: restart_services
+    description: 重启服务
+    actions:
+      - 重启 PHP-FPM 或 Swoole
+      - 重启队列 Worker
+      - 重启定时任务
+    commands:
+      - systemctl restart php-fpm  # 或 supervisorctl restart swoole
+      - docker exec -it alkaid-backend php think queue:restart
+
+  - name: health_check
+    description: 健康检查
+    actions:
+      - 检查应用响应
+      - 验证 API 端点
+      - 检查数据库连接
+      - 验证缓存服务
+      - 检查队列状态
+    on_failure: 触发回滚
+
+  - name: disable_maintenance_mode
+    description: 禁用维护模式
+    actions:
+      - 禁用维护模式
+      - 恢复正常访问
+    command: docker exec -it alkaid-backend php think up
+
+  - name: post_deployment_tasks
+    description: 部署后任务
+    actions:
+      - 记录部署日志
+      - 发送部署通知
+      - 更新部署文档
+      - 清理旧备份（保留最近 5 个）
+
+# 回滚步骤
+rollback_steps:
+  - name: enable_maintenance_mode
+    description: 启用维护模式
+    command: docker exec -it alkaid-backend php think down
+
+  - name: restore_code
+    description: 恢复代码
+    actions:
+      - 切换到备份版本
+      - 恢复文件
+
+  - name: restore_database
+    description: 恢复数据库
+    actions:
+      - 回滚迁移
+      - 恢复数据库备份（如果需要）
+
+  - name: restart_services
+    description: 重启服务
+    command: systemctl restart php-fpm
+
+  - name: disable_maintenance_mode
+    description: 禁用维护模式
+    command: docker exec -it alkaid-backend php think up
+
+  - name: notify_rollback
+    description: 通知回滚
+    actions:
+      - 发送回滚通知
+      - 记录回滚日志
+
+# 输出
+outputs:
+  - deployment_status: 部署状态（成功/失败/回滚）
+  - deployment_version: 部署的版本号
+  - deployment_time: 部署耗时
+  - backup_location: 备份位置
+  - deployment_log: 部署日志路径
+  - health_check_results: 健康检查结果
+
+# 使用示例
+examples:
+  - description: 部署到预发布环境
+    command: |
+      auggie --print "使用 deploy command 部署到 staging 环境"
+
+  - description: 部署到生产环境（蓝绿部署）
+    command: |
+      auggie --print "使用 deploy command 部署到 production 环境，使用蓝绿部署策略"
+
+  - description: 快速部署（跳过测试，不推荐）
+    config: |
+      environment: staging
+      branch: develop
+      skip_tests: true
+      maintenance_mode: false
+
+# 部署策略说明
+deployment_strategies:
+  rolling:
+    description: 滚动部署，逐步替换实例
+    downtime: 最小化
+    rollback: 容易
+    
+  blue-green:
+    description: 蓝绿部署，切换流量
+    downtime: 零停机
+    rollback: 即时
+    
+  canary:
+    description: 金丝雀部署，逐步放量
+    downtime: 零停机
+    rollback: 容易
+
+# 依赖的文件和服务
+dependencies:
+  - Git 仓库
+  - Composer
+  - Node.js/pnpm
+  - 数据库服务
+  - Redis 服务
+  - 队列服务
+  - Web 服务器（Nginx/Apache）
+
+# 错误处理
+error_handling:
+  - 测试失败：终止部署，不进行任何更改
+  - 代码拉取失败：检查 Git 配置和网络
+  - 依赖安装失败：检查 Composer/npm 镜像源
+  - 迁移失败：自动回滚到备份版本
+  - 健康检查失败：自动回滚并通知
+  - 服务重启失败：提供手动重启指令
+
+# 安全检查
+security_checks:
+  - 生产环境部署需要二次确认
+  - 验证部署权限和凭证
+  - 检查敏感配置是否正确
+  - 确保 .env 文件不在版本控制中
+  - 验证 SSL 证书有效性
+
+# 注意事项
+notes:
+  - 生产环境部署建议在低峰期进行
+  - 部署前务必备份数据库和代码
+  - 确保有回滚计划
+  - 部署后监控应用性能和错误日志
+  - 保持部署日志用于审计
+  - 建议使用 CI/CD 工具自动化部署
+  - 重要更新建议先部署到预发布环境验证
+
+# 最佳实践
+best_practices:
+  - 使用版本标签管理发布
+  - 自动化部署流程
+  - 实施蓝绿或金丝雀部署
+  - 监控部署过程和结果
+  - 保持部署文档更新
+  - 定期演练回滚流程
+  - 使用配置管理工具
+  - 实施渐进式发布
+
+# 监控和告警
+monitoring:
+  - 部署过程监控
+  - 应用性能监控
+  - 错误日志监控
+  - 用户访问监控
+  - 资源使用监控
+  - 部署成功/失败告警
+  - 性能异常告警

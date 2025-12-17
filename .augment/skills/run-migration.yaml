@@ -1,0 +1,212 @@
+# Skill: 运行数据库迁移
+# 用于执行数据库迁移并验证结果
+
+name: run-migration
+version: 1.0.0
+status: stable
+description: 运行数据库迁移，支持正向迁移、回滚、状态检查等操作
+
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
+# 输入参数
+parameters:
+  - name: action
+    type: string
+    required: true
+    description: 迁移操作类型
+    allowed_values:
+      - run       # 运行所有待执行的迁移
+      - rollback  # 回滚最后一批迁移
+      - reset     # 回滚所有迁移
+      - refresh   # 回滚所有迁移并重新运行
+      - status    # 查看迁移状态
+      - create    # 创建新的迁移文件
+    example: run
+
+  - name: migration_name
+    type: string
+    required: false
+    description: 指定要运行的迁移文件名（不含扩展名）
+    example: 20250124_create_products_table
+
+  - name: step
+    type: integer
+    required: false
+    description: 回滚的步数（仅用于 rollback）
+    default: 1
+    example: 1
+
+  - name: force
+    type: boolean
+    required: false
+    default: false
+    description: 强制执行（跳过确认，生产环境慎用）
+
+  - name: pretend
+    type: boolean
+    required: false
+    default: false
+    description: 预览模式（显示将要执行的 SQL，但不实际执行）
+
+  - name: seed
+    type: boolean
+    required: false
+    default: false
+    description: 迁移后是否运行数据填充
+
+# 执行步骤
+steps:
+  - name: check_environment
+    description: 检查环境和权限
+    actions:
+      - 检查数据库连接是否正常
+      - 验证数据库用户权限
+      - 检查迁移表是否存在
+      - 确认当前环境（开发/测试/生产）
+
+  - name: backup_database
+    description: 备份数据库（生产环境）
+    actions:
+      - 如果是生产环境，提示用户备份数据库
+      - 记录备份时间和位置
+      - 验证备份文件完整性
+    condition: 仅在生产环境执行
+
+  - name: check_migration_status
+    description: 检查迁移状态
+    actions:
+      - 运行命令：docker exec alkaid-backend php think migrate:status
+      - 列出待执行的迁移
+      - 列出已执行的迁移
+      - 检查是否有冲突
+
+  - name: execute_migration
+    description: 执行迁移操作
+    actions:
+      - 根据 action 参数执行相应的迁移命令
+      - 记录迁移开始时间
+      - 监控迁移执行过程
+      - 捕获错误和警告
+    commands:
+      run: docker exec alkaid-backend php think migrate:run
+      rollback: docker exec alkaid-backend php think migrate:rollback --step={step}
+      reset: docker exec alkaid-backend php think migrate:reset
+      refresh: docker exec alkaid-backend php think migrate:refresh
+      status: docker exec alkaid-backend php think migrate:status
+
+  - name: validate_migration
+    description: 验证迁移结果
+    actions:
+      - 检查迁移是否成功执行
+      - 验证表结构是否正确
+      - 检查索引和约束
+      - 验证数据完整性
+
+  - name: run_seed
+    description: 运行数据填充（如果指定）
+    actions:
+      - 运行命令：docker exec alkaid-backend php think seed:run
+      - 验证填充数据
+    condition: 仅在 seed=true 时执行
+
+  - name: clear_cache
+    description: 清除相关缓存
+    actions:
+      - 清除 Schema 缓存
+      - 清除模型缓存
+      - 清除路由缓存
+    command: docker exec alkaid-backend php think cache:clear
+
+  - name: update_documentation
+    description: 更新文档
+    actions:
+      - 记录迁移执行日志
+      - 更新数据库文档
+      - 生成 Schema 变更报告
+
+# 输出
+outputs:
+  - migration_status: 迁移执行状态（成功/失败）
+  - executed_migrations: 已执行的迁移列表
+  - pending_migrations: 待执行的迁移列表
+  - execution_time: 执行耗时
+  - sql_statements: 执行的 SQL 语句（pretend 模式）
+  - error_log: 错误日志（如果有）
+
+# 使用示例
+examples:
+  - description: 运行所有待执行的迁移
+    command: |
+      auggie --print "使用 run-migration skill 运行所有待执行的迁移"
+
+  - description: 回滚最后一批迁移
+    command: |
+      auggie --print "使用 run-migration skill 回滚最后一批迁移"
+
+  - description: 预览迁移 SQL
+    command: |
+      auggie --print "使用 run-migration skill 预览迁移 SQL，不实际执行"
+
+  - description: 运行迁移并填充数据
+    config: |
+      action: run
+      seed: true
+      force: false
+
+  - description: 回滚指定步数
+    config: |
+      action: rollback
+      step: 2
+
+# 安全检查
+safety_checks:
+  - 生产环境操作需要二次确认
+  - 回滚操作前检查数据依赖
+  - 大批量迁移前提示备份
+  - 检测潜在的数据丢失风险
+
+# 依赖的文件和服务
+dependencies:
+  - ThinkPHP Migration 组件
+  - 数据库连接配置
+  - database/migrations/ 目录
+  - database/seeds/ 目录（如果使用 seed）
+
+# 错误处理
+error_handling:
+  - 数据库连接失败：检查数据库配置和网络连接
+  - 迁移文件不存在：列出可用的迁移文件
+  - SQL 执行错误：显示详细错误信息和建议
+  - 权限不足：提示需要的数据库权限
+  - 迁移冲突：提示解决冲突的方法
+  - 回滚失败：提供手动回滚的 SQL 语句
+
+# 注意事项
+notes:
+  - 生产环境执行迁移前务必备份数据库
+  - 建议在非高峰期执行大批量迁移
+  - 回滚操作可能导致数据丢失，请谨慎操作
+  - 使用 pretend 模式预览 SQL 可以避免意外
+  - 迁移失败后应该先解决问题再重试，避免重复执行
+  - 所有迁移操作都会记录日志
+  - 支持事务回滚（如果数据库引擎支持）
+
+# 最佳实践
+best_practices:
+  - 迁移文件命名使用时间戳前缀
+  - 每个迁移只做一件事
+  - 提供 up 和 down 方法
+  - 在迁移中添加注释说明
+  - 测试环境先验证迁移
+  - 保持迁移文件的幂等性

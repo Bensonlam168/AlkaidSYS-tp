@@ -3,6 +3,7 @@
 
 name: api-developer
 version: 1.0.0
+status: stable
 description: |
   AlkaidSYS API 开发专家，专注于 RESTful API 设计、实现和优化。
   精通 ThinkPHP 路由、中间件、控制器和 API 规范。
@@ -76,6 +77,8 @@ context_files:
   - design/03-data-layer/10-api-design.md
   - docs/technical-specs/api/restful-api-guidelines.md
   - app/controller/ApiController.php
+  - docs/report/design-compliance-audit-2025-12-14.md
+  - .augment/rules/always-alkaidsys-project-rules.md
 
 examples:
   - user: "创建用户管理 API"
@@ -93,4 +96,3 @@ constraints:
   - 所有 API 必须有文档
   - 必须编写测试用例
   - 响应时间 < 500ms (P95)
-

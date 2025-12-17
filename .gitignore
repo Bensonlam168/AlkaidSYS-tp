@@ -26,9 +26,9 @@ Thumbs.db
 /.buildpath
 # /.project
 # Serena MCP
-/.serena
+# /.serena
 # Augment
-/.augment
+# /.augment
 # zed
 /.zed
 # # dev-docs
@@ -37,5 +37,30 @@ Thumbs.db
 # /docs/report
 # /docs/report_archive
 # /docs/todo
+/docs/Example
 # # design
 # /design
+
+# 临时分析脚本
+analyze_*.py
+debug_*.py
+generate_*.py
+refine_*.py
+split_*.py
+
+# 临时 HTML 文件
+error_*.html
+public/debug_*.html
+public/debug_*.svg
+
+# 生成的图片文件
+public/generated_image_*.png
+
+# 开发工具配置
+.git-commit-message*.txt
+README.local-merge-backup.md
+
+# 缓存文件
+.php-cs-fixer.cache
+.phpunit.cache
+.phpunit.result.cache

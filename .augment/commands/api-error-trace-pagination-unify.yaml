@@ -1,0 +1,48 @@
+# Auggie Command: API 错误码 / Trace ID / 分页结构统一
+# 对应 Backlog 中 P1 相关任务，统一 API 行为以符合规范与 always 规则
+
+name: api-error-trace-pagination-unify
+version: 1.0.0
+status: stable
+description: "统一验证错误码、Trace ID JSON 覆盖与分页响应结构，消除双轨实现"
+
+# 工具使用约定
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+references:
+  - .augment/rules/always-alkaidsys-project-rules.md
+  - docs/technical-specs/api/api-specification.zh-CN.md
+  - design/03-data-layer/10-api-design.md
+
+steps:
+  - name: analyze_current_behavior
+    description: "使用 context7 对比 ApiController、ExceptionHandle、中间件与规范文档，列出当前与目标行为差异"
+
+  - name: unify_validation_error_code
+    description: "在不破坏兼容的前提下，将 ValidateException 相关业务码统一为 code=422、HTTP 422，并记录历史 4001 行为供迁移说明"
+
+  - name: ensure_trace_id_in_all_errors
+    description: "确保所有 4xx/5xx JSON 错误响应（包括中间件直接返回的）均包含 trace_id 字段，与 Trace 中间件头部保持一致"
+
+  - name: unify_pagination_structure
+    description: "将 ApiController::paginate() 等分页响应统一为 { list, total, page, page_size, total_pages }，并对前端调用方做必要兼容适配"
+
+  - name: update_tests_and_docs
+    description: "为错误码、trace_id、分页结构补充或修正测试用例，并更新 API 文档中的示例与错误码矩阵"
+
+outputs:
+  - api_controller: app/controller/ApiController.php
+  - exception_handle: app/ExceptionHandle.php
+  - related_middlewares: app/middleware/*.php
+  - tests: tests/Feature/Api 与 tests/Unit/ 下新增/更新用例
+
+examples:
+  - description: "在当前项目中执行一次 API 行为收敛改造"
+    command: "auggie --print '执行 api-error-trace-pagination-unify 命令，统一错误码/Trace ID/分页结构'"

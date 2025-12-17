@@ -1,0 +1,210 @@
+/**
+ * 样式变量定义
+ * CSS Variables Definition
+ */
+
+/* 主色调 */
+:root {
+  /* 颜色系统 */
+  --primary-color: #1890ff;
+  --primary-hover: #40a9ff;
+  --primary-active: #096dd9;
+  --success-color: #52c41a;
+  --warning-color: #faad14;
+  --error-color: #ff4d4f;
+  --info-color: #1890ff;
+
+  /* 文本颜色 */
+  --text-color-primary: rgba(0, 0, 0, 0.85);
+  --text-color-secondary: rgba(0, 0, 0, 0.65);
+  --text-color-tertiary: rgba(0, 0, 0, 0.45);
+  --text-color-disabled: rgba(0, 0, 0, 0.25);
+
+  /* 背景颜色 */
+  --background-color-base: #f5f5f5;
+  --background-color-light: #fafafa;
+  --background-color-white: #ffffff;
+
+  /* 边框颜色 */
+  --border-color-base: #d9d9d9;
+  --border-color-split: #f0f0f0;
+
+  /* 阴影 */
+  --box-shadow-base: 0 2px 8px rgba(0, 0, 0, 0.15);
+  --box-shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --box-shadow-active: 0 1px 2px rgba(0, 0, 0, 0.1);
+
+  /* 圆角 */
+  --border-radius-sm: 2px;
+  --border-radius-base: 4px;
+  --border-radius-lg: 8px;
+
+  /* 字体 */
+  --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-family-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+
+  /* 字体大小 */
+  --font-size-xs: 10px;
+  --font-size-sm: 12px;
+  --font-size-base: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-xxl: 20px;
+
+  /* 行高 */
+  --line-height-sm: 1.5;
+  --line-height-base: 1.5715;
+  --line-height-lg: 1.6;
+
+  /* 间距 */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-base: 12px;
+  --spacing-md: 16px;
+  --spacing-lg: 20px;
+  --spacing-xl: 24px;
+  --spacing-xxl: 32px;
+
+  /* Z-index */
+  --z-index-dropdown: 1000;
+  --z-index-sticky: 1020;
+  --z-index-fixed: 1030;
+  --z-index-modal-backdrop: 1040;
+  --z-index-modal: 1050;
+  --z-index-popover: 1060;
+  --z-index-tooltip: 1070;
+  --z-index-toast: 1080;
+
+  /* 工作流设计器专用变量 */
+  --designer-bg: #f5f5f5;
+  --designer-canvas-bg: #ffffff;
+  --designer-border: #d9d9d9;
+  --designer-toolbar-bg: #ffffff;
+  --designer-toolbar-border: #d9d9d9;
+  --designer-panel-bg: #ffffff;
+  --designer-panel-border: #d9d9d9;
+  --designer-minimap-bg: #ffffff;
+  --designer-minimap-border: #d9d9d9;
+
+  /* 节点样式 */
+  --node-bg: #f5f5f5;
+  --node-border: #d9d9d9;
+  --node-selected-border: #1890ff;
+  --node-hover-bg: #e6f7ff;
+
+  /* 边样式 */
+  --edge-color: #555555;
+  --edge-selected-color: #1890ff;
+  --edge-hover-color: #40a9ff;
+
+  /* 锚点样式 */
+  --anchor-fill: #ffffff;
+  --anchor-stroke: #1890ff;
+  --anchor-hover-fill: #1890ff;
+  --anchor-hover-stroke: #ffffff;
+
+  /* 文本样式 */
+  --text-edit-bg: #ffffff;
+  --text-edit-border: #1890ff;
+  --text-edit-shadow: rgba(24, 144, 255, 0.2);
+
+  /* 网格样式 */
+  --grid-color: #f0f0f0;
+  --grid-dot-color: #e0e0e0;
+
+  /* 选择框样式 */
+  --selection-fill: rgba(24, 144, 255, 0.1);
+  --selection-stroke: #1890ff;
+
+  /* 菜单样式 */
+  --menu-bg: #ffffff;
+  --menu-border: #d9d9d9;
+  --menu-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --menu-item-hover-bg: #f5f5f5;
+
+  /* 工具栏样式 */
+  --toolbar-bg: #ffffff;
+  --toolbar-border: #d9d9d9;
+  --toolbar-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+  --toolbar-button-hover-bg: #f5f5f5;
+
+  /* 属性面板样式 */
+  --property-panel-bg: #ffffff;
+  --property-panel-border: #d9d9d9;
+  --property-panel-header-bg: #fafafa;
+
+  /* 状态栏样式 */
+  --status-bar-bg: #ffffff;
+  --status-bar-border: #d9d9d9;
+  --status-bar-text-color: #666666;
+
+  /* 对话框样式 */
+  --dialog-bg: #ffffff;
+  --dialog-border: #d9d9d9;
+  --dialog-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  --dialog-header-bg: #fafafa;
+  --dialog-footer-bg: #fafafa;
+
+  /* 上传区域样式 */
+  --upload-area-border: #d9d9d9;
+  --upload-area-hover-border: #1890ff;
+  --upload-area-bg: #fafafa;
+
+  /* 动画 */
+  --transition-base: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
+  --transition-fast: all 0.2s cubic-bezier(0.645, 0.045, 0.355, 1);
+
+  /* 滚动条 */
+  --scrollbar-width: 6px;
+  --scrollbar-track-color: #f5f5f5;
+  --scrollbar-thumb-color: #bfbfbf;
+  --scrollbar-thumb-hover-color: #999999;
+}
+
+/* 深色主题 */
+[data-theme='dark'] {
+  --primary-color: #177ddc;
+  --primary-hover: #2087e6;
+  --primary-active: #1368a6;
+
+  --text-color-primary: rgba(255, 255, 255, 0.85);
+  --text-color-secondary: rgba(255, 255, 255, 0.65);
+  --text-color-tertiary: rgba(255, 255, 255, 0.45);
+  --text-color-disabled: rgba(255, 255, 255, 0.25);
+
+  --background-color-base: #1f1f1f;
+  --background-color-light: #262626;
+  --background-color-white: #141414;
+
+  --border-color-base: #434343;
+  --border-color-split: #303030;
+
+  --designer-bg: #1f1f1f;
+  --designer-canvas-bg: #141414;
+  --designer-toolbar-bg: #262626;
+  --designer-panel-bg: #262626;
+  --designer-minimap-bg: #262626;
+
+  --node-bg: #262626;
+  --node-border: #434343;
+  --node-hover-bg: #111111;
+
+  --edge-color: #595959;
+  --grid-color: #262626;
+  --grid-dot-color: #404040;
+
+  --upload-area-bg: #262626;
+  --upload-area-border: #434343;
+
+  --toolbar-button-hover-bg: #404040;
+  --menu-bg: #262626;
+  --menu-item-hover-bg: #404040;
+  --dialog-bg: #262626;
+  --dialog-header-bg: #1f1f1f;
+  --dialog-footer-bg: #1f1f1f;
+
+  --scrollbar-track-color: #262626;
+  --scrollbar-thumb-color: #595959;
+  --scrollbar-thumb-hover-color: #777777;
+}

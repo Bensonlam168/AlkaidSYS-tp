@@ -1,0 +1,1 @@
+{"mcpServers":{"exa":{"command":"npx","args":["-y","exa-mcp-server"],"env":{"EXA_API_KEY":"45afbd27-04b3-49d6-8861-68bd3741042d"},"alwaysAllow":["web_search_exa","get_code_context_exa"]}}}

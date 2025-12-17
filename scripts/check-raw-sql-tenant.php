@@ -1,5 +1,6 @@
 #!/usr/bin/env php
 <?php
+
 /**
  * Check Raw SQL Tenant Safety | 原生 SQL 多租户安全检查
  *
@@ -132,7 +133,7 @@ foreach ($scanDirs as $scanDir) {
 
         // Check each raw SQL pattern | 检查每个原生 SQL 模式
         foreach ($rawSqlPatterns as $patternName => $pattern) {
-            if (preg_match_all($pattern, $content, $matches,PREG_OFFSET_CAPTURE)) {
+            if (preg_match_all($pattern, $content, $matches, PREG_OFFSET_CAPTURE)) {
                 foreach ($matches[0] as $match) {
                     $lineNum = substr_count($content, "\n", 0, $match[1]) + 1;
                     $totalRawSql++;
@@ -179,15 +180,15 @@ echo "Scanned {$fileCount} PHP files.\n";
 echo "Found {$totalRawSql} raw SQL usage(s).\n\n";
 
 // Group findings by level | 按级别分组
-$safeSql = array_filter($findings, fn($f) => $f['level'] === 'safe');
-$warningSql = array_filter($findings, fn($f) => $f['level'] === 'warning');
+$safeSql = array_filter($findings, fn ($f) => $f['level'] === 'safe');
+$warningSql = array_filter($findings, fn ($f) => $f['level'] === 'warning');
 
 if (!empty($safeSql)) {
-    echo colorize("✓ Safe raw SQL usage: " . count($safeSql) . "\n", 'green');
+    echo colorize('✓ Safe raw SQL usage: ' . count($safeSql) . "\n", 'green');
 }
 
 if (!empty($warningSql)) {
-    echo colorize("⚠ Raw SQL requiring review: " . count($warningSql) . "\n\n", 'yellow');
+    echo colorize('⚠ Raw SQL requiring review: ' . count($warningSql) . "\n\n", 'yellow');
 
     $groupedByFile = [];
     foreach ($warningSql as $finding) {
@@ -212,7 +213,7 @@ if (!empty($warningSql)) {
             $contextLines = explode("\n", $finding['context']);
             $relevantLines = array_slice($contextLines, 0, 3); // Show first 3 lines
             foreach ($relevantLines as $contextLine) {
-                echo colorize("    " . trim($contextLine) . "\n", 'cyan');
+                echo colorize('    ' . trim($contextLine) . "\n", 'cyan');
             }
             echo "\n";
         }

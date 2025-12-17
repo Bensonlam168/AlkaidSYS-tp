@@ -1,0 +1,240 @@
+# Skill: 运行测试
+# 用于执行项目测试并生成测试报告
+
+name: run-tests
+version: 1.0.0
+status: stable
+description: 运行项目测试，支持单元测试、功能测试、集成测试等，并生成覆盖率报告
+
+# 工具使用约定
+# - 必须：Serena（思考/总结类工具）、Sequential thinking（分步推理与计划）
+# - 建议：context7（代码检索）、exa（目录浏览）、web（外部文档，只作为补充）
+tooling:
+  must:
+    - serena
+    - sequential-thinking
+  should:
+    - context7
+    - exa
+    - web
+
+
+# 输入参数
+parameters:
+  - name: test_type
+    type: string
+    required: false
+    default: all
+    description: 测试类型
+    allowed_values:
+      - all       # 运行所有测试
+      - unit      # 单元测试
+      - feature   # 功能测试
+      - integration # 集成测试
+    example: unit
+
+  - name: test_path
+    type: string
+    required: false
+    description: 指定测试文件或目录路径
+    example: tests/Unit/Lowcode/Collection/ProductTest.php
+
+  - name: filter
+    type: string
+    required: false
+    description: 过滤测试方法（支持正则表达式）
+    example: testCreate
+
+  - name: group
+    type: string
+    required: false
+    description: 运行指定分组的测试
+    example: lowcode
+
+  - name: coverage
+    type: boolean
+    required: false
+    default: false
+    description: 生成代码覆盖率报告
+
+  - name: coverage_format
+    type: string
+    required: false
+    default: html
+    description: 覆盖率报告格式
+    allowed_values:
+      - html      # HTML 格式
+      - text      # 文本格式
+      - clover    # Clover XML 格式
+      - cobertura # Cobertura XML 格式
+    example: html
+
+  - name: stop_on_failure
+    type: boolean
+    required: false
+    default: false
+    description: 遇到失败时停止
+
+  - name: verbose
+    type: boolean
+    required: false
+    default: false
+    description: 详细输出模式
+
+# 执行步骤
+steps:
+  - name: check_environment
+    description: 检查测试环境
+    actions:
+      - 检查 PHPUnit 是否安装
+      - 验证测试数据库配置
+      - 检查测试环境变量
+      - 确认测试依赖是否完整
+
+  - name: prepare_test_database
+    description: 准备测试数据库
+    actions:
+      - 创建或重置测试数据库
+      - 运行测试迁移
+      - 填充测试数据
+      - 清除测试缓存
+
+  - name: run_tests
+    description: 执行测试
+    actions:
+      - 根据参数构建测试命令
+      - 执行测试
+      - 收集测试结果
+      - 记录测试日志
+    commands:
+      all: docker exec alkaid-backend php think test
+      unit: docker exec alkaid-backend php think test tests/Unit
+      feature: docker exec alkaid-backend php think test tests/Feature
+      integration: docker exec alkaid-backend php think test tests/Integration
+      specific: docker exec alkaid-backend php think test {test_path}
+      filter: docker exec alkaid-backend php think test --filter={filter}
+      group: docker exec alkaid-backend php think test --group={group}
+
+  - name: generate_coverage
+    description: 生成覆盖率报告（如果指定）
+    actions:
+      - 运行带覆盖率的测试
+      - 生成覆盖率报告
+      - 保存报告到 tests/coverage/
+      - 计算覆盖率百分比
+    command: docker exec alkaid-backend php think test --coverage-{coverage_format}
+    condition: 仅在 coverage=true 时执行
+
+  - name: analyze_results
+    description: 分析测试结果
+    actions:
+      - 统计测试数量（总数、通过、失败、跳过）
+      - 识别失败的测试
+      - 分析失败原因
+      - 生成测试摘要
+
+  - name: generate_report
+    description: 生成测试报告
+    actions:
+      - 创建测试报告文件
+      - 包含测试统计信息
+      - 列出失败的测试详情
+      - 添加覆盖率信息（如果有）
+      - 保存报告到 tests/reports/
+
+  - name: cleanup
+    description: 清理测试环境
+    actions:
+      - 清除测试数据
+      - 重置测试数据库
+      - 清理临时文件
+      - 恢复环境配置
+
+# 输出
+outputs:
+  - test_summary: 测试摘要（总数、通过、失败、跳过）
+  - failed_tests: 失败的测试列表
+  - coverage_report: 覆盖率报告路径（如果生成）
+  - coverage_percentage: 代码覆盖率百分比
+  - execution_time: 测试执行耗时
+  - test_report: 详细测试报告路径
+
+# 使用示例
+examples:
+  - description: 运行所有测试
+    command: |
+      auggie --print "使用 run-tests skill 运行所有测试"
+
+  - description: 运行单元测试并生成覆盖率报告
+    command: |
+      auggie --print "使用 run-tests skill 运行单元测试，生成 HTML 格式的覆盖率报告"
+
+  - description: 运行指定测试文件
+    command: |
+      auggie --print "使用 run-tests skill 运行 tests/Unit/Lowcode/Collection/ProductTest.php"
+
+  - description: 运行指定分组的测试
+    config: |
+      test_type: all
+      group: lowcode
+      coverage: true
+      coverage_format: html
+
+  - description: 运行匹配特定模式的测试
+    config: |
+      filter: testCreate
+      verbose: true
+      stop_on_failure: true
+
+# 测试分组说明
+test_groups:
+  lowcode: 低代码相关测试
+  api: API 相关测试
+  auth: 认证授权测试
+  database: 数据库相关测试
+  integration: 集成测试
+  slow: 慢速测试（执行时间较长）
+
+# 依赖的文件和服务
+dependencies:
+  - PHPUnit 测试框架
+  - 测试数据库配置
+  - tests/ 目录
+  - phpunit.xml 配置文件
+  - 测试数据填充文件
+
+# 错误处理
+error_handling:
+  - PHPUnit 未安装：提示安装命令
+  - 测试数据库连接失败：检查测试数据库配置
+  - 测试文件不存在：列出可用的测试文件
+  - 测试失败：显示详细错误信息和堆栈跟踪
+  - 覆盖率生成失败：检查 Xdebug 或 PCOV 扩展
+
+# 注意事项
+notes:
+  - 测试使用独立的测试数据库，不会影响开发数据库
+  - 生成覆盖率报告需要安装 Xdebug 或 PCOV 扩展
+  - 覆盖率报告保存在 tests/coverage/ 目录
+  - 测试报告保存在 tests/reports/ 目录
+  - 建议在提交代码前运行所有测试
+  - 慢速测试可以使用 @group slow 标记
+  - 测试覆盖率目标：80% 以上
+
+# 最佳实践
+best_practices:
+  - 遵循 AAA 模式（Arrange-Act-Assert）
+  - 每个测试只测试一个功能点
+  - 使用有意义的测试方法名
+  - 使用数据提供者测试多种情况
+  - 使用 setUp 和 tearDown 管理测试环境
+  - 避免测试之间的依赖
+  - 使用 Mock 隔离外部依赖
+  - 定期检查和提高测试覆盖率
+
+# 持续集成
+ci_integration:
+  - 在 CI/CD 管道中自动运行测试
+  - 测试失败时阻止合并
+  - 生成覆盖率趋势报告
+  - 发送测试结果通知

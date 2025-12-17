@@ -1,3 +1,7 @@
+---
+type: "always_apply"
+---
+
 # AlkaidSYS 项目规则（Always Rules）
 
 > 本文件为 **Always 规则**，在 AlkaidSYS 仓库的所有 Augment 会话中始终生效。
@@ -10,7 +14,8 @@
      - `docs/technical-specs/**/*.md`
      - `design/**`
      - `.augment/skills/**` 与 Serena memories
-   - 不得仅以“当前代码长什么样”作为设计依据。
+     - `docs/report/design-compliance-audit-2025-12-14.md` 设计契合度审查报告（当前阶段设计 vs 实现的权威基线，归纳 SEC-01 ~ TEST-01 九个已知偏差）
+   - 不得仅以“当前代码长什么样”作为设计依据；当实现与上述文档/本规则不一致时，应视为“待修复的设计偏差”，而不是调整规则去迎合现状代码。
 
 2. **Phase 区分**：
    - 明确区分 Phase 1（现状）与 Phase 2（目标能力）。

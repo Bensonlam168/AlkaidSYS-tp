@@ -1,34 +1,44 @@
 ---
-description: Workflow for developing a ThinkPHP + Swoole project, referencing design documents in the "design" folder. Agent uses this to identify relevant workflows.
+description: Workflow for developing the AlkaidSYS (ThinkPHP 8 + Swoole 5) project, referencing design/, docs/technical-specs/, docs/report/design-compliance-audit-2025-12-14.md and .augment rules as authoritative sources.
 ---
 
-# ThinkPHP + Swoole 项目开发工作流规则  
+# AlkaidSYS 开发工作流规则（ThinkPHP 8 + Swoole 5）  
 
 ## 1. 文档参考  
-- 所有开发需参考 `design` 文件夹中的系列文档（如架构设计、接口规范、业务逻辑等）。  
-- 文档路径：`项目根目录/design/`。  
-- all_design_files.txt
+- 所有开发需参考 `design/` 目录中的系列文档（如架构设计、接口规范、业务逻辑等）。  
+- 设计文档索引：项目根目录 `all_design_files.txt`（列出 `design/**` 中的全部文档）。  
+- 技术规范：`docs/technical-specs/**`（API、错误码、多租户、安全、测试等）。  
+- 设计契合度基线：`docs/report/design-compliance-audit-2025-12-14.md`（包含 SEC-01 ~ TEST-01 九个已知偏差，用于评估“代码现状 vs 设计”）。  
+- 项目内 AI 规则：`.augment/rules/always-alkaidsys-project-rules.md`（Always Rules）与 `.augment/rules/auto-alkaidsys-guidelines.md`（Auto Guidelines），优先级高于代码现状。  
 
 
 ## 2. 技术栈遵循  
-- 后端框架：ThinkPHP（版本需与项目一致，如 v8.x）。  
-- 异步/高性能层：Swoole（需遵循 Swoole 最佳实践，如协程使用、进程管理等）。  
+- 运行环境：PHP 8.2+（以 `composer.json` 为准）。  
+- 后端框架：ThinkPHP 8.0+（`topthink/framework:^8.0`，以设计文档与依赖配置为准）。  
+- 异步/高性能层：Swoole 5.0+（需遵循协程使用、进程管理与资源隔离等最佳实践）。  
+- 数据与基础服务：MySQL 8.0+、Redis 6.0+、RabbitMQ 3.12+（以 `docker-compose.yml` 为准）。  
+- 管理端前端：Vue 3 + TypeScript 5.x + Vben Admin 5.x（参考 `design/06-frontend-design/**`）。  
 
 
 ## 3. 开发流程  
-1. **需求分析**：参考 `design` 中的需求文档，明确功能目标。  
-2. **代码实现**：  
-   - 控制器/模型：遵循 ThinkPHP 的 MVC 规范。  
-   - 异步任务：使用 Swoole 协程或进程处理高并发场景。  
-3. **测试验证**：结合 Swoole 的异步特性，编写压力测试/功能测试。  
-4. **文档同步**：若需更新设计文档，需在 `design` 文件夹中维护。 
-5. **项目报告**：所有项目报告文档请在 'docs/'目录下生成，可适当在这目录下新建文件夹以分类归集。
+1. **需求分析**：优先阅读 `design/` 与 `docs/technical-specs/` 中对应模块/接口的设计与规范，并结合设计契合度审查报告确认当前实现是否存在 SEC-01 ~ TEST-01 等已知偏差。  
+2. **方案与设计对齐**：必要时先在设计文档或 ADR 中补充/更新方案，经评审通过后再进入编码阶段，禁止仅按现状代码“直接扩展”。  
+3. **代码实现**：  
+   - **分层/DDD**：控制器仅负责路由、参数校验、调用 Service/Domain 与统一响应；业务规则放在 Domain/Service，数据访问放在 Repository/Infrastructure，不得在控制器中直接访问数据库或编写原生 SQL。  
+   - **低代码优先**：涉及动态业务实体与表结构时，必须优先通过 `Domain\\Lowcode` + `Infrastructure\\Lowcode`（Schema / Collection / Field / Relationship）实现，禁止为新业务直接设计与低代码无关的“散表 + 散 SQL”。  
+   - **异步任务**：使用 Swoole 协程或进程处理高并发场景时，需遵守安全与资源管理规范，并确保多租户（tenant_id/site_id）、权限与 trace_id 等上下文在任务中完整传递。  
+4. **测试验证**：优先编写/补充 PHPUnit 单元测试与集成测试（尤其是认证/权限/限流/多租户/低代码关键路径），并在本地通过 Docker 在 `alkaid-backend` 容器内执行：  
+   - 运行测试：`docker exec -it alkaid-backend php think test [可选参数]`  
+   - 运行迁移/seed 等 CLI 命令：统一使用 `docker exec -it alkaid-backend php think ...`，禁止在宿主机直接执行 `php think ...`。  
+5. **文档与报告同步**：  
+   - 如变更会影响架构/接口/数据/安全/低代码等设计，需同步更新对应 `design/**` 或 `docs/technical-specs/**` 文档，遵守“先设计、后实现”的流程；  
+   - 重要阶段性结果（如重构批次、设计偏差修复）建议在 `docs/report/` 目录下新增报告文档归档。  
 
 
 ## 4. 约束与最佳实践  
-- 禁止直接修改 `design` 中的核心设计文档（如需变更，需走评审流程）。  
-- Swoole 相关代码需添加注释，说明协程/进程的作用。  
-- ThinkPHP 代码需遵循 PSR 规范（如命名空间、代码风格）。
+- 禁止绕过设计与规范：涉及架构、数据、多租户、安全、低代码相关的核心设计，必须通过评审流程更新 design/** 或 docs/technical-specs/** 后再实现，禁止私自修改或忽略设计文档。  
+- Swoole 相关代码需添加中英文注释，说明协程/进程的作用以及与请求上下文（trace_id/tenant_id/site_id/user_id）的关系。  
+- PHP 代码必须遵循 PSR-12 编码规范，并推荐在公共 Service/Controller 接口处编写中英双语 PHPDoc；提交前应通过项目根目录的 `.php-cs-fixer.php` 规则进行格式检查（只读或自动修复）。
 
 ## 5. 总体命名规范原则（建议目标态）
 

@@ -3,6 +3,7 @@
 
 name: create-collection
 version: 1.0.0
+status: stable
 description: 创建一个新的 Collection（低代码数据模型），包括领域模型、服务层、数据库迁移和测试
 
 # 工具使用约定
@@ -64,6 +65,12 @@ parameters:
 
 # 执行步骤
 steps:
+  - name: align_design_specs
+    description: 对齐设计与规范
+    actions:
+      - 阅读 design/**、docs/technical-specs/** 与 docs/report/design-compliance-audit-2025-12-14.md，确认需求与偏差
+      - 确认低代码 Schema 是动态实体的单一事实来源，禁止新增散表/散 SQL
+
   - name: validate_input
     description: 验证输入参数
     actions:
@@ -158,4 +165,3 @@ error_handling:
   - Collection 名称已存在：提示用户选择其他名称
   - 字段类型不支持：列出支持的字段类型
   - 数据库迁移失败：回滚并提示错误信息
-

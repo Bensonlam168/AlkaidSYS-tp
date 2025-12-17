@@ -1,0 +1,92 @@
+{
+  "name": "@core/workflow-ui",
+  "version": "0.1.0",
+  "description": "AlkaidSYS Workflow Designer UI Components",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./designer": {
+      "types": "./dist/designer.d.ts",
+      "import": "./dist/designer.mjs"
+    },
+    "./nodes": {
+      "types": "./dist/nodes.d.ts",
+      "import": "./dist/nodes.mjs"
+    },
+    "./renderer": {
+      "types": "./dist/renderer.d.ts",
+      "import": "./dist/renderer.mjs"
+    },
+    "./styles": "./dist/index.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext ts,tsx",
+    "lint:fix": "eslint src --ext ts,tsx --fix",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0",
+    "ant-design-vue": "^4.0.0",
+    "pinia": "^2.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@vitejs/plugin-vue": "^5.0.3",
+    "@vue/test-utils": "^2.4.4",
+    "eslint": "^8.56.0",
+    "eslint-plugin-vue": "^9.20.1",
+    "jsdom": "^24.0.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12",
+    "vitest": "^1.2.2",
+    "vue-tsc": "^1.8.27"
+  },
+  "dependencies": {
+    "logicflow": "^1.2.10",
+    "@logicflow/core": "^1.2.10",
+    "@logicflow/extension": "^1.2.10",
+    "@logicflow/vue-node-registry": "^1.0.1",
+    "vue": "^3.4.15",
+    "vue-router": "^4.2.5",
+    "ant-design-vue": "^4.0.6",
+    "pinia": "^2.1.7"
+  },
+  "keywords": [
+    "workflow",
+    "designer",
+    "bpmn",
+    "logicflow",
+    "vue3",
+    "typescript"
+  ],
+  "author": "AlkaidSYS Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alkaidsys/workflow-engine.git",
+    "directory": "packages/workflow-ui"
+  },
+  "bugs": {
+    "url": "https://github.com/alkaidsys/workflow-engine/issues"
+  },
+  "homepage": "https://github.com/alkaidsys/workflow-engine/tree/main/packages/workflow-ui#readme"
+}

@@ -1113,7 +1113,7 @@ flowchart TD
 - 🔄 **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）**
   - 子任务：
     - [x] A1：列举全部原生 SQL（Repository/Service/Console），标记租户过滤缺口（见 `docs/report/sec-02-raw-sql-audit-2025-12-18.md`）
-    - [ ] A2：实现/接入 SQL 审计与阻断脚本，强制 tenant_id/site_id 过滤（分类见 `docs/report/sec-02-raw-sql-categorized-2025-12-18.md`，进度：Casbin DatabaseAdapter 与 PermissionService 已补租户过滤并通过单测；Legacy CollectionManager 现已按租户/站点过滤元数据与缓存；低代码/仓储层仍待覆盖）
+    - [ ] A2：实现/接入 SQL 审计与阻断脚本，强制 tenant_id/site_id 过滤（分类见 `docs/report/sec-02-raw-sql-categorized-2025-12-18.md`，进度：Casbin DatabaseAdapter 与 PermissionService 已补租户过滤并通过单测；Legacy CollectionManager 已按租户/站点过滤元数据与缓存；UserRepository 已增加“禁止跨租户授权角色”校验并补单测；低代码/仓储层仍待覆盖）
     - [ ] A3：为跨租户访问添加集成测试与日志校验（含 trace_id/tenant_id）
 - ⬜ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）**
   - 子任务：
