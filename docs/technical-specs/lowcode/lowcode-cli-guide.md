@@ -28,6 +28,7 @@ docker exec -it alkaid-backend php think lowcode:命令名 [参数] [选项]
 2. [lowcode:create-form](#lowcodecreate-form) - 创建表单 Schema
 3. [lowcode:generate](#lowcodegenerate) - 生成 CRUD 代码
 4. [lowcode:migration:diff](#lowcodemigrationdiff) - 检查 Schema 差异和生成迁移
+5. [结构化输出协议](#结构化输出协议)
 
 ---
 
@@ -60,6 +61,8 @@ php think lowcode:create-model <名称> [选项]
 | `--tenant-id` | - | int | 0 | 租户 ID（0 = 系统模板） |
 | `--site-id` | - | int | 0 | 站点 ID（0 = 默认站点) |
 | `--force` | - | flag | false | 强制覆盖已存在的 Collection |
+| `--format` | - | string | `text` | 输出格式：`text`（默认，人类可读）或 `json`（结构化输出） |
+| `--audit-out` | - | string | - | 将与 `--format=json` 相同的 JSON envelope 额外写入到指定文件，用于审计/CI |
 
 ### 支持的字段类型
 
@@ -177,9 +180,14 @@ php think lowcode:create-form <表单名称> [选项]
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `--collection` | string | - | 基于哪个 Collection 创建表单 |
-| `--fields` | string | 全部 | 包含的字段（逗号分隔） |
-| `--tenant-id` | int | 0 | 租户 ID |
-| `--site-id` | int | 0 | 站点 ID |
+| `--fields` | string | 全部 | 仅包含指定字段（逗号分隔），例如 `"name,price,stock"`；未指定时包含 Collection 的全部字段 |
+| `--title` | string | 同名称 | 表单标题 |
+| `--description` | string | 空 | 表单描述 |
+| `--tenant-id` | int | 0 | 租户 ID（0 = 系统模板） |
+| `--site-id` | int | 0 | 站点 ID（0 = 默认站点） |
+| `--force` | flag | false | 如表单已存在则强制覆盖 |
+| `--format` | string | `text` | 输出格式：`text` 或 `json` |
+| `--audit-out` | string | - | 将 JSON envelope 写入指定文件 |
 
 ### 使用示例
 
@@ -250,9 +258,13 @@ php think lowcode:generate <类型> <Collection名称> [选项]
 
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `--namespace` | string | `app\controller\lowcode` | 控制器命名空间 |
-| `--route-prefix` | string | `v1/lowcode` | 路由前缀 |
-| `--force` | flag | false | 强制覆盖已存在的文件 |
+| `--tenant-id` | int | 0 | 从哪个租户上下文中读取 Collection 元数据 |
+| `--force`, `-f` | flag | false | 强制覆盖已存在的文件 |
+| `--no-tests` | flag | false | 跳过测试代码生成 |
+| `--no-routes` | flag | false | 跳过路由文件生成 |
+| `--append-routes` | flag | false | 将生成的路由追加到现有路由文件中 |
+| `--format` | string | `text` | 输出格式：`text` 或 `json` |
+| `--audit-out` | string | - | 将 JSON envelope 写入指定文件 |
 
 ### 使用示例
 
@@ -270,16 +282,18 @@ docker exec -it alkaid-backend php think lowcode:generate crud Product
 #### 示例 2：仅生成控制器
 
 ```bash
-docker exec -it alkaid-backend php think lowcode:generate controller Product \
-  --namespace="app\controller\api"
+docker exec -it alkaid-backend php think lowcode:generate controller Product
 ```
 
-#### 示例 3：自定义路由前缀
+#### 示例 3：仅生成路由并追加到现有路由文件
 
 ```bash
 docker exec -it alkaid-backend php think lowcode:generate crud Product \
-  --route-prefix="api/v2/products"
+  --no-tests \
+  --append-routes
 ```
+
+> 注：命名空间与路由前缀等高级定制能力目前在低代码 CLI 设计文档中规划为 Phase 2 功能，当前版本可通过调整生成文件或自定义代码生成器配置实现，CLI 尚未提供 `--namespace` / `--route-prefix` 选项。
 
 ### 生成的 Controller 包含的方法
 
@@ -310,8 +324,12 @@ php think lowcode:migration:diff [Collection名称] [选项]
 | 选项 | 简写 | 类型 | 默认值 | 说明 |
 |------|------|------|--------|------|
 | `--all` | `-a` | flag | false | 检查所有 Collection |
-| `--check` | `-c` | flag | false | 仅检查，不生成迁移 |
-| `--tenant-id` | - | int | 0 | 指定租户 ID |
+| `--check` | `-c` | flag | false | 仅检查，不生成迁移；存在差异时返回非 0 退出码 |
+| `--out` | `-o` | string | - | 将差异写入 SQL 占位文件（仅包含注释和 TODO 提示） |
+| `--report` | `-r` | string | - | 将完整 diff 信息以 JSON 报告形式输出到指定文件 |
+| `--tenant-id` | - | int | 0 | 指定租户 ID（0 = 系统模板） |
+| `--format` | - | string | `text` | 输出格式：`text` 或 `json` |
+| `--audit-out` | - | string | - | 将 JSON envelope 写入指定文件 |
 
 ### 使用示例
 
@@ -333,7 +351,16 @@ docker exec -it alkaid-backend php think lowcode:migration:diff --all
 docker exec -it alkaid-backend php think lowcode:migration:diff --all --check
 ```
 
+#### 示例 4：在 CI 中生成 JSON 报告并作为审计输入
+
+```bash
+docker exec -it alkaid-backend php think lowcode:migration:diff --all --check \
+  --report=/tmp/lowcode-schema-diff.json
+```
+
 ### 输出示例
+
+#### 文本模式（默认）
 
 ```
 === Schema Diff Report ===
@@ -348,6 +375,122 @@ Changes detected:
 
 Migration file generated: database/migrations/20251215_update_product_table.php
 ```
+
+#### JSON 模式（`--format=json`）
+
+```json
+{
+  "code": 1,
+  "message": "Schema drift detected",
+  "data": {
+    "migration_diff_report": {
+      "generated_at": "2025-12-15 10:00:00",
+      "total_collections": 1,
+      "collections_with_diff": 1,
+      "diffs": [
+        {
+          "collection": "Product",
+          "table": "lc_product",
+          "changes": [
+            {
+              "type": "add_column",
+              "table": "lc_product",
+              "column": "featured",
+              "field_type": "boolean",
+              "message": "Column 'featured' missing in database"
+            }
+          ]
+        }
+      ]
+    },
+    "options": {
+      "all": false,
+      "check": true,
+      "out": null,
+      "report": null,
+      "tenant_id": 0
+    }
+  },
+  "timestamp": "2025-12-15T10:00:00+08:00",
+  "command": "lowcode:migration:diff"
+}
+```
+
+---
+
+## 结构化输出协议
+
+为方便在 CI、自动化脚本和审计场景中消费 CLI 结果，低代码 CLI 在 Phase 2 中引入了统一的结构化输出协议：
+
+### 通用选项
+
+所有继承 `LowcodeCommand` 的 lowcode:* 命令（目前包括：`lowcode:create-model`、`lowcode:create-form`、`lowcode:generate`、`lowcode:migration:diff`）都支持以下通用选项：
+
+| 选项 | 说明 |
+|------|------|
+| `--format=text|json` | 控制 stdout 输出格式；`text` 为默认的人类可读模式，`json` 输出结构化 JSON envelope，仅包含一行/一段 JSON，不混入彩色文本 |
+| `--audit-out=<path>` | 无论 `--format` 为何，都会将同一份 JSON envelope 写入指定文件，可用于审计留痕或 CI 报告收集 |
+
+### JSON Envelope 结构
+
+所有 `--format=json` 输出遵循统一 envelope 结构，与 HTTP API 规范保持一致：
+
+```json
+{
+  "code": 0,
+  "message": "OK",
+  "data": { /* 命令各自的数据负载 */ },
+  "timestamp": "2025-12-15T10:00:00+08:00",
+  "command": "lowcode:create-model"
+}
+```
+
+- `code`: 业务状态码，0 表示成功，非 0 表示失败（例如 migration:diff 在 `--check` 且存在差异时会返回 1）。
+- `message`: 人类可读的简要描述，如 `OK`、`Schema drift detected` 等。
+- `data`: 各命令自定义的数据负载，见下文命令级说明。
+- `timestamp`: ISO8601 时间戳。
+- `command`: 实际执行的 CLI 命令名称，例如 `lowcode:create-form`。
+
+### 各命令 data 负载约定（摘要）
+
+- `lowcode:create-model`
+  - `data.collection`: Collection 元数据（等同于 Domain Collection::toArray() 输出）。
+  - `data.table_name`: 实际创建的动态表名（如 `lc_product`）。
+  - `data.tenant_id` / `data.site_id`: 对应的多租户上下文。
+
+- `lowcode:create-form`
+  - `data.form`: 创建或更新后的表单记录（来自 FormSchemaManager::get 的返回值）。
+  - `data.schema`: 本次生成的表单 JSON Schema（不依赖持久化结果，便于对比）。
+  - `data.tenant_id` / `data.site_id`。
+
+- `lowcode:generate`
+  - `data.files`: 数组，元素形如 `{ "type": "controller", "path": "app/controller/lowcode/ProductController.php" }`。
+  - `data.options`: 归档本次生成使用的关键选项（type/tenant_id/force/no_tests/no_routes/append_routes）。
+
+- `lowcode:migration:diff`
+  - `data.migration_diff_report`: 与 `--report` 输出文件相同结构的对象，包含 `generated_at`、`total_collections`、`collections_with_diff`、`diffs` 等字段。
+  - `data.options`: `all`、`check`、`out`、`report`、`tenant_id` 等，用于追踪执行上下文。
+
+### 错误场景
+
+当命令执行过程中抛出异常时，`LowcodeCommand` 会统一捕获并输出：
+
+```json
+{
+  "code": 1,
+  "message": "Command execution failed",
+  "data": {
+    "exception": {
+      "class": "Some\\ExceptionClass",
+      "message": "错误信息"
+    }
+  },
+  "timestamp": "2025-12-15T10:00:00+08:00",
+  "command": "lowcode:create-model"
+}
+```
+
+在 `--format=text` 模式下，仍然会输出原有的彩色错误信息与堆栈（在 `-v` 模式下），而 `--audit-out` 仅写入上述 JSON envelope。
 
 ---
 

@@ -3,7 +3,7 @@
 ## 元信息
 
 - **生成日期**：2025-12-15
-- **最后更新**：2025-12-17 (v1.8)
+- **最后更新**：2025-12-17 (v1.10)
 - **基于报告**：
   - `docs/report/ingenious-integration-readiness-analysis.md`（后端集成准备度分析）
   - `docs/report/workflow-frontend-integration-analysis.md`（前端集成分析）
@@ -25,13 +25,13 @@
     - ✅ T-204 多租户支持架构 - 完成
     - ✅ T-205 核心 API 接口 - 完成
     - ✅ T-206 节点类型基础实现 - 完成
-  - **Week 3 后端业务功能**：🔄 60% 完成
+  - **Week 3 后端业务功能**：✅ 100% 完成
     - ✅ T-301 低代码集成适配 - 完成
     - ✅ T-302 完善节点类型库 - 完成
     - ✅ T-303 完善触发器类型库 - 完成
-    - ⬜ T-304 流程监控功能 - 待实现
-    - ⬜ T-305 API 接口文档 - 待编写
-- **⚠️ 重要说明**：根据 2025-12-17 最新进度，Week 2 后端核心引擎（T-201~T-206）已全部完成，Week 3 已完成 60%（T-301/T-302/T-303），仅剩 T-304、T-305 待完成
+    - ✅ T-304 流程监控功能 - 完成
+    - ✅ T-305 API 接口文档 - 完成
+- **⚠️ 重要说明**：根据 2025-12-17 最新进度，Week 2 后端核心引擎（T-201~T-206）已全部完成，Week 3 后端业务功能（T-301~T-305）已全部完成，进入 Week 3 前端业务页面开发阶段
 
 ## 阶段与能力区分
 
@@ -635,7 +635,7 @@
   - 5 个完整测试文件（91 个测试，280 个断言）
   - 触发器总数达到 9 种：ManualTrigger、WebhookTrigger、ScheduleTrigger、DataEventTrigger、FormSubmitTrigger、MessageTrigger、SignalTrigger、TimerEventTrigger、SystemEventTrigger
 
-⬜ **[T-304] (P2) 开发流程监控功能**
+✅ **[T-304] (P2) 开发流程监控功能** ⭐ **已完成**
 - **描述**：实现工作流实例监控和日志
 - **技术细节**：
   - 创建 `src/Monitor/WorkflowMonitor.php`
@@ -645,8 +645,32 @@
 - **依赖**：T-205
 - **被依赖**：T-401, T-402
 - **验收标准**：可监控流程执行，日志记录完整
+- **完成时间**：2025-12-17
+- **实际产出**：
+  - `src/Monitor/Interfaces/WorkflowMonitorInterface.php` - 监控器接口定义（174 行）
+  - `src/Monitor/ExecutionLogEntry.php` - 执行日志条目模型（513 行）
+    - 工厂方法：instanceStarted、instanceCompleted、instanceFailed、nodeEntered、nodeCompleted、nodeFailed、taskCreated、variableChanged
+    - 日志级别：debug、info、warning、error、critical
+    - 支持序列化/反序列化
+  - `src/Monitor/WorkflowMonitor.php` - 主监控实现（852 行）
+    - 实例生命周期监控：startMonitoring、stopMonitoring、updateInstanceStatus
+    - 节点执行记录：recordNodeStart、recordNodeComplete、recordNodeError、recordNodeRetry
+    - 事件订阅：subscribeToInstance、unsubscribe、pushEvent
+    - 多租户支持、执行日志过滤、清理机制
+  - `src/Monitor/Metrics/ExecutionMetrics.php` - 单实例指标收集器（411 行）
+    - 节点执行时间追踪、内存使用监控、成功率计算
+    - 方法：getSummary、getDetailedMetrics、getSlowestNodes、getFailedNodes
+  - `src/Monitor/Metrics/MetricsAggregator.php` - 跨实例指标聚合器（504 行）
+    - 统计分析：百分位数（p50/p75/p90/p95/p99）、标准差
+    - 时间序列数据、健康状态监控
+    - 方法：getStats、getTimeSeries、getHealthStatus、getDashboardData
+  - **单元测试**：82 个测试，277 个断言
+    - `WorkflowMonitorTest.php` (21 tests) - 实例/节点监控、日志、指标、订阅
+    - `ExecutionLogEntryTest.php` (17 tests) - 构造、工厂方法、序列化
+    - `ExecutionMetricsTest.php` (21 tests) - 节点记录、统计、汇总
+    - `MetricsAggregatorTest.php` (23 tests) - 数据点、统计、时间序列、健康状态
 
-⬜ **[T-305] (P2) API 接口文档编写**
+✅ **[T-305] (P2) API 接口文档编写** ⭐ **已完成**
 - **描述**：编写完整的 API 接口文档
 - **技术细节**：
   - 使用 OpenAPI 3.0 规范
@@ -656,6 +680,23 @@
 - **依赖**：T-205
 - **被依赖**：T-401, T-501
 - **验收标准**：API 文档完整，可在线浏览
+- **完成时间**：2025-12-17
+- **实际产出**：
+  - `docs/api/workflow-api.yaml` - OpenAPI 3.0 规范文件（2014 行）
+    - 45+ API 端点完整定义
+    - 请求/响应 Schema 定义
+    - 认证和权限说明
+    - 参数验证规则
+  - `docs/api/README.md` - 中文 API 文档（631 行）
+    - API 概述和认证说明
+    - 完整的 API 列表和详细说明
+    - 节点类型和状态说明
+    - 使用示例
+  - `docs/api/error-codes.md` - 错误码文档（252 行）
+    - 7 大类错误码分组（通用、定义、实例、任务、触发器、节点、多租户、系统）
+    - 60+ 错误码详细说明
+    - 处理建议和最佳实践
+    - 客户端错误处理示例
 
 ---
 
@@ -957,6 +998,8 @@ Week 5
 
 | 版本 | 日期 | 作者 | 变更说明 |
 |-----|------|------|---------|
+| v1.10 | 2025-12-17 | AI Assistant | 更新 T-305（API 接口文档编写）为已完成；新增 OpenAPI 3.0 规范文件（2014 行）、中文 API 文档（631 行）、错误码文档（252 行）；Week 3 后端业务功能 100% 完成 |
+| v1.9 | 2025-12-17 | AI Assistant | 更新 T-304（流程监控功能）为已完成；新增 WorkflowMonitor（852 行）、ExecutionLogEntry（513 行）、ExecutionMetrics（411 行）、MetricsAggregator（504 行）和 82 个单元测试；Week 3 进度更新为 80% |
 | v1.8 | 2025-12-17 | AI Assistant | 更新 T-301（低代码集成适配）为已完成；新增 LowcodeAdapter 适配器（870 行）、接口定义和 22 个单元测试；Week 3 进度更新为 60% |
 | v1.7 | 2025-12-17 | AI Assistant | 更新 T-203（表达式引擎）、T-205（核心 API 接口）为已完成；T-205 包含 4 个控制器（2874 行）和完整路由（246 行）；Week 2 后端核心引擎 100% 完成 |
 | v1.6 | 2025-12-17 | AI Assistant | 更新 T-204（多租户支持架构）为已完成；添加 10 个实现文件和 62 个测试用例的产出清单；Week 2 后端进度更新为 95% |

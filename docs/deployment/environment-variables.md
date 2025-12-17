@@ -71,6 +71,7 @@
 | `CASBIN_CACHE_ENABLED` | | `true` | 是否启用 Casbin 缓存 |
 | `CASBIN_CACHE_TTL` | | `3600` | 缓存过期时间（秒） |
 | `CASBIN_RELOAD_TTL` | | `300` | 策略刷新间隔（秒） |
+| `CASBIN_TENANT_ID` | | | 可选：仅加载指定租户策略（避免多租户混查） |
 
 ---
 
@@ -119,4 +120,3 @@ docker exec alkaid-backend php think env:check --generate
 - [ ] `DB_PASS` 已设置强密码
 - [ ] `CORS_ALLOWED_ORIGINS` 已明确配置
 - [ ] `CACHE_DRIVER=redis`
-

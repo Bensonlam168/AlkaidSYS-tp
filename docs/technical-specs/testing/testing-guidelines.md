@@ -96,6 +96,8 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 
 - All test commands **MUST** be executed inside the `alkaid-backend` Docker container.
 - The default configuration file is `phpunit.xml` in the project root.
+- The `phpunit.xml` file **MUST** reference the PHPUnit 11.5 schema (`https://schema.phpunit.de/11.5/phpunit.xsd`) and use `<source>` for coverage configuration.
+- PHPUnit metadata **MUST** use attributes (for example, `#[CoversClass(...)]`) instead of DocBlock `@covers`.
 - For performance tests, use `phpunit.performance.xml` configuration.
 - Exit code 0 indicates all tests passed; non-zero indicates failures.
 
@@ -128,4 +130,3 @@ See `.github/workflows/backend-php-cs-fixer.yml` for the complete CI configurati
 - **Phase 2 (target capability)**:
   - Test suites SHOULD cover all P0/P1 Backlog items and main domain workflows end-to-end.
   - Regression test packs SHOULD be defined for release candidates.
-

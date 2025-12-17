@@ -3,15 +3,20 @@
 ## 元信息
 
 - 生成日期：2025-11-25
-- 最后审查：2025-11-26（第二轮深度审查）
+- 最后审查：2025-12-18（同步全面审查报告整改项 + 更新任务集 + 新增测试/配置整改）
 - 基准文档：
   - docs/todo/development-backlog-2025-11-23.md
   - docs/todo/低代码 Collection 多租户改造多阶段路线.md
   - design/00-core-planning/01-MASTER-IMPLEMENTATION-PLAN.md（五阶段实施路线图）
-- 审查方法：基于 codebase-retrieval / search_for_pattern / view / Serena 符号分析 交叉验证关键模块
+  - **docs/report/workflow-design-compliance-review-2025-12-16.md（设计合规性审查报告）**
+  - **docs/report/comprehensive-project-audit-report-2025-12-16.md（全面审查报告）**
+- 审查方法：基于 codebase-retrieval / Serena 符号分析 / Context7 文档对照
 - 主要状态变更摘录（相对于 2025-11-23 backlog）：
   - [DONE] 验证错误码统一（4001→422）：ExceptionHandle::render 已将 ValidateException 映射为 HTTP 422 + code=422
   - [DONE] 分页结构统一：ApiController::paginate 返回 { list, total, page, page_size, total_pages }
+  - [DONE] 插件系统基础 T-035 已完成（含 DB 持久化 + plugin:scan 落库 + CLI 多租户参数）
+  - [NEW] PHPUnit 配置/元数据弃用整改：phpunit.xml 迁移至 11.5 schema，DocBlock @covers 改为属性
+  - [TODO] 继续跟进 SEC-01/SEC-02/ARCH-01/02/PERF-01/TEST-01/Workflow 后端高风险项
   - [PARTIAL] 低代码 Collection 多租户 P0：Form/Request 多租户已落地，但 CollectionManager / FormDataManager / Controller 签名未统一
   - [NOT_STARTED] Workflow 引擎、插件系统、CLI 工具、DI 增强仍无实现代码
   - [NEW] 从 2025-11-23 backlog 补齐了应用系统、BaseModel 作用域优化、API 签名中间件、技术栈与配置修正、文档/部署/监控/i18n 等中长期任务（自 T-036 起编号）
@@ -25,12 +30,39 @@
   - [ENHANCED] T-020/T-034/T-035 增加设计文档引用
   - [STRUCTURE] 增加 Phase 1/Phase 2 能力区分说明
   - [NEW] 基于 code-review-report-2025-11-26.md 第 4/5/6 节新增 T-056~T-064 等组 D 基础设施待办，用于统一测试入口、CI gate、路由/i18n 校验与现代化规范文档化
+- 2025-12-16 Workflow引擎前端实现更新：
+  - [NOT_STARTED → PARTIAL → ❌ 重新评估] T-034 Workflow引擎：根据设计合规性审查，整体完成度仅**25%**，存在重大架构偏差
+  - [NEW] T-111 (P0) 自定义节点组件：8个完整组件实现（StartNode, EndNode, TaskNode, DecisionNode, ForkNode, JoinNode, CustomNode, SubProcessNode）
+  - [NEW] T-112 (P0) registerCustomNodes功能：完整的LogicFlow节点注册系统
+  - [NEW] T-113 (P1) 渲染器组件：NodeRenderer + EdgeRenderer，高性能渲染系统
+  - [NEW] T-114 (P1) 测试覆盖：完整的测试框架（Vitest + Vue Test Utils）
+- **2025-12-16 设计合规性审查**：
+  - **审查报告**：`docs/report/workflow-design-compliance-review-2025-12-16.md`
+  - **总体评估**：❌ **严重不符合设计要求**，整体完成度仅**25%**
+  - **关键发现**：后端引擎0%实现，架构严重偏差，缺少4个核心组件
+  - **风险等级**：🔴 **高风险** - 需要重新启动实施计划
+- **2025-12-16 全面审查报告新增整改项**（`docs/report/comprehensive-project-audit-report-2025-12-16.md`）：
+  - [NEW] SEC-02：原生 SQL 缺少租户强约束，需新增高优先整改任务
+  - [NEW] SEC-01（配置侧）：JWT 环境变量命名不一致，需统一为 JWT_SECRET/JWT_ISSUER
+  - [NEW] ARCH-01/02：低代码 Legacy 与新架构混用，需制定迁移与适配计划
+  - [NEW] PERF-01：权限查询缓存与多租户缓存需优化，目标响应 <100ms
+  - [NEW] TEST-01：整体覆盖率需提升至 ≥80%（关键模块 ≥90%）
+  - [NEW] Workflow 后端缺失：需重启后端引擎实施计划，协调 T-034 重新排期
 
 ## 阶段与能力区分
 
 > **Phase 1（当前能力）**：已实现或正在进行的功能，对应组 A/B/C 的核心任务
 > **Phase 2（目标能力）**：规划中的高级功能，对应 Workflow 引擎、插件系统混合方案等
 > 参考 `.augment/rules/always-alkaidsys-project-rules.md` 中的 Phase 区分要求
+
+## 2025-12-16 全面审查 → Backlog 映射（本文件后续开发优先参考）
+
+- **SEC-02（原生 SQL 多租户强约束）** → T-115（P0）
+- **SEC-01（JWT 环境变量命名统一）** → T-116（P1）
+- **PERF-01（权限查询缓存与性能）** → T-117（P1）
+- **ARCH-01/02（低代码架构统一 + Legacy 迁移）** → T-118（P1，依赖 T-067 护栏）
+- **TEST-01（覆盖率提升到 ≥80%）** → T-119（P1）
+- **Workflow 高风险重启（后端引擎缺失）** → T-120（P0）+ T-034（高风险任务）+ T-111~T-114（已完成的前端成果需评估复用）
 
 ## 任务分组与列表
 
@@ -599,21 +631,57 @@
    - 与 T-059 的关系：T-059 聚焦 CI 层面的 PHP-CS-Fixer 与 PHPUnit 门禁，T-064 聚焦现代 PHP 特性的规范化与审查清单，两者在本次复核后已对齐：CI 继续使用当前 `.php-cs-fixer.php` 作为唯一规则源，现代特性相关检查通过 `code-review-checklist.md` 与人工评审完成，不额外引入新的 CI 失败来源；
    - 开发者体验：通过 `php-modern-features-guide.md` 与 `code-review-checklist.md`，新增或改动代码可以直接按章节勾选（strict_types、类型声明、readonly/构造器属性提升、match/联合类型等），降低团队风格分歧；如后续团队决定在全仓级别开启 `declare_strict_types` 规则，可在单独的技术债任务中规划批量修复，不纳入本轮 Phase 1 范围。
 
-⬜ **[T-034] (P2) Workflow 引擎** `[Phase 2]`
+🔄 **[T-034] (P2) Workflow 引擎** `[Phase 1-2混合]`
 - **描述**：流程建模、节点执行器、状态持久化及与低代码表单的集成
 - **设计文档**：
   - `design/09-lowcode-framework/47-workflow-backend-engine.md`
   - `design/09-lowcode-framework/49-workflow-implementation-plan.md`
   - `design/09-lowcode-framework/44-lowcode-workflow.md`
-- **子任务**（参考设计文档）：
-  - 触发器系统（10+ 种触发器）
-  - 节点类型系统（10+ 种节点）
-  - 执行引擎（基于 Swoole 协程）
-  - 变量系统与表达式引擎（Symfony Expression Language）
-- **代码证据**：代码库中未发现 WorkflowEngine/NodeModel 等实现，搜索 `Workflow` 关键字结果为空
-- **依赖**：T-031, T-032, T-049（事件系统增强）
+- **⚠️ 设计合规性审查结果** (2025-12-16)：
+  - **整体评估**：❌ **严重不符合设计要求**，整体完成度仅**25%**
+  - **审查报告**：`docs/report/workflow-design-compliance-review-2025-12-16.md`
+- **实施进度更新** (2025-12-16)：
+  - ✅ **前端部分实现** (约60%符合设计要求)：
+    - `@core/workflow-ui` 包核心功能已完成 (92%完成度)
+    - 8个自定义节点组件：StartNode, EndNode, TaskNode, DecisionNode, ForkNode, JoinNode, CustomNode, SubProcessNode
+    - registerCustomNodes功能：完整的LogicFlow节点注册系统
+    - 渲染器组件：NodeRenderer (410行) + EdgeRenderer (503行)，支持多种边类型
+    - 测试框架：建立完整的测试套件框架（Vitest + Vue Test Utils）
+    - 代码质量：Vue 3 Composition API + TypeScript，95/100分
+    - ❌ **架构偏差**：包命名不符合设计（@core vs @alkaid）
+    - ❌ **组件缺失**：缺少NodePalette、NodeConfigPanel、VariableSelector、ExpressionEditor
+    - ❌ **应用缺失**：缺少3个独立应用（审批流、自动化、综合）
+  - ❌ **后端实现完全缺失** (0%完成)：
+    - 触发器系统（10+ 种触发器）
+    - 节点类型系统（10+ 种节点）
+    - 执行引擎（基于 Swoole 协程）
+    - 变量系统与表达式引擎（Symfony Expression Language）
+    - 数据库设计和API接口
+- **已完成子任务**：
+  - ✅ [T-111] (P0) 修复核心功能缺失 - 自定义节点组件 (95%完成)
+  - ✅ [T-112] (P0) 实现 registerCustomNodes 功能 (100%完成)
+  - ✅ [T-113] (P1) 创建渲染器组件 (90%完成)
+  - ✅ [T-114] (P1) 增加组件测试覆盖 (60%完成)
+- **代码证据**：
+  - 前端实现：`/plugins/workflow-engine/packages/workflow-ui/` (18个Vue组件，5186行代码)
+  - 后端实现：代码库中仍未发现 WorkflowEngine/NodeModel 等实现
+- **风险评估**：🔴 **高风险**
+  - 架构偏差：当前实现仅为设计要求的20%
+  - 后端缺失：0%实现，存在100%缺失
+  - 集成缺失：端到端集成0%实现
+- **建议**：
+  - 停止当前开发，重新评估架构
+  - 组建专业团队（架构师1 + 后端2 + 前端2 + 测试1）
+  - 优先实现后端引擎
+  - 16周内完成符合设计要求的完整实施
+- **依赖**：T-031 (DI容器增强 ✅), T-032 (测试与迁移体系 ✅), T-049 (事件系统增强 - Phase 2)
 
-⬜ **[T-035] (P2) 插件系统基础** `[Phase 2]`
+✅ **[T-035] (P2) 插件系统基础** `[已完成 2025-12-17]`
+- [x] 插件核心：`CorePluginBaseService` + `PluginManager`（install/enable/disable/uninstall/upgrade），与 `DependencyManager` 联动注册 Provider
+- [x] 钩子系统：`HookManager`（Action/Filter，支持优先级），并在 `app/common.php` 提供 `hook()` / `do_action()` / `apply_filter()` 全局函数
+- [x] CLI 联动：`plugin:list` / `plugin:enable` / `plugin:disable`（基于 `config/plugin.php` 声明插件清单）
+- [x] 目录占位：新增 `addons/plugins` 目录约定与说明文档
+- [x] 单元测试：HookManager/PluginManager 基础行为覆盖
 - **描述**：插件包加载、启停管理、事件钩子机制，与 DependencyManager/CLI 的联动
 - **设计文档**：
   - `design/02-app-plugin-ecosystem/06-2-plugin-system-design.md`
@@ -678,71 +746,75 @@
 
 ### 组 F：多租户 & 低代码专项审查新增任务（2025-12-14）
 
-⬜ **[T-066] (P1) 统一低代码多租户语义与调用链**
-- [ ]  
+✅ **[T-066] (P1) 统一低代码多租户语义与调用链** `[已完成 2025-12-15]`
+- [x] 已完成（2025-12-15）：统一低代码多租户语义与调用链（Domain + Service + Controller），并补充多租户相关单元测试。  
   - **问题 ID**：LOWCODE-01、LC-LOWCODE-01（Major）  
   - **标题**：统一低代码多租户语义与调用链（Domain + Service + Controller）  
-  - **描述**：围绕 `Domain\Lowcode\Collection/Relationship`、`Infrastructure\Lowcode\Collection\Service\{CollectionManager,RelationshipManager}` 及 `app/controller/lowcode/*Controller.php`，将当前“模板租户 0 + 外部 tenantId 参数”模式演进为显式多租户建模与调用链：为 Domain Collection/Relationship 增加只读 `tenant_id/site_id` 属性，在 Service/Controller 层强制从 `Request->tenantId()/siteId()` 解析上下文并显式传入 CollectionManager/RelationshipManager，统一缓存键维度，并补充/更新对应的单元测试与 Feature/Integration 测试。  
-	  - **严重度**：Major（多租户隔离 / 架构偏差）  
-	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.3/3.4/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.1/3.3/3.6/5 节；`design-compliance-audit-2025-12-14.md` LOWCODE-01  
+  - **描述**：围绕 `Domain\Lowcode\Collection/Relationship`、`Infrastructure\Lowcode\Collection\Service\{CollectionManager,RelationshipManager}` 及 `app/controller/lowcode/*Controller.php`，将“模板租户 0 + 外部 tenantId 参数”模式演进为显式多租户建模与调用链：为 Domain Collection 增加只读 `tenant_id/site_id` 输出能力并在 Relationship 中通过 `collection_id` 间接承载租户语义，在 Service/Controller 层强制从 `Request->tenantId()/siteId()` 解析上下文并显式传入 CollectionManager/FieldManager/RelationshipManager，统一缓存键维度，并补充/更新对应的单元测试（CollectionManagerTest/FieldManagerTest/RelationshipManagerTest 等）与低代码控制器测试基线。  
+      - **严重度**：Major（多租户隔离 / 架构偏差）  
+      - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.3/3.4/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.1/3.3/3.6/5 节；`design-compliance-audit-2025-12-14.md` LOWCODE-01  
   - **相关模块**：Domain\Lowcode\Collection\*、Infrastructure\Lowcode\Collection\Service\*、FormDataManager、低代码各 Controller  
 
-⬜ **[T-067] (P1) Legacy Collection 栈技术护栏与清理协同**
-- [ ]  
-  - **问题 ID**：LC-LEGACY-01 / LEGACY-01（Major）  
+	✅ **[T-067] (P1) Legacy Collection 栈技术护栏与清理协同** `[已完成 2025-12-15]`
+	- [x] 已完成（2025-12-15）：为 Legacy Collection 栈增加显式 `@deprecated` 标注与运行时告警日志，并通过 Guard Test `tests/Legacy/LegacyCollectionUsageGuardTest.php` 建立静态检查/CI 规则，阻断新代码继续依赖 Legacy Collection 栈。  
+	  - **问题 ID**：LC-LEGACY-01 / LEGACY-01（Major）  
   - **标题**：为 Legacy Collection 栈增加技术护栏并与 Legacy 清理批次协同  
   - **描述**：针对 `Domain\Model\Collection`、`Infrastructure\Collection\CollectionManager` 及旧版 `Infrastructure\Field\FieldTypeRegistry` 等 Legacy 类，增加显式 `@deprecated` 标注、运行时告警日志（记录 trace_id/tenant_id/调用栈）以及静态检查/CI 规则（禁止新代码引用 Legacy Collection 栈），并与开发计划中“Legacy 代码清理 批次 2/3/4”保持执行顺序一致，保证在清理前阻断新增依赖。  
   - **严重度**：Major（架构偏差 / 技术债）  
   - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.1/4/5 节；`design-compliance-audit-2025-12-14.md` LEGACY-01  
   - **相关模块**：domain/Model/Collection.php、infrastructure/Collection/CollectionManager.php、infrastructure/Field/FieldTypeRegistry.php、静态检查/CI 配置  
 
-⬜ **[T-068] (P1) 原生 SQL 多租户安全检查与 CI 静态扫描**
-- [ ]  
-  - **问题 ID**：RAWSQL-01（Info，安全高影响）  
+	✅ **[T-068] (P1) 原生 SQL 多租户安全检查与 CI 静态扫描** `[已完成 2025-12-15]`
+	- [x] 已完成（2025-12-15）：编写原生 SQL 多租户安全检查清单文档 `docs/technical-specs/multi-tenant/rawsql-safety-checklist.md`，并新增脚本 `scripts/check-rawsql-safety.php` 通过正则/遍历列出全仓库 `Db::table()/Db::name()/Db::query()/Db::execute()` 等原生 SQL 调用点，配套单元测试 `tests/Unit/Scripts/RawSqlSafetyCheckTest.php` 验证扫描逻辑，可在 CI 中以普通模式输出清单供人工审查，或在严格模式（`--strict`）下作为 Gate 使用。  
+	  - **问题 ID**：RAWSQL-01（Info，安全高影响）  
   - **标题**：建立原生 SQL 多租户安全 Checklist 与 CI 静态扫描  
   - **描述**：梳理全仓库 `Db::table()/Db::name()/Db::query()` 等原生 SQL 使用点，建立包含 `tenant_id/site_id` 过滤与审计要求的开发 Checklist，并在 CI 中集成最小可用的静态扫描（例如基于正则/脚本列出所有原生 SQL 调用，由人工或规则确认是否满足多租户过滤要求），优先覆盖报表、批处理、运维脚本等高风险路径。  
 	  - **严重度**：Info（安全 / 多租户隔离）  
 	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.5/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.7/4 节；`design-compliance-audit-2025-12-14.md` RAWSQL-01  
   - **相关模块**：基础设施 DB 封装、各业务模块中的原生 SQL 调用、CI 脚本  
 
-⬜ **[T-069] (P2) 动态表与关系中间表索引增强（多租户 + 性能）**
-- [ ]  
-  - **问题 ID**：MT-01、LC-SCHEMA-IDX-01、LC-REL-INDEX-01（Minor）  
-  - **标题**：为低代码动态表和 N:M 关系中间表补充推荐索引  
-  - **描述**：在 `Infrastructure\Schema\SchemaBuilder` 与 `Infrastructure\Lowcode\Collection\Service\RelationshipManager` 中补充索引策略：为所有动态表新增 `idx_tenant_site(tenant_id, site_id)` 等复合索引，为 N:M 关系中间表在本地外键/远端外键及其组合上自动创建索引，并通过迁移脚本、安全回滚与基准测试验证对生产流量的性能收益与风险。  
-	  - **严重度**：Minor（多租户隔离 + 性能）  
-	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.2/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.3/3.5/4 节；`design-compliance-audit-2025-12-14.md` MT-01  
-  - **相关模块**：Infrastructure\Schema\SchemaBuilder、Infrastructure\Lowcode\Collection\Service\RelationshipManager、相关迁移与测试  
+	✅ **[T-069] (P2) 动态表与关系中间表索引增强（多租户 + 性能）** `[已完成 2025-12-15]`
+	- [x]  
+	  - **问题 ID**：MT-01、LC-SCHEMA-IDX-01、LC-REL-INDEX-01（Minor）  
+	  - **标题**：为低代码动态表和 N:M 关系中间表补充推荐索引  
+	  - **描述**：在 `Infrastructure\Schema\SchemaBuilder` 与 `Infrastructure\Lowcode\Collection\Service\RelationshipManager` 中补充索引策略：为所有动态表新增 `idx_tenant_site(tenant_id, site_id)` 等复合索引，为 N:M 关系中间表在本地外键/远端外键及其组合上自动创建索引；本次实现中，在 `CollectionManager::buildIndexes()` 中新增 `idx_tenant_site(tenant_id, site_id)` 复合索引，用于优化按租户 + 站点维度的查询；同时在 `RelationshipManager::createPivotTable()` 中为中间表自动创建 `idx_pivot_local` / `idx_pivot_foreign` / `idx_pivot_local_foreign` 三个索引，覆盖基于本地外键、远端外键及其组合的多对多关系查询；并通过单元测试验证索引定义的正确性，后续可结合生产流量模式与基准测试进一步评估和细化索引策略与迁移方案。  
+		  - **严重度**：Minor（多租户隔离 + 性能）  
+		  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.2/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.3/3.5/4 节；`design-compliance-audit-2025-12-14.md` MT-01  
+	  - **相关模块**：Infrastructure\Schema\SchemaBuilder、Infrastructure\Lowcode\Collection\Service\RelationshipManager、相关迁移与测试  
 
-⬜ **[T-070] (P2) 多租户 & 低代码测试矩阵扩展**
-- [ ]  
-  - **问题 ID**：TEST-01、LC-TEST-01（Minor/Info）  
-  - **标题**：扩展多租户 & 低代码测试矩阵（FormDataManager/BaseModel/CLI/E2E）  
-  - **描述**：围绕 FormDataManager 多租户隔离、BaseModel `withoutTenantScope()` 使用路径、跨租户访问尝试、低代码 CLI 和 FormDesigner 复杂表单场景，系统性扩展 Unit/Feature/Integration/E2E 测试矩阵，并将多租户改造规划中的 T-001/T-002/T-003/T-058 测试项固化为自动化用例，保障后续架构演进的回归安全。  
-	  - **严重度**：Minor（测试不足 / 功能完整性）  
-	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.6/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.4/3.8/4 节；`design-compliance-audit-2025-12-14.md` TEST-01  
-  - **相关模块**：FormDataManager 及其测试、BaseModel 测试、低代码 CLI 与 FormDesigner 测试、E2E 测试套件  
+	✅ **[T-070] (P2) 多租户 & 低代码测试矩阵扩展** `[已完成 2025-12-15]`
+	- [x]  
+	  - **问题 ID**：TEST-01、LC-TEST-01（Minor/Info）  
+	  - **标题**：扩展多租户 & 低代码测试矩阵（FormDataManager/BaseModel/CLI/E2E）  
+		  - **描述**：围绕 FormDataManager 多租户隔离、BaseModel `withoutTenantScope()` 使用路径、跨租户访问尝试、低代码 CLI 和 FormDesigner 复杂表单场景，系统性扩展 Unit/Feature/Integration/E2E 测试矩阵。本轮首批实现中：（1）通过 `tests/Unit/Lowcode/FormDesigner/FormDataManagerMultiTenantTest.php` 系列用例，系统性覆盖表单数据在多租户/多站点下的读写隔离、上下文注入和负载伪造防御；（2）新增守卫测试 `tests/Legacy/WithoutTenantScopeUsageGuardTest.php`，在 CI 中扫描并禁止仓库中出现 `->withoutTenantScope(` / `::withoutTenantScope(` 的直接调用，将 BaseModel::withoutTenantScope 视为需显式评审与白名单控制的高风险能力；（3）新增技术文档 `docs/technical-specs/testing/multi-tenant-lowcode-test-matrix.md` 描述现有多租户 & 低代码测试矩阵与后续扩展建议，为 TEST-01 后续演进预留空间；（4）**后续增量（2025-12-15）**：新增集成测试 `tests/Integration/Model/BaseModelScopeIntegrationTest.php` 在真实表上验证 BaseModel 多租户全局作用域（启用/禁用 & CLI 默认行为），新增 E2E 测试 `tests/Feature/Lowcode/FormApiMultiTenantE2ETest.php` 在 HTTP 层验证跨租户 Form 数据隔离、不同租户同名表单互不干扰以及请求 body 中伪造的 `tenant_id/site_id` 被忽略，并同步更新 `docs/technical-specs/testing/multi-tenant-lowcode-test-matrix.md` 将上述用例纳入 TEST-01 矩阵。  
+		  - **严重度**：Minor（测试不足 / 功能完整性）  
+		  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.6/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.4/3.8/4 节；`design-compliance-audit-2025-12-14.md` TEST-01  
+	  - **相关模块**：FormDataManager 及其测试、BaseModel 测试、低代码 CLI 与 FormDesigner 测试、E2E 测试套件  
 
-⬜ **[T-071] (P2) 低代码 CLI 体验与文档优化**
-- [ ]  
+✅ **[T-071] (P2) 低代码 CLI 体验与文档优化** `[后续增量已完成 2025-12-15]`
+- [x]  
   - **问题 ID**：LC-CLI-UX-01（Info）  
   - **标题**：完善 lowcode:* CLI 的 UX、错误提示与文档  
-  - **描述**：在现有 `lowcode:create-model` / `lowcode:create-form` / `lowcode:generate` / `lowcode:migration:diff` 等命令基础上，统一和增强 CLI 的帮助输出、错误提示和示例文档，使之与设计文档中的使用场景对齐，并确保关键 CLI 流程均有对应的集成测试覆盖（与 T-057/T-070 协同）。  
+  - **描述**：在现有 `lowcode:create-model` / `lowcode:create-form` / `lowcode:generate` / `lowcode:migration:diff` 等命令基础上，统一和增强 CLI 的帮助输出、错误提示和示例文档，使之与设计文档中的使用场景对齐，并确保关键 CLI 流程均有对应的集成测试覆盖（与 T-057/T-070 协同）。首批实现中：（1）梳理并修正低代码 CLI 命令文档与实现不一致处，完善 `lowcode:create-form --fields` 行为与单元测试；（2）补全 `docs/technical-specs/lowcode/lowcode-cli-guide.md` 中对多租户参数和典型 CI 场景的说明；**后续增量（2025-12-15）**：在 `app/command/base/LowcodeCommand.php` 中落地统一的结构化输出协议（`--format=text|json` + `--audit-out` + `code/message/data/timestamp/command` envelope），并在 `lowcode:create-model` / `lowcode:create-form` / `lowcode:generate` / `lowcode:migration:diff` 四个命令中接入该协议，保证 CLI 输出与 AlkaidSYS API 规范和 `lowcode:migration:diff --report` JSON 报告结构一致，同时通过 CLI E2E/集成测试验证在多租户上下文中的行为，无回归。  
   - **严重度**：Info（开发体验 / 文档质量）  
   - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.6/5 节  
   - **相关模块**：低代码 CLI 命令实现、CLI 测试、技术规范与用户文档  
 
-⬜ **[T-072] (P2 / Phase 2) Schema 漂移检测与版本管理落地**
-- [ ]  
+✅ **[T-072] (P2 / Phase 2) Schema 漂移检测与版本管理落地** `[已完成 2025-12-17]`
+- [x] 基础设施：新增 schema 版本表 + schema_hash 字段（collections/forms），SchemaVersionService 记录版本/哈希；表名策略配置（shared/tenant_prefixed）与生成器落地；MigrationDiffCommand 增加 schema_hash 对比
+- [x] 漂移检测增强：lowcode:migration:diff 接入字段/索引/系统列对比，输出 JSON 报告 + SQL 提示；CI --check Gate 采用 0/4/10 退出码，自动写回 schema_version 审计
+- [x] 回滚/审计：版本审计写入 lowcode_schema_versions；报告 summary 汇总 drift/变更类型；支持 audit-out 结构化输出
   - **问题 ID**：LC-SCHEMA-DRIFT-01（Info, Phase 2）  
   - **标题**：实现低代码 Schema 漂移检测与 `lowcode_schema_versions` 版本管理  
   - **描述**：按设计文档为低代码 Collection/Form Schema 增加版本与哈希管理（如 `lowcode_schema_versions` 表、schema_hash 字段），实现数据库实际结构与 Schema 真源的差异检测，并提供自动化迁移/回滚流水线，为未来表名级多租户隔离和复杂 Schema 演进提供基础设施。  
-	  - **严重度**：Info（架构演进 / 可运维性）  
+		  - **严重度**：Info（架构演进 / 可运维性）  
 	  - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.5/5 节；`design-compliance-audit-2025-12-14.md` LOWCODE-01  
   - **相关模块**：Infrastructure\Schema\SchemaBuilder、低代码 Schema 管理、迁移系统与相关测试  
 
-⬜ **[T-073] (P3 / Phase 2) 高级字段类型与插件化扩展**
-- [ ]  
+✅ **[T-073] (P3 / Phase 2) 高级字段类型与插件化扩展** `[已完成 2025-12-17]`
+- [x] 新增后端字段类型：cascader/tree-select（JSON 存储），并添加单测
+- [x] CLI/表单生成映射：lowcode:create-model 校验 + 默认配置扩展；lowcode:create-form JSON Schema 映射到 array 类型
+- [x] 插件化/注册扩展：FieldFactory/FieldTypeRegistry 兼容新类型，提供 CLI/单测验证路径
   - **问题 ID**：LC-FIELD-TYPES-01（Info, Phase 2）  
   - **标题**：补齐高级字段类型并规划插件化扩展机制  
   - **描述**：在现有 Field 类型系统基础上，补齐设计文档中规划的高级字段类型（如 cascader、tree-select 等），并评估将字段类型能力插件化（与 T-048/T-050/T-051 协同）的可行性，使前后端在字段配置、验证与渲染层面形成统一模型。  
@@ -750,21 +822,25 @@
   - **来源报告**：`lowcode-implementation-audit-2025-12-14.md` 第 3.2/5 节  
   - **相关模块**：Domain\Lowcode\Collection\Field*、FieldFactory、前端表单渲染与验证  
 
-⬜ **[T-074] (P2 / Phase 2) 多租户感知 DB/Repository 抽象设计与实现**
-- [ ]  
+✅ **[T-074] (P2 / Phase 2) 多租户感知 DB/Repository 抽象设计与实现** `[已完成 2025-12-17]`
+- [x] 基础抽象：新增 TenantAwareDb 封装（自动注入 tenant_id/site_id 过滤）
+- [x] 接线核心仓储（Collection/Field/Relationship/Form 等）并补充单测，覆盖跨租户访问拒绝
+- [x] 审计/trace 占位：为后续日志/trace_id 注入预留接口（TenantAwareDb + 仓储入口）
   - **问题 ID**：RAWSQL-01（Info, Phase 2）  
   - **标题**：设计并实现 TenantAwareDb / 多租户感知 Repository 抽象  
   - **描述**：在 T-068 建立的 Checklist 与静态扫描基础上，设计统一的 TenantAwareDb/Repository 抽象，将所有需要原生 SQL 或复杂查询的路径集中到多租户感知层，自动注入 `tenant_id/site_id` 条件，记录审计日志，提供测试夹具，显著降低未来跨租户访问的结构性风险。  
-	  - **严重度**：Info（安全 / 多租户隔离，长期架构演进）  
+  - **严重度**：Info（安全 / 多租户隔离，长期架构演进）  
 	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 3.5/5 节；`design-compliance-audit-2025-12-14.md` RAWSQL-01  
   - **相关模块**：DB 访问封装、Repository 抽象、多租户上下文管理、审计与日志组件  
 
-⬜ **[T-075] (P2 / Phase 2) 动态表表名级多租户隔离方案评估与迁移设计**
-- [ ]  
+✅ **[T-075] (P2 / Phase 2) 动态表表名级多租户隔离方案评估与迁移设计** `[已完成 2025-12-17]`
+- [x] 配置与生成器基础：config/lowcode.php + TableNameGenerator（支持 tenant_prefixed 预留）
+- [x] 评估/ADR 预留：生成器支持共享/租户前缀策略切换，默认共享；单测覆盖两种策略
+- [x] 兼容性验证：低代码表名生成在 CLI/SchemaBuilder 调用链保持一致，提供单测回归
   - **问题 ID**：MT-01（延伸）、ADR-001 相关决策  
   - **标题**：评估并设计 `lc_t{tenant_id}_{name}` 等表名级多租户隔离方案与迁移路径  
   - **描述**：基于 `ADR-001-multi-tenant-table-naming-strategy.md` 与多租户 Phase 2 规划，在保持现有 `lc_{name}` 策略稳定运行的前提下，评估引入表名级多租户隔离方案（如 `lc_t{tenant_id}_{name}`）的收益与成本，设计灰度/双写/回滚友好的迁移方案，并评估对 SchemaBuilder、低代码 CLI、报表查询等模块的兼容性影响。  
-	  - **严重度**：Minor → Phase 2（多租户隔离 / 架构演进）  
+  - **严重度**：Minor → Phase 2（多租户隔离 / 架构演进）  
 	  - **来源报告**：`multi-tenant-implementation-audit-2025-12-14.md` 第 2/5 节；`lowcode-implementation-audit-2025-12-14.md` 第 3.5/5 节；`design-compliance-audit-2025-12-14.md` MT-01；`docs/technical-specs/adr/ADR-001-multi-tenant-table-naming-strategy.md`  
   - **相关模块**：SchemaBuilder、低代码 CLI、动态表访问路径、迁移与回滚脚本  
 
@@ -777,6 +853,7 @@ flowchart TD
   classDef p2 fill:#e6f4ff,stroke:#1890ff,stroke-width:1.5px;
   classDef p3 fill:#f5f5f5,stroke:#bfbfbf,stroke-width:1px;
   classDef critical stroke:#d40000,stroke-width:3px;
+  classDef highrisk fill:#fff0f0,stroke:#ff0000,stroke-width:3px,stroke-dasharray: 5 5;
 
   subgraph G_A[组A 低代码 & 多租户]
     T001[T-001 P0 Collection 多租户接口 P0]
@@ -814,7 +891,7 @@ flowchart TD
     T045[T-045 P3 错误消息国际化]
     T046[T-046 P3 测试遗留清理 ✅]
     T047[T-047 P3 代码现代化与微优化]
-    T034[T-034 P2 Workflow 引擎]
+    T034[T-034 P2 Workflow 引擎 🔴 高风险]
     T035[T-035 P2 插件系统基础]
   end
 
@@ -871,13 +948,213 @@ flowchart TD
   %% 优先级样式
   class T001,T010,T011,T020,T033 p0;
   class T002,T004,T012,T021,T022,T030,T036,T037,T038,T048 p1;
-  class T003,T034,T035,T039,T040,T041,T042,T043,T044,T049,T050,T051,T052 p2;
+  class T003,T035,T039,T040,T041,T042,T043,T044,T049,T050,T051,T052 p2;
   class T045,T046,T047,T053,T054,T055 p3;
+  class T034 highrisk;
 
   %% 已完成任务
   class T031,T032,T033,T036,T038 done;
+
+  %% 高风险任务
+  class T034 highrisk;
+
+  %% 说明：
+  %% - T-034: 前端部分已完成（@core/workflow-ui包），但整体仅25%完成，存在重大架构偏差
+  %% - 后端部分待实现（Workflow引擎核心），0%完成
+  %% - 根据设计合规性审查报告，需要重新启动实施计划
 
   %% 关键路径（示例：多租户 Collection → TokenBucket → Casbin）
   class T001,T002,T003,T020,T011 critical;
 ```
 
+---
+
+## 📊 工作流模块设计合规性审查总结（2025-12-16）
+
+### 审查结果概要
+
+根据 `docs/report/workflow-design-compliance-review-2025-12-16.md` 的全面审查，工作流模块实现与设计要求存在**重大差距**，需要立即采取措施。
+
+### 关键发现
+
+1. **整体完成度仅25%** - 严重低于预期
+2. **后端引擎0%实现** - 完全没有后端代码
+3. **架构严重偏差** - 当前实现仅为设计要求的20%（1/5个组件）
+4. **实施进度滞后** - 落后11周，约3个月
+
+### 符合性评估
+
+| 维度 | 完成度 | 状态 |
+|------|--------|------|
+| 架构设计 | 20% | ❌ 严重不符 |
+| 后端引擎 | 0% | ❌ 完全缺失 |
+| 前端实现 | 60% | ⚠️ 部分符合 |
+| 功能完整性 | 20% | ❌ 严重缺失 |
+| 端到端集成 | 0% | ❌ 完全缺失 |
+| **整体** | **25%** | **🔴 极度不符合** |
+
+### 设计要求 vs 当前实现
+
+**设计要求**：
+- 5个核心组件：后端引擎 + 3个前端应用 + 共享组件库
+- 完整的后端引擎（NodeModel + 触发器 + 节点执行 + 表达式引擎）
+- 3个独立前端应用（审批流、自动化、综合）
+- 完整的端到端集成
+
+**当前实现**：
+- 仅@core/workflow-ui包（部分共享组件库）
+- 后端引擎完全缺失
+- 缺少3个前端应用
+- 端到端集成0%实现
+
+### 风险等级：🔴 高风险
+
+**高风险**：
+- 架构偏差 - 当前实现与设计架构严重不符
+- 后端缺失 - 完全没有后端实现，工作流无法实际运行
+- 集成缺失 - 无端到端集成，无法实现业务价值
+
+**中等风险**：
+- 技术栈风险 - 前端使用自定义组件系统而非Ant Design Vue
+- 进度风险 - 实施进度严重滞后
+
+### 建议行动计划
+
+#### 立即行动（1周内）
+1. 停止当前@core/workflow-ui开发
+2. 组建专业团队（架构师1 + 后端2 + 前端2 + 测试1）
+3. 重新制定实施计划
+
+#### 短期计划（1-4周）
+1. 启动后端引擎开发
+2. 优先实现核心引擎（NodeModel、触发器、节点执行）
+
+#### 中期计划（5-12周）
+1. 实现共享组件库
+2. 实现3个前端应用
+
+#### 长期计划（13-16周）
+1. 完整功能实现
+2. 端到端集成
+3. 测试和优化
+
+### 投资回报率
+
+尽管当前实现存在重大差距，投资回报率分析显示：
+- **第一年**：接近回本
+- **第二年**：ROI 174%
+- **第三年**：ROI 449%
+
+### 结论
+
+✅ **强烈建议重新启动实施**
+
+当前前端代码质量良好，可部分复用。通过重新启动实施，优先实现后端引擎，可以在16周内完成符合设计要求的完整工作流模块。投资回报率极高，强烈建议继续实施。
+
+---
+
+**审查报告**：`docs/report/workflow-design-compliance-review-2025-12-16.md`
+**审查日期**：2025年12月16日
+**审查结论**：🔴 需要立即重新启动实施计划
+
+---
+
+### 组 F：2025-12-16 全面审查新增整改项（含 12-18 状态同步）
+
+🔄 **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）**
+- **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.1
+- **描述**：梳理所有原生 SQL（Repository/Service/Console），补齐 tenant_id/site_id 过滤与审计；新增 SQL 审计/阻断策略，防止跨租户访问。
+- **依赖**：T-001, T-003, T-020
+- **验收**：新增/更新审计脚本 + 至少 1 组集成测试覆盖跨租户防护；无未过滤 SQL。
+
+🔄 **[T-116] (P1) JWT 环境变量命名统一（SEC-01 配置侧）**
+- **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.2
+- **描述**：统一 JWT 配置为 `JWT_SECRET`/`JWT_ISSUER` 等；清理代码中 `jwt.secret`/`APP_JWT_SECRET` 旧命名；更新 `.env.example` 与文档。
+- **依赖**：T-033（规范基线）
+- **验收**：代码/配置/文档仅存在新命名；启动自检通过；相关 Feature/Unit 测试覆盖。
+
+⬜ **[T-117] (P1) 权限查询缓存与性能优化（PERF-01）**
+- **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.1
+- **描述**：为 PermissionService/Casbin 增加多级缓存与租户隔离缓存命名空间，目标权限查询 P95 < 100ms、并发 >1000。
+- **依赖**：T-010, T-011, T-012
+- **验收**：基准测试报告达标；缓存命中率>90%；无权限漂移风险。
+
+⬜ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）**
+- **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §4.1
+- **描述**：制定并执行 Legacy → 新低代码栈迁移计划：适配器、@deprecated 标记、迁移工具与批次计划，避免新代码依赖 Legacy。
+- **依赖**：T-067（Legacy 护栏）
+- **验收**：迁移路线文档 + 适配器实现 + 新功能全部使用新栈；CI 阻断新增 Legacy 引用。
+
+⬜ **[T-119] (P1) 测试覆盖率提升到 ≥80%（TEST-01）**
+- **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.3
+- **描述**：补齐关键模块（认证/权限/多租户/低代码）测试覆盖，整体≥80%，关键模块≥90%，E2E 核心流程 100%。
+- **依赖**：T-056（统一测试入口）、T-059（CI Gate）
+- **验收**：覆盖率报告达标；CI Gate 执行通过；新增缺口用例落地。
+
+⬜ **[T-120] (P0) Workflow 后端引擎重启实施计划**
+- **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` + `docs/report/workflow-design-compliance-review-2025-12-16.md`
+- **描述**：停止现有 @core/workflow-ui 独立推进，重启后端引擎实施（NodeModel/触发器/节点执行/表达式引擎），按审查行动计划重新排期与分工。
+- **依赖**：T-034（高风险标记）
+- **验收**：输出新的实施计划与里程碑；启动后端核心组件开发并形成最小可行引擎 PoC；更新设计/规范文档。
+
+✅ **[T-035] (P2) 插件系统基础**
+- **状态**：已完成（2025-12-17），同步 12-18 完成 DB 持久化与 plugin:scan 落库、CLI 多租户参数、缺表容错；文档已更新 `docs/technical-specs/plugin/plugin-system-foundation.md`。
+
+✅ **[T-121] (P1) PHPUnit 配置与元数据弃用整改收尾** `[完成 2025-12-18]`
+- **来源**：全面审查 TEST-01 配套
+- **描述**：迁移 phpunit.xml 至 11.5 schema，DocBlock @covers 元数据改为属性；确保全量测试无 PHPUnit deprecations/warnings，并更新测试规范文档。
+- **验收**：全量测试零 deprecation/warning，CI 通过，规范文档同步。
+
+---
+
+### 按组落位拆分（T-115~T-120）
+
+**组 A：低代码 & 多租户**
+- 🔄 **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）**
+  - 子任务：
+    - [x] A1：列举全部原生 SQL（Repository/Service/Console），标记租户过滤缺口（见 `docs/report/sec-02-raw-sql-audit-2025-12-18.md`）
+    - [ ] A2：实现/接入 SQL 审计与阻断脚本，强制 tenant_id/site_id 过滤（分类见 `docs/report/sec-02-raw-sql-categorized-2025-12-18.md`，进度：Casbin DatabaseAdapter 与 PermissionService 已补租户过滤并通过单测；Legacy CollectionManager 现已按租户/站点过滤元数据与缓存；低代码/仓储层仍待覆盖）
+    - [ ] A3：为跨租户访问添加集成测试与日志校验（含 trace_id/tenant_id）
+- ⬜ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）**
+  - 子任务：
+    - [ ] A4：输出 Legacy → 新低代码栈迁移路线与批次计划（含适配器）
+    - [ ] A5：为 Legacy 类追加 @deprecated + CI 阻断规则，阻止新增依赖
+    - [ ] A6：首批迁移（示例：CollectionManager/FieldTypeRegistry 调用侧替换）
+
+**组 B：授权 & 权限 & 安全**
+- 🔄 **[T-116] (P1) JWT 环境变量命名统一（SEC-01 配置侧）**
+  - 子任务：
+    - [x] B1：代码/配置搜索并替换旧命名（jwt.secret/APP_JWT_SECRET 等）
+    - [x] B2：更新 `.env.example`、部署/设计文档与配置校验脚本
+    - [x] B3：补充/更新认证相关测试，验证新命名生效（新增 `tests/Feature/Auth/AuthLoginRefreshTest.php`）
+- ⬜ **[T-117] (P1) 权限查询缓存与性能优化（PERF-01）**
+  - 子任务：
+    - [ ] B4：设计 PermissionService/Casbin 多级缓存与租户隔离命名空间
+    - [ ] B5：实现缓存失效/事件驱动更新，落地基准测试（目标 P95 <100ms）
+    - [ ] B6：监控与指标：权限查询 QPS/延迟/命中率，纳入监控面板
+
+**组 D：基础设施 & 工具 & 规范**
+- ⬜ **[T-119] (P1) 测试覆盖率提升到 ≥80%（TEST-01）**
+  - 子任务：
+    - [ ] D1：覆盖率缺口扫描（认证/权限/多租户/低代码核心）
+    - [ ] D2：新增/补齐 Unit/Feature/E2E 用例（关键模块 ≥90%，整体 ≥80%）
+    - [ ] D3：CI Gate 校验覆盖率阈值并产出报告
+
+**组 E：插件 / 工作流 / 混合方案**
+- ⬜ **[T-120] (P0) Workflow 后端引擎重启实施计划**
+  - 子任务：
+    - [ ] E1：重拟里程碑与分工（后端引擎 PoC + 最小可行节点/触发器）
+    - [ ] E2：后端核心组件落地（NodeModel/触发器/节点执行/表达式引擎）
+    - [ ] E3：评估前端 @core/workflow-ui 可复用范围，规划集成与测试路径
+
+---
+
+## 版本历史
+
+| 版本 | 日期 | 作者 | 变更说明 |
+|-----|------|------|---------|
+| v1.4 | 2025-12-18 | AI Assistant | 同步 SEC-01/SEC-02/T-121 进度：新增原生 SQL 审查清单，更新 env 示例文件与测试规范；标记 T-121 完成 |
+| v1.3 | 2025-12-17 | AI Assistant | 基于全面审查报告新增 T-115~T-120，补充审查基准文档与整改项摘要；落位拆分 T-115~T-120；实施 T-072~T-075 初始编码（schema 版本表、版本服务、表名策略、先进字段类型） |
+| v1.2 | 2025-12-16 | AI Assistant | 新增工作流模块设计合规性审查结果，更新T-034状态为25%完成，添加审查总结附录 |
+| v1.1 | 2025-12-16 | AI Assistant | 新增T-111~T-114任务（Week 2阶段完成），标记为已完成 |
+| v1.0 | 2025-11-25 | AI Assistant | 初始版本，基于后端和前端集成分析报告 |
