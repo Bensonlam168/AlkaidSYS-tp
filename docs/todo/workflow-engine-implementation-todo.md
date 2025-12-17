@@ -3,7 +3,7 @@
 ## 元信息
 
 - **生成日期**：2025-12-15
-- **最后更新**：2025-12-17 (v1.5)
+- **最后更新**：2025-12-17 (v1.7)
 - **基于报告**：
   - `docs/report/ingenious-integration-readiness-analysis.md`（后端集成准备度分析）
   - `docs/report/workflow-frontend-integration-analysis.md`（前端集成分析）
@@ -18,12 +18,12 @@
   - **Week 1 后端基础设施**：✅ 100% 完成（T-101 ~ T-107）
   - **Week 1 前端基础设施**：✅ 100% 完成（T-108 ~ T-110）
   - **Week 2 前端设计器开发**：✅ 100% 完成（T-111 ~ T-114, T-207 ~ T-211）
-  - **Week 2 后端核心引擎**：🔄 95% 完成
+  - **Week 2 后端核心引擎**：✅ 100% 完成
     - ✅ T-201 Swoole 协程执行引擎 - 完成
     - ✅ T-202 触发器系统框架 - 完成
     - ✅ T-203 表达式引擎集成 - 完成
     - ✅ T-204 多租户支持架构 - 完成
-    - ⬜ T-205 核心 API 接口 - 待开发
+    - ✅ T-205 核心 API 接口 - 完成
     - ✅ T-206 节点类型基础实现 - 完成
   - **Week 3 后端业务功能**：🔄 40% 完成
     - ⬜ T-301 低代码集成适配 - 待实现
@@ -31,7 +31,7 @@
     - ✅ T-303 完善触发器类型库 - 完成
     - ⬜ T-304 流程监控功能 - 待实现
     - ⬜ T-305 API 接口文档 - 待编写
-- **⚠️ 重要说明**：根据 2025-12-17 最新进度，T-201/T-202/T-203/T-204/T-206/T-302/T-303 已完成，后续需完成 T-205、T-301、T-304~T-305
+- **⚠️ 重要说明**：根据 2025-12-17 最新进度，Week 2 后端核心引擎（T-201~T-206）已全部完成，Week 3 部分完成（T-302/T-303），后续需完成 T-301、T-304~T-305
 
 ## 阶段与能力区分
 
@@ -326,7 +326,7 @@
   - `src/Triggers/Types/DataEventTrigger.php` - 数据事件触发器（15353 字节）
   - 119 个单元测试通过（所有触发器类型）
 
-⬜ **[T-203] (P1) 集成表达式引擎**
+✅ **[T-203] (P1) 集成表达式引擎** ⭐ **已完成**
 - **描述**：集成 Symfony Expression Language，实现动态条件判断
 - **技术细节**：
   - 创建 `src/Expression/ExpressionEngine.php`
@@ -336,6 +336,13 @@
 - **依赖**：T-103
 - **被依赖**：T-302, T-401
 - **验收标准**：表达式可正常计算，自定义函数可用
+- **完成时间**：2025-12-17
+- **实际产出**：
+  - `src/Expression/ExpressionEngine.php` - 表达式引擎核心（383 行）
+  - `src/Expression/ExpressionEvaluator.php` - 表达式求值器（支持变量注入）
+  - `src/Expression/ExpressionCache.php` - 表达式缓存管理（Redis/内存）
+  - `src/Expression/Functions/` - 自定义函数库（日期、数学、字符串、逻辑）
+  - 单元测试覆盖所有表达式功能
 
 ✅ **[T-204] (P1) 实现多租户支持架构** ⭐ **已完成**
 - **描述**：在引擎层实现完整的多租户隔离
@@ -361,7 +368,7 @@
   - `src/Multitenant/NodeManager.php` - 多租户节点配置管理器（完整实现）
   - 62 个单元测试通过（TenantContextTest、TenantIsolationGuardTest、NodeManagerTest）
 
-⬜ **[T-205] (P1) 开发核心 API 接口**
+✅ **[T-205] (P1) 开发核心 API 接口** ⭐ **已完成**
 - **描述**：开发工作流引擎核心 API 接口
 - **技术细节**：
   - 流程定义 API：`/workflow/definitions`（CRUD）
@@ -371,6 +378,24 @@
 - **依赖**：T-201, T-202, T-204
 - **被依赖**：T-301, T-401
 - **验收标准**：API 接口可正常调用，响应格式正确
+- **完成时间**：2025-12-17
+- **实际产出**：
+  - `app/controller/workflow/WorkflowDefinitionController.php` - 流程定义控制器（623 行）
+    - 接口：index、read、save、update、delete、publish、archive、validate、clone
+  - `app/controller/workflow/WorkflowInstanceController.php` - 流程实例控制器（533 行）
+    - 接口：index、read、save、cancel、suspend、resume、history、getVariables、updateVariables
+    - 状态：PENDING、RUNNING、SUSPENDED、COMPLETED、FAILED、CANCELLED
+  - `app/controller/workflow/WorkflowTaskController.php` - 工作流任务控制器（821 行）
+    - 接口：index、pending、read、approve、reject、transfer、delegate、claim、unclaim、complete、getForm、submitForm
+  - `app/controller/workflow/WorkflowTriggerController.php` - 触发器控制器（897 行）
+    - 接口：index、types、read、save、update、delete、enable、disable、test、webhook、logs
+    - 集成 TriggerManager 工作流引擎
+  - `route/workflow.php` - 完整路由定义（246 行）
+    - RESTful 路由设计
+    - Auth + Permission 中间件保护
+    - Webhook 端点无认证（供外部调用）
+  - 权限码格式：`workflow.{resource}.{action}`
+  - 共 40+ 个 API 端点
 
 ✅ **[T-206] (P2) 开发节点类型基础实现** ⭐ **已完成**
 - **描述**：实现核心节点类型的基础实现
@@ -920,6 +945,7 @@ Week 5
 
 | 版本 | 日期 | 作者 | 变更说明 |
 |-----|------|------|---------|
+| v1.7 | 2025-12-17 | AI Assistant | 更新 T-203（表达式引擎）、T-205（核心 API 接口）为已完成；T-205 包含 4 个控制器（2874 行）和完整路由（246 行）；Week 2 后端核心引擎 100% 完成 |
 | v1.6 | 2025-12-17 | AI Assistant | 更新 T-204（多租户支持架构）为已完成；添加 10 个实现文件和 62 个测试用例的产出清单；Week 2 后端进度更新为 95% |
 | v1.5 | 2025-12-17 | AI Assistant | 更新 Week 3 后端任务状态：T-302（完善节点类型库）、T-303（完善触发器类型库）标记为已完成；添加 5 个新触发器类型和 3 个新节点类型的产出清单；Week 3 进度更新为 40% |
 | v1.4 | 2025-12-17 | AI Assistant | 更新 Week 2 后端任务状态：T-201（Swoole 协程执行引擎）、T-202（触发器系统框架）、T-206（节点类型基础实现）标记为已完成；添加详细产出清单；更新整体进度为 60% |
@@ -938,15 +964,15 @@ Week 5
 > - Week 1 后端基础设施（T-101~T-107）：✅ **100% 完成**
 > - Week 1 前端基础设施（T-108~T-110）：✅ **100% 完成**
 > - Week 2 前端设计器核心（T-111~T-114, T-207~T-211）：✅ **100% 完成**
-> - Week 2 后端核心引擎（T-201~T-206）：🔄 **95% 完成**
+> - Week 2 后端核心引擎（T-201~T-206）：✅ **100% 完成**
 >   - ✅ T-201 Swoole 协程执行引擎 - 完成（CoroutineExecutor、ExecutionContext、NodeExecutionResult）
 >   - ✅ T-202 触发器系统框架 - 完成（TriggerManager + 4 种触发器类型 + 119 个测试）
 >   - ✅ T-203 表达式引擎 - 完成（ExpressionEngine + ExpressionEvaluator + ExpressionCache）
 >   - ✅ T-204 多租户架构 - 完成（TenantContext + TenantIsolationGuard + NodeManager + 62 个测试）
->   - ⬜ T-205 核心 API 接口 - 待开发
+>   - ✅ T-205 核心 API 接口 - 完成（4 个控制器 2874 行 + 路由 246 行 + 40+ 端点）
 >   - ✅ T-206 节点类型基础实现 - 完成（5 种节点 + 179 个测试）
 >
-> **当前实际进度**：Phase 1 基础设施约 **85%** 完成，需继续完成 T-205 及 Week 3 任务。
+> **当前实际进度**：Phase 1 基础设施约 **90%** 完成，Week 3 任务待完成（T-301、T-304、T-305）。
 
 ### 审查概要
 
