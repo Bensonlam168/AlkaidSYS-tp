@@ -8,6 +8,7 @@ use Casbin\Model\Model;
 use Infrastructure\Permission\Casbin\DatabaseAdapter;
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
+use think\facade\Config;
 
 /**
  * DatabaseAdapter 单元测试
@@ -20,6 +21,8 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
 {
     protected DatabaseAdapter $adapter;
     protected Model $model;
+    protected $oldTenantFilter;
+    protected array $oldCasbinConfig = [];
 
     protected function setUp(): void
     {
@@ -35,6 +38,10 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
         $this->model = new Model();
         $this->model->loadModel($modelPath);
 
+        // 备份租户过滤配置
+        $this->oldCasbinConfig = Config::get('casbin', []);
+        $this->oldTenantFilter = $this->oldCasbinConfig['tenant_id'] ?? null;
+
         // 准备测试数据
         // Prepare test data
         $this->prepareTestData();
@@ -42,6 +49,9 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
 
     protected function tearDown(): void
     {
+        // 恢复租户过滤配置
+        Config::set(['casbin' => $this->oldCasbinConfig]);
+
         // 清理测试数据
         // Clean up test data
         $this->cleanupTestData();
@@ -234,6 +244,33 @@ class DatabaseAdapterTest extends ThinkPHPTestCase
             return $policy[2] === 'tenant:2';
         });
         $this->assertCount(1, $tenant2Policies);
+    }
+
+    /**
+     * 测试租户过滤（CASBIN_TENANT_ID）
+     */
+    public function testTenantFilterLoadsOnlySpecifiedTenant(): void
+    {
+        Config::set(['casbin' => array_merge(Config::get('casbin', []), ['tenant_id' => 1])]);
+
+        $this->adapter->loadPolicy($this->model);
+
+        $gPolicies = $this->model->getPolicy('g', 'g');
+        $pPolicies = $this->model->getPolicy('p', 'p');
+
+        // 仅校验本测试数据，避免受历史数据影响
+        // Only verify test fixtures to avoid existing data noise
+        $testGPolicies = array_filter($gPolicies, fn ($p) => str_starts_with($p[0], 'user:900'));
+        $tenant1G = array_filter($testGPolicies, fn ($p) => $p[2] === 'tenant:1');
+        $tenant2G = array_filter($testGPolicies, fn ($p) => $p[2] === 'tenant:2');
+        $this->assertCount(2, $tenant1G);
+        $this->assertCount(0, $tenant2G);
+
+        $testPPolicies = array_filter($pPolicies, fn ($p) => str_starts_with($p[0], 'role:900'));
+        $tenant1P = array_filter($testPPolicies, fn ($p) => $p[1] === 'tenant:1');
+        $tenant2P = array_filter($testPPolicies, fn ($p) => $p[1] === 'tenant:2');
+        $this->assertCount(4, $tenant1P);
+        $this->assertCount(0, $tenant2P);
     }
 
     /**

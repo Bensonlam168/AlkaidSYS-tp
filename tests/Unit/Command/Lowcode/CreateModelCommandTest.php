@@ -83,6 +83,7 @@ class CreateModelCommandTest extends ThinkPHPTestCase
         $this->assertTrue($method->invoke($this->command, 'datetime'));
         $this->assertTrue($method->invoke($this->command, 'json'));
         $this->assertTrue($method->invoke($this->command, 'select'));
+        $this->assertTrue($method->invoke($this->command, 'cascader'));
 
         $this->assertFalse($method->invoke($this->command, 'invalid_type'));
         $this->assertFalse($method->invoke($this->command, ''));
@@ -136,5 +137,9 @@ class CreateModelCommandTest extends ThinkPHPTestCase
         $this->assertArrayHasKey('scale', $decimalOptions);
         $this->assertEquals(10, $decimalOptions['precision']);
         $this->assertEquals(2, $decimalOptions['scale']);
+
+        $cascaderOptions = $method->invoke($this->command, 'cascader');
+        $this->assertArrayHasKey('multiple', $cascaderOptions);
+        $this->assertTrue($cascaderOptions['nullable']);
     }
 }

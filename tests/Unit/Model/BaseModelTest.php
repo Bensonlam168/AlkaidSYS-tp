@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Unit\Model;
 
 use app\model\BaseModel;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -13,9 +14,8 @@ use ReflectionClass;
  *
  * Tests for BaseModel global scopes, CLI detection, and caching.
  * 测试 BaseModel 全局作用域、CLI 检测和缓存功能。
- *
- * @covers \app\model\BaseModel
  */
+#[CoversClass(\app\model\BaseModel::class)]
 class BaseModelTest extends TestCase
 {
     protected function setUp(): void

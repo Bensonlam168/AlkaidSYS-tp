@@ -55,6 +55,12 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
         $this->assertNotNull($lastResponse);
         $this->assertSame(429, $lastResponse->getCode());
 
+        // 429 响应体中应包含 trace_id，便于限流诊断
+        $body = json_decode($lastResponse->getContent(), true);
+        $this->assertIsArray($body);
+        $this->assertArrayHasKey('trace_id', $body);
+        $this->assertNotEmpty($body['trace_id']);
+
         // 读取访问日志，检查是否存在 rate_limited=true 的记录
         $this->assertDirectoryExists($dir);
 

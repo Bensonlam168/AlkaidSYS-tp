@@ -127,6 +127,25 @@ class TestDataFactory
     }
 
     /**
+     * 创建带哈希密码的用户（适配登录流程）
+     */
+    public function createHashedUser(array $attributes = []): int
+    {
+        $defaults = [
+            'tenant_id' => 1,
+            'username' => 'test_user_' . uniqid(),
+            'email' => 'test_' . uniqid() . '@test.com',
+            // 存储密码哈希，满足 User::verifyPassword 的验证要求
+            'password' => password_hash('secret123', PASSWORD_DEFAULT),
+            'status' => 'active',
+        ];
+
+        $data = array_merge($defaults, $attributes);
+
+        return $this->create('users', $data);
+    }
+
+    /**
      * 创建角色
      * Create role
      *

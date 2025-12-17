@@ -169,5 +169,8 @@ class CollectionManagerTest extends ThinkPHPTestCase
 
         $this->assertArrayHasKey('idx_tenant_id_id', $indexes);
         $this->assertSame(['tenant_id', 'id'], $indexes['idx_tenant_id_id']['columns']);
+
+        $this->assertArrayHasKey('idx_tenant_site', $indexes);
+        $this->assertSame(['tenant_id', 'site_id'], $indexes['idx_tenant_site']['columns']);
     }
 }

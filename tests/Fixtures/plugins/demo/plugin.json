@@ -1,0 +1,11 @@
+{
+  "key": "demo_plugin",
+  "name": "Demo 插件",
+  "version": "1.2.3",
+  "category": "universal",
+  "type": "plugin",
+  "description": "用于测试扫描的示例插件",
+  "hooks": [
+    "DemoAction"
+  ]
+}

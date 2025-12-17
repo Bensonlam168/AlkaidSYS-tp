@@ -39,6 +39,13 @@ class CreateFormCommandTest extends ThinkPHPTestCase
     {
         $this->assertEquals('lowcode:create-form', $this->command->getName());
         $this->assertNotEmpty($this->command->getDescription());
+
+        $definition = $this->command->getDefinition();
+        $this->assertTrue($definition->hasOption('collection'));
+        $this->assertTrue($definition->hasOption('tenant-id'));
+        $this->assertTrue($definition->hasOption('site-id'));
+        $this->assertTrue($definition->hasOption('force'));
+        $this->assertTrue($definition->hasOption('fields'));
     }
 
     /**
@@ -91,5 +98,99 @@ class CreateFormCommandTest extends ThinkPHPTestCase
 
         // Unknown type should default to string | 未知类型应默认为string
         $this->assertEquals('string', $method->invoke($this->command, 'unknown_type'));
+    }
+
+    /**
+     * Test generateFormSchema with field filter | 测试生成表单Schema时的字段过滤
+     *
+     * @return void
+     */
+    public function testGenerateFormSchemaWithFieldFilter(): void
+    {
+        $reflection = new \ReflectionClass($this->command);
+        $method = $reflection->getMethod('generateFormSchema');
+        $method->setAccessible(true);
+
+        $includedFieldName = 'name';
+        $excludedFieldName = 'description';
+
+        $fieldIncluded = new class ($includedFieldName) {
+            private string $name;
+
+            public function __construct(string $name)
+            {
+                $this->name = $name;
+            }
+
+            public function getName(): string
+            {
+                return $this->name;
+            }
+
+            public function getType(): string
+            {
+                return 'string';
+            }
+
+            public function toArray(): array
+            {
+                return [
+                    'title' => 'Name',
+                    'nullable' => false,
+                ];
+            }
+        };
+
+        $fieldExcluded = new class ($excludedFieldName) {
+            private string $name;
+
+            public function __construct(string $name)
+            {
+                $this->name = $name;
+            }
+
+            public function getName(): string
+            {
+                return $this->name;
+            }
+
+            public function getType(): string
+            {
+                return 'string';
+            }
+
+            public function toArray(): array
+            {
+                return [
+                    'title' => 'Description',
+                    'nullable' => true,
+                ];
+            }
+        };
+
+        $collection = new class ([$fieldIncluded, $fieldExcluded]) {
+            /**
+             * @var array<int, object>
+             */
+            private array $fields;
+
+            public function __construct(array $fields)
+            {
+                $this->fields = $fields;
+            }
+
+            public function getFields(): array
+            {
+                return $this->fields;
+            }
+        };
+
+        $schema = $method->invoke($this->command, $collection, [$includedFieldName]);
+
+        $this->assertArrayHasKey('properties', $schema);
+        $this->assertArrayHasKey('required', $schema);
+        $this->assertArrayHasKey($includedFieldName, $schema['properties']);
+        $this->assertArrayNotHasKey($excludedFieldName, $schema['properties']);
+        $this->assertTrue(in_array($includedFieldName, $schema['required'], true));
     }
 }

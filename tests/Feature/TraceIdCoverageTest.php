@@ -21,6 +21,20 @@ if (!function_exists('env')) {
  */
 class TraceIdCoverageTest extends ThinkPHPTestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Ensure app\Request is bound to think\Request | 确保使用自定义 Request 实现
+        $this->app()->bind(\think\Request::class, \app\Request::class);
+
+        // Load auth routes so that /v1/auth/me is available | 加载认证路由
+        $routeFile = $this->app()->getRootPath() . 'route/auth.php';
+        if (file_exists($routeFile)) {
+            include_once $routeFile;
+        }
+    }
+
     /**
      * Test ApiController success response includes trace_id | 测试 ApiController 成功响应包含 trace_id
      */
@@ -81,6 +95,29 @@ class TraceIdCoverageTest extends ThinkPHPTestCase
 
         // Assert trace_id value | 断言 trace_id 值
         $this->assertEquals('test-trace-id-456', $data['trace_id']);
+    }
+
+    /**
+     * Test ApiController forbidden response includes trace_id | 测试 ApiController forbidden 响应包含 trace_id
+     */
+    public function testApiControllerForbiddenResponseIncludesTraceId(): void
+    {
+        $controller = new class ($this->app()) extends \app\controller\ApiController {
+            public function testForbidden()
+            {
+                $this->request->withHeader(['X-Trace-Id' => 'test-trace-id-403']);
+
+                return $this->forbidden('Forbidden');
+            }
+        };
+
+        $response = $controller->testForbidden();
+
+        $this->assertEquals(403, $response->getCode());
+
+        $data = json_decode($response->getContent(), true);
+        $this->assertArrayHasKey('trace_id', $data);
+        $this->assertEquals('test-trace-id-403', $data['trace_id']);
     }
 
     /**
@@ -222,5 +259,29 @@ class TraceIdCoverageTest extends ThinkPHPTestCase
 
         // Assert data is correct | 断言数据正确
         $this->assertEquals(['key' => 'value'], $data['data']);
+    }
+
+    /**
+     * Test 401 unauthorized response from Auth middleware includes trace_id | 测试 Auth 中间件返回的 401 响应包含 trace_id
+     */
+    public function testAuthUnauthorizedResponseIncludesTraceId(): void
+    {
+        /** @var \think\Request $request */
+        $request = $this->app()->make(\think\Request::class);
+        $request->setMethod('GET');
+        $request->setPathinfo('v1/auth/me');
+        $request = $request->withHeader([
+            'X-Trace-Id' => 'trace-id-auth-401',
+        ]);
+
+        $response = $this->runHttp($request);
+
+        // Should return 401 | 应该返回 401
+        $this->assertEquals(401, $response->getCode());
+
+        $data = json_decode($response->getContent(), true);
+        $this->assertIsArray($data);
+        $this->assertArrayHasKey('trace_id', $data);
+        $this->assertEquals('trace-id-auth-401', $data['trace_id']);
     }
 }

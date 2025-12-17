@@ -1,0 +1,110 @@
+[
+    {
+        "test_name": "single_permission_check",
+        "execution_time_ms": 1.87,
+        "memory_usage_bytes": 14206672,
+        "memory_usage_mb": 13.55,
+        "timestamp": 1764095967,
+        "date": "2025-11-25 18:39:27",
+        "environment": {
+            "php_version": "8.2.29",
+            "os": "Linux",
+            "memory_limit": "128M"
+        },
+        "metadata": {
+            "iterations": 100,
+            "max_time_ms": 41.3,
+            "min_time_ms": 0.81
+        }
+    },
+    {
+        "test_name": "single_permission_check",
+        "execution_time_ms": 1.9,
+        "memory_usage_bytes": 13992160,
+        "memory_usage_mb": 13.34,
+        "timestamp": 1764096039,
+        "date": "2025-11-25 18:40:39",
+        "environment": {
+            "php_version": "8.2.29",
+            "os": "Linux",
+            "memory_limit": "128M"
+        },
+        "metadata": {
+            "iterations": 100,
+            "max_time_ms": 27.66,
+            "min_time_ms": 0.88
+        }
+    },
+    {
+        "test_name": "single_permission_check",
+        "execution_time_ms": 1.86,
+        "memory_usage_bytes": 19607872,
+        "memory_usage_mb": 18.7,
+        "timestamp": 1764176818,
+        "date": "2025-11-27 01:06:58",
+        "environment": {
+            "php_version": "8.2.29",
+            "os": "Linux",
+            "memory_limit": "128M"
+        },
+        "metadata": {
+            "iterations": 100,
+            "max_time_ms": 10.61,
+            "min_time_ms": 0.97
+        }
+    },
+    {
+        "test_name": "single_permission_check",
+        "execution_time_ms": 1.96,
+        "memory_usage_bytes": 13956184,
+        "memory_usage_mb": 13.31,
+        "timestamp": 1764178285,
+        "date": "2025-11-26 17:31:25",
+        "environment": {
+            "php_version": "8.2.29",
+            "os": "Linux",
+            "memory_limit": "128M"
+        },
+        "metadata": {
+            "iterations": 100,
+            "max_time_ms": 53.39,
+            "min_time_ms": 0.83
+        }
+    },
+    {
+        "test_name": "single_permission_check",
+        "execution_time_ms": 1.59,
+        "memory_usage_bytes": 13928392,
+        "memory_usage_mb": 13.28,
+        "timestamp": 1764178326,
+        "date": "2025-11-26 17:32:06",
+        "environment": {
+            "php_version": "8.2.29",
+            "os": "Linux",
+            "memory_limit": "128M"
+        },
+        "metadata": {
+            "iterations": 100,
+            "max_time_ms": 30.88,
+            "min_time_ms": 0.87
+        }
+    },
+    {
+        "test_name": "single_permission_check",
+        "execution_time_ms": 1.95,
+        "memory_usage_bytes": 13828160,
+        "memory_usage_mb": 13.19,
+        "timestamp": 1764178511,
+        "date": "2025-11-26 17:35:11",
+        "environment": {
+            "php_version": "8.2.29",
+            "os": "Linux",
+            "memory_limit": "128M"
+        },
+        "metadata": {
+            "iterations": 100,
+            "max_time_ms": 43.2,
+            "min_time_ms": 0.79
+        }
+    }
+]

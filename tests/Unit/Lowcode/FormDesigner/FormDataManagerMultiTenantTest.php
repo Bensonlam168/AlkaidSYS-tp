@@ -2,11 +2,15 @@
 
 declare(strict_types=1);
 
-namespace tests\Unit\Lowcode\FormDesigner;
+namespace Tests\Unit\Lowcode\FormDesigner;
 
+use Tests\ThinkPHPTestCase;
+use Mockery;
+use Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager;
+use Infrastructure\Lowcode\FormDesigner\Service\FormValidatorManager;
+use Infrastructure\Lowcode\Collection\Service\CollectionManager;
+use Domain\Lowcode\Collection\Interfaces\CollectionInterface;
 use Infrastructure\Lowcode\FormDesigner\Service\FormDataManager;
-use Infrastructure\Lowcode\Collection\Model\Collection;
-use tests\ThinkPHPTestCase;
 use think\facade\Db;
 
 /**
@@ -25,9 +29,43 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
     protected function setUp(): void
     {
         parent::setUp();
-        
-        $this->formDataManager = app()->make(FormDataManager::class);
-        
+
+        // 1. Mock FormSchemaManager
+        $mockSchemaManager = Mockery::mock(FormSchemaManager::class);
+        $mockSchemaManager->shouldReceive('get')
+            ->andReturn([
+                'id' => 1,
+                'name' => 'lc_test_multitenant',
+                'collection_name' => 'lc_test_multitenant',
+                'schema' => ['fields' => []], // Simplified schema
+            ]);
+        $this->app()->bind(FormSchemaManager::class, $mockSchemaManager);
+
+        // 2. Mock CollectionManager
+        // Create a mock Collection object
+        $mockCollection = Mockery::mock(CollectionInterface::class);
+        $mockCollection->shouldReceive('getTableName')->andReturn($this->testTableName);
+
+        // Mock fields: name and value
+        $mockField1 = Mockery::mock();
+        $mockField1->shouldReceive('getName')->andReturn('name');
+        $mockField2 = Mockery::mock();
+        $mockField2->shouldReceive('getName')->andReturn('value');
+
+        $mockCollection->shouldReceive('getFields')->andReturn([$mockField1, $mockField2]);
+
+        $mockCollectionManager = Mockery::mock(CollectionManager::class);
+        $mockCollectionManager->shouldReceive('get')->andReturn($mockCollection);
+        $this->app()->bind(CollectionManager::class, $mockCollectionManager);
+
+        // 3. Mock FormValidatorManager
+        $mockValidator = Mockery::mock(FormValidatorManager::class);
+        $mockValidator->shouldReceive('validate')->andReturn(true);
+        $this->app()->bind(FormValidatorManager::class, $mockValidator);
+
+        // 4. Create FormDataManager with mocks injected
+        $this->formDataManager = $this->app()->make(FormDataManager::class);
+
         // Create test table | 创建测试表
         $this->createTestTable();
         $this->seedTestData();
@@ -37,7 +75,8 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
     {
         // Drop test table | 删除测试表
         Db::execute("DROP TABLE IF EXISTS {$this->testTableName}");
-        
+
+        Mockery::close();
         parent::tearDown();
     }
 
@@ -81,10 +120,8 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
     public function testTenantIsolationOnList(): void
     {
         // Tenant 1 can see 2 records | 租户 1 能看到 2 条记录
-        $tenant1Data = $this->formDataManager->list($this->testTableName, [
-            'tenant_id' => 1,
-            'site_id' => 1,
-        ]);
+        // Tenant 1 can see 2 records | 租户 1 能看到 2 条记录
+        $tenant1Data = $this->formDataManager->list($this->testTableName, 1, [], 1, 20, 1);
         $this->assertCount(2, $tenant1Data['list']);
         foreach ($tenant1Data['list'] as $item) {
             $this->assertEquals(1, $item['tenant_id']);
@@ -92,10 +129,8 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
         }
 
         // Tenant 2 site 1 can see 2 records | 租户 2 站点 1 能看到 2 条记录
-        $tenant2Site1Data = $this->formDataManager->list($this->testTableName, [
-            'tenant_id' => 2,
-            'site_id' => 1,
-        ]);
+        // Tenant 2 site 1 can see 2 records | 租户 2 站点 1 能看到 2 条记录
+        $tenant2Site1Data = $this->formDataManager->list($this->testTableName, 2, [], 1, 20, 1);
         $this->assertCount(2, $tenant2Site1Data['list']);
         foreach ($tenant2Site1Data['list'] as $item) {
             $this->assertEquals(2, $item['tenant_id']);
@@ -103,10 +138,8 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
         }
 
         // Tenant 2 site 2 can see 1 record | 租户 2 站点 2 能看到 1 条记录
-        $tenant2Site2Data = $this->formDataManager->list($this->testTableName, [
-            'tenant_id' => 2,
-            'site_id' => 2,
-        ]);
+        // Tenant 2 site 2 can see 1 record | 租户 2 站点 2 能看到 1 条记录
+        $tenant2Site2Data = $this->formDataManager->list($this->testTableName, 2, [], 1, 20, 2);
         $this->assertCount(1, $tenant2Site2Data['list']);
         $this->assertEquals('item1_t2s2', $tenant2Site2Data['list'][0]['name']);
     }
@@ -120,23 +153,15 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
         $createdId = $this->formDataManager->save($this->testTableName, [
             'name' => 'tenant1_secret',
             'value' => 'confidential',
-        ], [
-            'tenant_id' => 1,
-            'site_id' => 1,
-        ]);
+        ], 1, 1);
 
         // Try to read it as tenant 2 (should return null) | 尝试以租户 2 身份读取（应返回 null）
-        $crossTenantData = $this->formDataManager->get($this->testTableName, $createdId, [
-            'tenant_id' => 2,
-            'site_id' => 1,
-        ]);
+        $crossTenantData = $this->formDataManager->get($this->testTableName, $createdId, 2, 1);
         $this->assertNull($crossTenantData, 'Cross-tenant access should be blocked');
 
         // Verify tenant 1 can still read it | 验证租户 1 仍然可以读取
-        $legitData = $this->formDataManager->get($this->testTableName, $createdId, [
-            'tenant_id' => 1,
-            'site_id' => 1,
-        ]);
+        // Verify tenant 1 can still read it | 验证租户 1 仍然可以读取
+        $legitData = $this->formDataManager->get($this->testTableName, $createdId, 1, 1);
         $this->assertNotNull($legitData);
         $this->assertEquals('tenant1_secret', $legitData['name']);
     }
@@ -156,10 +181,7 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
         $updateResult = $this->formDataManager->save($this->testTableName, [
             'id' => $tenant1Id,
             'value' => 'hacked_value',
-        ], [
-            'tenant_id' => 2,
-            'site_id' => 1,
-        ]);
+        ], 2, 1);
 
         // Verify the original value is unchanged | 验证原始值未改变
         $original = Db::table($this->testTableName)->where('id', $tenant1Id)->find();
@@ -179,10 +201,8 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
         $tenant1Id = $tenant1Records[0]['id'];
 
         // Try to delete it as tenant 2 | 尝试以租户 2 身份删除
-        $this->formDataManager->delete($this->testTableName, $tenant1Id, [
-            'tenant_id' => 2,
-            'site_id' => 1,
-        ]);
+        // Try to delete it as tenant 2 | 尝试以租户 2 身份删除
+        $this->formDataManager->delete($this->testTableName, $tenant1Id, 2, 1);
 
         // Verify the record still exists | 验证记录仍然存在
         $stillExists = Db::table($this->testTableName)->where('id', $tenant1Id)->find();
@@ -198,10 +218,7 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
         $newId = $this->formDataManager->save($this->testTableName, [
             'name' => 'new_item',
             'value' => 'new_value',
-        ], [
-            'tenant_id' => 3,
-            'site_id' => 2,
-        ]);
+        ], 3, 2);
 
         $created = Db::table($this->testTableName)->where('id', $newId)->find();
         $this->assertEquals(3, $created['tenant_id'], 'tenant_id should be injected');
@@ -219,10 +236,7 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
             'value' => 'value',
             'tenant_id' => 999,  // This should be ignored | 应该被忽略
             'site_id' => 999,    // This should be ignored | 应该被忽略
-        ], [
-            'tenant_id' => 1,
-            'site_id' => 1,
-        ]);
+        ], 1, 1);
 
         $created = Db::table($this->testTableName)->where('id', $newId)->find();
         $this->assertEquals(1, $created['tenant_id'], 'Should use context tenant_id, not payload');
