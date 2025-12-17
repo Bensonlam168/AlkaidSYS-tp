@@ -126,6 +126,10 @@ class FormSchemaManager
      */
     public function getById(int $id, ?int $tenantId = null): ?array
     {
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when fetching form by ID');
+        }
+
         return $this->repository->findById($id, $tenantId);
     }
 

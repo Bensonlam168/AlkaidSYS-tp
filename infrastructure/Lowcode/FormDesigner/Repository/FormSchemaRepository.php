@@ -40,19 +40,24 @@ class FormSchemaRepository
             $data['schema'] = json_encode($data['schema']);
         }
 
+        // 强制要求租户上下文，避免无租户写入
+        // Enforce tenant context to avoid tenant-less writes
+        if (!isset($data['tenant_id'])) {
+            throw new \InvalidArgumentException('tenant_id is required for form schema persistence');
+        }
+        $tenantId = (int) $data['tenant_id'];
+        $siteId = isset($data['site_id']) ? (int) $data['site_id'] : null;
+
         if (isset($data['id']) && $data['id']) {
             // Update existing | 更新已存在的
-            $tenantId = (int)($data['tenant_id'] ?? 0);
-            $query = $tenantId > 0
-                ? $this->tenantDb->name($this->table, $tenantId)
-                : Db::name($this->table);
+            $query = $this->tenantDb->name($this->table, $tenantId, $siteId);
 
-            $query->where('id', $data['id'])->update($data);
+            $query->where('id', $data['id'])->where('tenant_id', $tenantId)->update($data);
             return (int)$data['id'];
         } else {
             // Insert new | 插入新的
             unset($data['id']);
-            return (int)Db::name($this->table)->insertGetId($data);
+            return (int)$this->tenantDb->name($this->table, $tenantId, $siteId)->insertGetId($data);
         }
     }
 
@@ -65,13 +70,14 @@ class FormSchemaRepository
      */
     public function findById(int $id, ?int $tenantId = null): ?array
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required for form lookup');
         }
 
-        $data = $query->find();
+        $data = $this->tenantDb
+            ->name($this->table, $tenantId)
+            ->where('id', $id)
+            ->find();
 
         if (!$data) {
             return null;
@@ -183,13 +189,14 @@ class FormSchemaRepository
      */
     public function delete(int $id, ?int $tenantId = null): bool
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required for form deletion');
         }
 
-        $result = (bool)$query->delete();
+        $result = (bool)$this->tenantDb
+            ->name($this->table, $tenantId)
+            ->where('id', $id)
+            ->delete();
         if (!$result) {
             // echo "Delete failed for ID $id (Tenant: $tenantId)\n";
         }
