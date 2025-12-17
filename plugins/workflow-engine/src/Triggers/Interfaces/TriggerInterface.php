@@ -15,6 +15,11 @@ use Alkaid\Workflow\Engine\Triggers\TriggerResult;
  * - webhook: Webhook 触发
  * - schedule: 定时触发
  * - data_event: 数据事件触发
+ * - form_submit: 表单提交触发
+ * - message: 消息触发
+ * - signal: 信号触发（BPMN）
+ * - timer_event: 定时器事件触发
+ * - system_event: 系统事件触发
  *
  * @package Alkaid\Workflow\Engine\Triggers\Interfaces
  */
@@ -27,6 +32,11 @@ interface TriggerInterface
     public const TYPE_WEBHOOK = 'webhook';
     public const TYPE_SCHEDULE = 'schedule';
     public const TYPE_DATA_EVENT = 'data_event';
+    public const TYPE_FORM_SUBMIT = 'form_submit';
+    public const TYPE_MESSAGE = 'message';
+    public const TYPE_SIGNAL = 'signal';
+    public const TYPE_TIMER_EVENT = 'timer_event';
+    public const TYPE_SYSTEM_EVENT = 'system_event';
 
     /**
      * 获取触发器类型
