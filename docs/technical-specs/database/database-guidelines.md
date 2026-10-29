@@ -53,7 +53,7 @@ This document defines mandatory database design and data access rules for the Al
 
 - `Domain\Lowcode` and `Infrastructure\Lowcode` are the **single source of truth** for low-code collection/field definitions.
 - New features **MUST NOT** introduce new dependencies on legacy collection APIs such as:
-  - `Domain\Model\Collection`
+- `Domain\Lowcode\Collection\Model\Collection`（Legacy 版本已移除）
   - `Infrastructure\Collection\CollectionManager`
   - `Infrastructure\Field\FieldTypeRegistry`
 - Legacy tables and columns marked as deprecated **MUST** only be used for backward compatibility glue code and MUST NOT receive new behaviour.
@@ -69,4 +69,3 @@ This document defines mandatory database design and data access rules for the Al
   - All business-critical tables SHOULD have complete forward/backward migrations and seed data where appropriate.
   - Legacy tables that are fully shadowed by low-code implementations SHOULD be retired according to the T1 domain cleanup execution report and the project's major-version deprecation policy.
   - Schema evolution and data migrations SHOULD be exercised in automated tests as part of the standard CI pipeline.
-

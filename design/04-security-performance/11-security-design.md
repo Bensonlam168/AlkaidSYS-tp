@@ -86,7 +86,8 @@ class AuthService extends BaseService
 
     public function __construct()
     {
-        $this->secret = config('app.jwt_secret');
+        // 使用环境变量 JWT_SECRET，禁止再使用 jwt.secret / APP_JWT_SECRET 等旧命名
+        $this->secret = env('JWT_SECRET', 'CHANGE_THIS_IN_PRODUCTION');
     }
 
     /**
@@ -1300,4 +1301,3 @@ class MaskService
 **最后更新**: 2025-01-19
 **文档版本**: v1.0
 **维护者**: AlkaidSYS 架构团队
-

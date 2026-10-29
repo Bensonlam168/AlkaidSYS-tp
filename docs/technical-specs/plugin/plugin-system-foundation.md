@@ -51,6 +51,15 @@
 
 对应实现：`infrastructure/Plugin/Hook/HookManager.php`
 
+### 钩子执行行为（T-052 增强）
+
+- 优先级：数字越小越先执行，维持 Action/Filter 兼容现有接口。
+- 停止传播：回调返回 `false` 或 `HookResult::stop($value)` 将终止后续回调（Filter 会返回 stop 内携带的值）。
+- 上下文透传：回调参数数量多于调用时入参或为可变参数时，将自动注入 `Domain\Event\EventContext`，包含 `trace_id/tenant_id/site_id/user_id`。
+- 异步执行：`HookManager::doActionAsync()` 队列入库，`doActionAsyncCoroutine()` 在 Swoole `go()` 下直接调度，无协程时自动回退队列。
+- 监控/告警：耗时与失败会落库 `hook_metrics`（缺表时降级日志 `hook.metrics`），失败重试超过阈值写入 `hook_dead_letters` 并通过 `hook.alert.*` 产生日志/告警；阈值配置见 `config/hook.php`。
+- 数据表：`hook_metrics`（耗时/失败）、`hook_dead_letters`（超过重试阈值的任务）、`hook_alerts`（慢钩子/失败率/DLQ 告警）。缺表时自动降级日志。
+
 ## 数据表
 
 迁移文件：`database/migrations/20251217000002_create_plugin_packages_and_installations_tables.php`
@@ -64,6 +73,89 @@
 - `alkaid_plugin_installations`：插件安装/启用状态（租户/站点维度）
   - `(tenant_id, site_id, plugin_key)` 唯一
   - `status`：`installed/enabled/disabled/uninstalled`
+
+## ORM 与低代码约束（T-048 对齐）
+
+- 动态业务实体必须使用 `Domain\\Lowcode` + `Infrastructure\\Lowcode`，禁止新增 Legacy Collection 依赖。
+- 运行期 DDL 统一通过 `Infrastructure\\Schema\\SchemaBuilder` 执行，要求幂等/可回滚，避免重复执行破坏数据。
+- 字段定义以 `FieldFactory` + `FieldInterface::getDbColumn()` 作为唯一映射出口，默认值/更新时间等字段约束必须体现在列定义中。
+- 多租户字段 `tenant_id/site_id` 与默认索引必须保留，插件相关扩展表不得绕过租户隔离规范。
+- 迁移 diff 输出需保持幂等（如 `IF NOT EXISTS/IF EXISTS`），并记录必要的审计与回滚路径。
+
+## 事件系统接入指引（T-049 对齐）
+
+- **优先级监听**：使用 `Domain\Event\EventService::listenWithPriority($event, $listener, $priority)`，数字越小优先级越高。
+- **停止传播**：监听器返回 `false` 或 `EventResult::stop()`，或在回调中调用 `$payload->stopPropagation()`。
+- **上下文透传**：监听器可接受第二参数 `EventPayload` 访问 `trace_id/tenant_id/site_id/user_id`。
+- **异步派发**：
+  - 队列：`triggerAsync($event, $params, $context, $queue)`，上下文自动序列化。
+  - 协程：`triggerAsyncCoroutine($event, $params, $context, $runner)`，默认使用 Swoole `go()`，无协程时回退队列。
+- **失败重试/死信**：队列执行异常重试 3 次后删除并记录 DLQ（错误码 2001/2002 语义），日志键 `event.dlq` 便于告警订阅。
+- **审计/指标**：同步触发记录 `duration_ms/failed/trace_id/tenant/site/user`（默认写入 `event_metrics` 表，表缺失时降级 `event.metrics` 日志）；死信写入 `event_dead_letters` 表或日志键 `event.dlq`；慢事件与失败率阈值可通过 `config/event.php`（或环境变量 `EVENT_MONITOR_*`）配置。
+- **PSR-14 兼容**：使用 `Domain\Event\PsrEventDispatcher` 作为桥接器，可将内部 EventService 提供给外部需要 PSR-14 Dispatcher/ListenerProvider 的组件。
+
+### 监控与告警接入（Grafana/日志订阅）
+
+**1) 日志订阅（推荐上报到 ELK/Loki）**
+- 关键日志键：`event.alert.*`（慢事件/失败/失败率/DLQ）、`event.async.failed`（异步执行失败）、`event.dlq`（死信原始记录）
+- 项目内已提供 `event_alert` 日志通道（JSON 格式），可直接采集 `runtime/log` 下对应文件。
+
+**2) Grafana/SQL 报表（直接查询 DB）**
+- 指标表：`event_metrics`（耗时/失败/上下文）
+- 死信表：`event_dead_letters`（失败超过阈值的任务）
+- 告警表：`event_alerts`（event.alert.* 的 DB 级订阅）
+
+示例 SQL（MySQL）：
+```sql
+-- 近 1 小时按事件聚合：P95 耗时、失败率（需要 MySQL 8.0）
+SELECT
+  event,
+  COUNT(*) AS total,
+  SUM(failed) AS failed_count,
+  ROUND(SUM(failed) / COUNT(*), 4) AS failure_rate,
+  ROUND(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) OVER (PARTITION BY event), 2) AS p95_ms
+FROM event_metrics
+WHERE created_at >= NOW() - INTERVAL 1 HOUR;
+
+-- 近 24 小时 DLQ 统计
+SELECT
+  event,
+  code,
+  COUNT(*) AS dlq_count
+FROM event_dead_letters
+WHERE created_at >= NOW() - INTERVAL 1 DAY
+GROUP BY event, code
+ORDER BY dlq_count DESC;
+
+-- 最近 100 条告警（DB 级订阅）
+SELECT *
+FROM event_alerts
+ORDER BY id DESC
+LIMIT 100;
+```
+
+### 使用示例
+```php
+$service = new \Domain\Event\EventService();
+$ctx = new \Domain\Event\EventContext('trace-1', 100, 1, 9);
+
+// 注册优先级监听
+$service->listenWithPriority('order.created', function ($data, $payload) {
+    // 业务处理
+    if ($data['should_stop'] ?? false) {
+        return \Domain\Event\EventResult::stop();
+    }
+}, 5);
+
+// 同步触发（携带上下文）
+$service->trigger('order.created', ['should_stop' => true], $ctx);
+
+// 异步（队列）触发
+$service->triggerAsync('order.created', ['id' => 1], $ctx, 'events');
+
+// 协程触发（Swoole go 可用时）
+$service->triggerAsyncCoroutine('order.created', ['id' => 2], $ctx);
+```
 
 ## CLI 命令
 
