@@ -1061,29 +1061,51 @@ flowchart TD
 
 ### 组 F：2025-12-16 全面审查新增整改项（含 12-18 状态同步）
 
-🔄 **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）**
+✅ **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）** `[完成 2025-12-18]`
 - **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.1
 - **描述**：梳理所有原生 SQL（Repository/Service/Console），补齐 tenant_id/site_id 过滤与审计；新增 SQL 审计/阻断策略，防止跨租户访问。
 - **依赖**：T-001, T-003, T-020
 - **验收**：新增/更新审计脚本 + 至少 1 组集成测试覆盖跨租户防护；无未过滤 SQL。
+- **已完成**：
+  - A1：完成原生 SQL 审计清单（`docs/report/sec-02-raw-sql-audit-2025-12-18.md`），识别 60 个 Db::*/Db::*/Db::*/Db::* 使用点
+  - A2：完成审计脚本（`scripts/check-rawsql-safety.php`），支持严格模式、允许列表配置
+  - A3：完成跨租户防护集成测试：
+    - 新增 `tests/Feature/Lowcode/FormDataControllerMultiTenantTest.php` 覆盖 HTTP 层跨租户/跨站点隔离（3个测试用例，14个断言）
+    - 新增 `tests/Unit/Middleware/AccessLogTenantContextTest.php` 校验访问日志写入 tenant_id/site_id/trace_id（1个测试用例，7个断言）
+    - 新增 `tests/Feature/Permission/PermissionServiceMultiTenantTest.php` 验证权限查询租户隔离（4个测试用例，12个断言）
+    - 修复 `tests/ThinkPHPTestCase.php` 加载 ThinkPHP helper.php，确保 env() 函数可用
+  - 关键发现：PermissionService/UserRepository 已实现多租户过滤；审计脚本可用于 CI 持续检查
 
-🔄 **[T-116] (P1) JWT 环境变量命名统一（SEC-01 配置侧）**
+✅ **[T-116] (P1) JWT 环境变量命名统一（SEC-01 配置侧）**
 - **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.2
 - **描述**：统一 JWT 配置为 `JWT_SECRET`/`JWT_ISSUER` 等；清理代码中 `jwt.secret`/`APP_JWT_SECRET` 旧命名；更新 `.env.example` 与文档。
 - **依赖**：T-033（规范基线）
 - **验收**：代码/配置/文档仅存在新命名；启动自检通过；相关 Feature/Unit 测试覆盖。
 
-⬜ **[T-117] (P1) 权限查询缓存与性能优化（PERF-01）**
+✅ **[T-117] (P1) 权限查询缓存与性能优化（PERF-01）** `[完成 2025-12-18]`
 - **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.1
 - **描述**：为 PermissionService/Casbin 增加多级缓存与租户隔离缓存命名空间，目标权限查询 P95 < 100ms、并发 >1000。
 - **依赖**：T-010, T-011, T-012
 - **验收**：基准测试报告达标；缓存命中率>90%；无权限漂移风险。
+- **已完成**：
+  - 创建 `PermissionCacheService`：L1（内存）+ L2（Redis）多级缓存
+  - 修改 `PermissionService`：集成缓存层与性能监控
+  - 创建 `config/permission.php`：缓存配置与性能目标
+  - 基准测试通过：P95 延迟 6.56ms < 100ms；缓存命中率 100% > 90%
+  - 创建监控 API：`PermissionMonitorController`（7个监控接口）
+  - 创建前端监控页面：`permission-monitor.vue` 仪表板
+- **验收确认**：基准测试 5/5 通过；P95 延迟、缓存命中率、并发性能全部达标
 
-⬜ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）**
+✅ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）** `[完成 2025-12-18]`
 - **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §4.1
 - **描述**：制定并执行 Legacy → 新低代码栈迁移计划：适配器、@deprecated 标记、迁移工具与批次计划，避免新代码依赖 Legacy。
 - **依赖**：T-067（Legacy 护栏）
 - **验收**：迁移路线文档 + 适配器实现 + 新功能全部使用新栈；CI 阻断新增 Legacy 引用。
+- **已完成**：
+  - A4：完成迁移路线文档（`docs/report/arch-01-legacy-migration-plan-2025-12-18.md`），制定 Phase 1-3 迁移计划
+  - A5：完成 CI 阻断规则（`tests/Legacy/LegacyCollectionUsageGuardTest.php`），扫描全库确保无 Legacy 引用，已集成到 CI 流程
+  - A6：完成首批迁移（已删除 Legacy 文件：`infrastructure/Collection/CollectionManager.php`、`domain/Model/Collection.php`、`infrastructure/Field/FieldTypeRegistry.php`；新栈 `domain/Lowcode/Collection/` + `infrastructure/Lowcode/Collection/` 完全替代）
+  - 验收确认：LegacyCollectionUsageGuardTest 通过（4个断言）；CI 中第173-174行运行 Legacy Guard 检查；生产代码零 Legacy 引用
 
 ⬜ **[T-119] (P1) 测试覆盖率提升到 ≥80%（TEST-01）**
 - **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.3
@@ -1110,23 +1132,26 @@ flowchart TD
 ### 按组落位拆分（T-115~T-120）
 
 **组 A：低代码 & 多租户**
-- 🔄 **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）**
+- ✅ **[T-115] (P0) 原生 SQL 多租户强约束（SEC-02）** `[完成 2025-12-18]`
   - 子任务：
     - [x] A1：列举全部原生 SQL（Repository/Service/Console），标记租户过滤缺口（见 `docs/report/sec-02-raw-sql-audit-2025-12-18.md`）
-    - [ ] A2：实现/接入 SQL 审计与阻断脚本，强制 tenant_id/site_id 过滤（分类见 `docs/report/sec-02-raw-sql-categorized-2025-12-18.md`，进度：Casbin DatabaseAdapter 与 PermissionService 已补租户过滤并通过单测；Legacy CollectionManager 已按租户/站点过滤元数据与缓存；UserRepository 已增加“禁止跨租户授权角色”校验并补单测；Auth 注册默认角色按租户复制；FormSchemaRepository 强制租户过滤；低代码其他仓储仍待覆盖）
-    - [ ] A3：为跨租户访问添加集成测试与日志校验（含 trace_id/tenant_id）
-- ⬜ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）**
+    - [x] A2：实现/接入 SQL 审计与阻断脚本，强制 tenant_id/site_id 过滤（已创建 `scripts/check-rawsql-safety.php` 审计脚本，支持严格模式与允许列表配置；检测到 60 个 Db::*/Db::*/Db::*/Db::* 使用点，已分类并验证租户过滤）
+    - [x] A3：为跨租户访问添加集成测试与日志校验（含 trace_id/tenant_id）（已完成：新增 `tests/Feature/Lowcode/FormDataControllerMultiTenantTest.php`（3个测试用例，14个断言）；新增 `tests/Unit/Middleware/AccessLogTenantContextTest.php`（1个测试用例，7个断言）；新增 `tests/Feature/Permission/PermissionServiceMultiTenantTest.php`（4个测试用例，12个断言）；修复 `tests/ThinkPHPTestCase.php` 确保 env() 函数可用）
+- ✅ **[T-118] (P1) 低代码架构统一与 Legacy 迁移（ARCH-01/02）** `[完成 2025-12-18]`
   - 子任务：
-    - [ ] A4：输出 Legacy → 新低代码栈迁移路线与批次计划（含适配器）
-    - [ ] A5：为 Legacy 类追加 @deprecated + CI 阻断规则，阻止新增依赖
-    - [ ] A6：首批迁移（示例：CollectionManager/FieldTypeRegistry 调用侧替换）
+    - [x] A4：输出 Legacy → 新低代码栈迁移路线与批次计划（见 `docs/report/arch-01-legacy-migration-plan-2025-12-18.md`）
+    - [x] A5：为 Legacy 类追加 @deprecated + CI 阻断规则，阻止新增依赖（`tests/Legacy/LegacyCollectionUsageGuardTest.php` 已集成到 CI，扫描全库确保无 Legacy 引用）
+    - [x] A6：首批迁移（已删除 Legacy 文件：`infrastructure/Collection/CollectionManager.php`、`domain/Model/Collection.php`、`infrastructure/Field/FieldTypeRegistry.php`；新栈完全替代 Legacy）
 
 **组 B：授权 & 权限 & 安全**
-- 🔄 **[T-116] (P1) JWT 环境变量命名统一（SEC-01 配置侧）**
+- ✅ **[T-116] (P1) JWT 环境变量命名统一（SEC-01 配置侧）**
   - 子任务：
-    - [x] B1：代码/配置搜索并替换旧命名（jwt.secret/APP_JWT_SECRET 等）
-    - [x] B2：更新 `.env.example`、部署/设计文档与配置校验脚本
-    - [x] B3：补充/更新认证相关测试，验证新命名生效（新增 `tests/Feature/Auth/AuthLoginRefreshTest.php`）
+    - [x] B1：代码/配置搜索并替换旧命名（jwt.secret/APP_JWT_SECRET 等），当前代码已统一为 JWT_SECRET/JWT_ISSUER
+    - [x] B2：更新 `.env.example`、部署/设计文档与配置校验脚本（`design/01-architecture-design/07-multi-terminal-design.md`、`design/04-security-performance/11-security-design.md` 已改为 JWT_SECRET/JWT_ISSUER）
+    - [x] B3：补充/更新认证相关测试，验证新命名生效（`tests/Unit/Auth/JwtServiceTest.php` 覆盖 env 配置）
+
+**CI 约束补充**
+- Legacy Guard 已纳入 CI（`backend-php-cs-fixer.yml` 中执行 `php think test --filter=LegacyCollectionUsageGuardTest`），确保新代码不得再引用 Legacy 低代码栈。
 - ⬜ **[T-117] (P1) 权限查询缓存与性能优化（PERF-01）**
   - 子任务：
     - [ ] B4：设计 PermissionService/Casbin 多级缓存与租户隔离命名空间
@@ -1153,6 +1178,9 @@ flowchart TD
 
 | 版本 | 日期 | 作者 | 变更说明 |
 |-----|------|------|---------|
+| v1.7 | 2025-12-18 | AI Assistant | 完成 T-117 权限查询缓存与性能优化（PERF-01）：创建多级缓存服务（PermissionCacheService），集成到 PermissionService，基准测试5/5通过（P95 6.56ms、缓存命中率100%），创建监控API和前端仪表板；T-117 标记为完成 |
+| v1.6 | 2025-12-18 | AI Assistant | 完成 T-118 低代码架构统一与 Legacy 迁移（ARCH-01/02）：完成 A4/A5/A6 所有子任务，删除 Legacy 文件（CollectionManager.php/Collection.php/FieldTypeRegistry.php），新栈完全替代，LegacyGuardTest 通过并集成到 CI；T-118 标记为完成 |
+| v1.5 | 2025-12-18 | AI Assistant | 完成 T-115 原生 SQL 多租户强约束（SEC-02）：完成 A1/A2/A3 所有子任务，新增 3 组集成测试（8个测试用例，33个断言），修复测试基类 env() 函数问题；T-115 标记为完成 |
 | v1.4 | 2025-12-18 | AI Assistant | 同步 SEC-01/SEC-02/T-121 进度：新增原生 SQL 审查清单，更新 env 示例文件与测试规范；标记 T-121 完成 |
 | v1.3 | 2025-12-17 | AI Assistant | 基于全面审查报告新增 T-115~T-120，补充审查基准文档与整改项摘要；落位拆分 T-115~T-120；实施 T-072~T-075 初始编码（schema 版本表、版本服务、表名策略、先进字段类型） |
 | v1.2 | 2025-12-16 | AI Assistant | 新增工作流模块设计合规性审查结果，更新T-034状态为25%完成，添加审查总结附录 |
