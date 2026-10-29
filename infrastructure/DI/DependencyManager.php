@@ -172,4 +172,27 @@ class DependencyManager
     {
         return $this->app;
     }
+
+    /**
+     * Register a service | 注册服务
+     *
+     * @param string $name Service name | 服务名称
+     * @param mixed $service Service instance | 服务实例
+     * @return void
+     */
+    public function register(string $name, mixed $service): void
+    {
+        $this->app->bind($name, $service);
+    }
+
+    /**
+     * Unregister a service | 注销服务
+     *
+     * @param string $name Service name | 服务名称
+     * @return void
+     */
+    public function unregister(string $name): void
+    {
+        $this->app->bind($name, null);
+    }
 }
