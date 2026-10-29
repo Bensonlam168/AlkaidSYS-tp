@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Lowcode\FormDesigner;
 
+use app\constant\ErrorCode;
+use app\exception\ForbiddenException;
 use Tests\ThinkPHPTestCase;
 use Infrastructure\Lowcode\FormDesigner\Service\FormDataManager;
 use Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager;
@@ -213,6 +215,48 @@ class FormDataManagerTest extends ThinkPHPTestCase
     }
 
     /**
+     * Test list ignores unknown filter fields | 测试列表过滤忽略未知字段，防止字段名注入
+     */
+    public function testListDataIgnoresUnknownFilterFields(): void
+    {
+        Db::table($this->testTableName)->insertAll([
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Item 1', 'price' => 10],
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Item 2', 'price' => 20],
+        ]);
+
+        $formName = 'product_form';
+        $tenantId = 1;
+        $this->mockDependencies($formName, $tenantId);
+
+        // unknown_field 不在白名单，应被忽略，只按 price 过滤
+        $result = $this->manager->list($formName, $tenantId, ['unknown_field' => 'bad', 'price' => 20], 1, 10);
+
+        $this->assertEquals(1, $result['total']);
+        $this->assertEquals('Item 2', $result['list'][0]['name']);
+    }
+
+    /**
+     * Test list supports zero value filter | 测试列表过滤支持 0 值（不被 empty 吃掉）
+     */
+    public function testListDataSupportsZeroValueFilter(): void
+    {
+        Db::table($this->testTableName)->insertAll([
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Zero Price', 'price' => 0],
+            ['tenant_id' => 1, 'site_id' => 0, 'name' => 'Non Zero', 'price' => 5],
+        ]);
+
+        $formName = 'product_form';
+        $tenantId = 1;
+        $this->mockDependencies($formName, $tenantId);
+
+        $result = $this->manager->list($formName, $tenantId, ['price' => 0], 1, 10);
+
+        $this->assertEquals(1, $result['total']);
+        $this->assertEquals('Zero Price', $result['list'][0]['name']);
+        $this->assertEquals(0, (int) $result['list'][0]['price']);
+    }
+
+    /**
      * Test that list data is tenant scoped | 测试列表查询按租户隔离
      */
     public function testListDataIsTenantScoped(): void
@@ -298,6 +342,30 @@ class FormDataManagerTest extends ThinkPHPTestCase
     }
 
     /**
+     * Test tenant spoofing guard | 测试租户伪造拦截
+     */
+    public function testTenantSpoofingGuard(): void
+    {
+        $this->expectException(ForbiddenException::class);
+        $this->expectExceptionCode(ErrorCode::FORBIDDEN);
+
+        $formName = 'product_form';
+        $data = ['name' => 'Test', 'price' => 100, 'tenant_id' => 99];
+        $tenantId = 1;
+
+        $this->schemaManager->shouldReceive('get')
+            ->with($formName, $tenantId, 0)
+            ->andReturn([
+                'schema' => [],
+                'collection_name' => 'test_collection'
+            ]);
+
+        $this->validatorManager->shouldNotReceive('validate');
+
+        $this->manager->save($formName, $data, $tenantId);
+    }
+
+    /**
      * Helper to mock dependencies | Mock依赖辅助方法
      */
     protected function mockDependencies(string $formName, int $tenantId): void
@@ -312,6 +380,9 @@ class FormDataManagerTest extends ThinkPHPTestCase
 
         // Mock Validator Manager
         $this->validatorManager->shouldReceive('validate')
+            ->withArgs(function ($data, $schema, $cacheKey, $context) use ($tenantId) {
+                return ($context['tenant_id'] ?? null) === $tenantId;
+            })
             ->andReturn(true);
 
         // Mock Collection Manager & Collection

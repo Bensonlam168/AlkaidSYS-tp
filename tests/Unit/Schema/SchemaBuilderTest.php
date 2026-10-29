@@ -6,6 +6,7 @@ namespace Tests\Unit\Schema;
 
 use Tests\ThinkPHPTestCase;
 use Infrastructure\Schema\SchemaBuilder;
+use think\facade\Env;
 
 /**
  * SchemaBuilder Unit Tests | SchemaBuilder单元测试
@@ -150,5 +151,94 @@ class SchemaBuilderTest extends ThinkPHPTestCase
         $this->assertTrue($this->schemaBuilder->hasColumn($this->testTable, 'id'));
         $this->assertTrue($this->schemaBuilder->hasColumn($this->testTable, 'name'));
         $this->assertFalse($this->schemaBuilder->hasColumn($this->testTable, 'email'));
+    }
+
+    /**
+     * Test idempotent createTable/addColumn/dropColumn | 测试幂等建表/加列/删列
+     */
+    public function testIdempotentOperations(): void
+    {
+        // createTable 幂等
+        $this->schemaBuilder->createTable(
+            $this->testTable,
+            ['id' => ['type' => 'INT', 'primary' => true]]
+        );
+        $this->assertTrue($this->schemaBuilder->createTable(
+            $this->testTable,
+            ['id' => ['type' => 'INT', 'primary' => true]]
+        ));
+
+        // addColumn 幂等
+        $this->assertTrue($this->schemaBuilder->addColumn(
+            $this->testTable,
+            'flag',
+            ['type' => 'TINYINT', 'default' => 0]
+        ));
+        $this->assertTrue($this->schemaBuilder->addColumn(
+            $this->testTable,
+            'flag',
+            ['type' => 'TINYINT', 'default' => 0]
+        ));
+
+        // dropColumn 幂等
+        $this->assertTrue($this->schemaBuilder->dropColumn($this->testTable, 'flag'));
+        $this->assertTrue($this->schemaBuilder->dropColumn($this->testTable, 'flag'));
+    }
+
+    /**
+     * 覆盖 assertCanRunDDL 的禁止分支（生产环境）
+     */
+    public function testAssertCanRunDDLBlockedInProduction(): void
+    {
+        $envBak = Env::get('APP_ENV');
+        $allowBak = Env::get('ALLOW_RUNTIME_DDL');
+
+        Env::set('APP_ENV', 'production');
+        Env::set('ALLOW_RUNTIME_DDL', false);
+
+        $ref = new \ReflectionClass($this->schemaBuilder);
+        $method = $ref->getMethod('assertCanRunDDL');
+        $method->setAccessible(true);
+
+        try {
+            $method->invoke($this->schemaBuilder, 'create_table', 'blocked_table');
+            $this->fail('生产环境下应阻止运行时 DDL');
+        } catch (\think\exception\HttpResponseException $e) {
+            $this->assertEquals(403, $e->getResponse()->getCode());
+        } finally {
+            // 还原环境变量，避免影响其他用例
+            Env::set('APP_ENV', $envBak);
+            Env::set('ALLOW_RUNTIME_DDL', $allowBak);
+        }
+    }
+
+    /**
+     * 构造包含 unsigned/on_update 的列定义，覆盖更多分支。
+     */
+    public function testBuildColumnDefinitionCoversUnsignedAndOnUpdate(): void
+    {
+        $ref = new \ReflectionClass($this->schemaBuilder);
+        $method = $ref->getMethod('buildColumnDefinition');
+        $method->setAccessible(true);
+
+        $primary = null;
+        $args = [
+            'updated_at',
+            [
+                'type' => 'TIMESTAMP',
+                'nullable' => false,
+                'default' => 'CURRENT_TIMESTAMP',
+                'on_update' => 'CURRENT_TIMESTAMP',
+                'unsigned' => true,
+                'comment' => '更新时间',
+            ],
+            &$primary,
+        ];
+        $sql = $method->invokeArgs($this->schemaBuilder, $args);
+
+        $this->assertStringContainsString('TIMESTAMP', $sql);
+        $this->assertStringContainsString('UNSIGNED', $sql);
+        $this->assertStringContainsString('ON UPDATE CURRENT_TIMESTAMP', $sql);
+        $this->assertNull($primary);
     }
 }

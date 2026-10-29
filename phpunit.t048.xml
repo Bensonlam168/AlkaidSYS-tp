@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true">
+    <!--
+      T-048 专用覆盖率配置：
+      仅统计 ORM/低代码相关目录，避免被无关模块稀释，作为验收“覆盖率≥80%”的量化依据。
+    -->
+    <testsuites>
+        <testsuite name="T048">
+            <directory>tests/Unit/Domain/Lowcode</directory>
+            <directory>tests/Unit/Schema</directory>
+            <directory>tests/Unit/Infrastructure/Lowcode</directory>
+            <directory>tests/Integration/Lowcode</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="dev"/>
+        <env name="DB_TYPE" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_NAME" value="alkaid_sys"/>
+        <env name="DB_USER" value="root"/>
+        <env name="DB_PASS" value="root"/>
+        <env name="DB_PORT" value="3306"/>
+        <!-- Allow runtime DDL in tests for SchemaBuilder -->
+        <env name="ALLOW_RUNTIME_DDL" value="true"/>
+    </php>
+    <coverage includeUncoveredFiles="true"/>
+    <source>
+        <include>
+            <directory suffix=".php">domain/Lowcode/Collection</directory>
+            <directory suffix=".php">domain/Schema</directory>
+            <directory suffix=".php">infrastructure/Lowcode/Collection</directory>
+            <directory suffix=".php">infrastructure/Lowcode/Schema</directory>
+            <directory suffix=".php">infrastructure/Schema</directory>
+            <directory suffix=".php">infrastructure/Tenant</directory>
+        </include>
+    </source>
+</phpunit>

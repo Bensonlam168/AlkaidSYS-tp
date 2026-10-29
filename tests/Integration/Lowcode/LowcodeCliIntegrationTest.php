@@ -607,7 +607,7 @@ class LowcodeCliIntegrationTest extends ThinkPHPTestCase
      */
     public function testAutomaticTableNameGeneration(): void
     {
-        $collectionName = 'TestCamelCaseCollection';
+        $collectionName = $this->generateCollectionName('TestCamelCaseCollection');
         $this->registerCollection($collectionName);
 
         $collection = new Collection($collectionName, [

@@ -37,6 +37,13 @@ abstract class ThinkPHPTestCase extends BaseTestCase
         if (self::$app === null) {
             $rootPath = dirname(__DIR__);
 
+            // Load ThinkPHP helper functions (including env())
+            // 加载 ThinkPHP 辅助函数（包括 env()）
+            $helperFile = $rootPath . '/vendor/topthink/framework/src/helper.php';
+            if (file_exists($helperFile)) {
+                require_once $helperFile;
+            }
+
             // Initialize ThinkPHP App | 初始化ThinkPHP应用
             self::$app = new App($rootPath);
 

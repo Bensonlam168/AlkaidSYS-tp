@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Unit\Lowcode\FormDesigner;
 
+use app\constant\ErrorCode;
+use app\exception\ForbiddenException;
 use Tests\ThinkPHPTestCase;
 use Mockery;
 use Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager;
@@ -60,7 +62,7 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
 
         // 3. Mock FormValidatorManager
         $mockValidator = Mockery::mock(FormValidatorManager::class);
-        $mockValidator->shouldReceive('validate')->andReturn(true);
+        $mockValidator->shouldReceive('validate')->withAnyArgs()->andReturn(true);
         $this->app()->bind(FormValidatorManager::class, $mockValidator);
 
         // 4. Create FormDataManager with mocks injected
@@ -230,16 +232,22 @@ class FormDataManagerMultiTenantTest extends ThinkPHPTestCase
      */
     public function testTenantContextCannotBeOverridden(): void
     {
-        // Try to inject tenant_id in payload (should be ignored) | 尝试在负载中注入 tenant_id
-        $newId = $this->formDataManager->save($this->testTableName, [
-            'name' => 'malicious_item',
-            'value' => 'value',
-            'tenant_id' => 999,  // This should be ignored | 应该被忽略
-            'site_id' => 999,    // This should be ignored | 应该被忽略
-        ], 1, 1);
+        $before = Db::table($this->testTableName)->count();
 
-        $created = Db::table($this->testTableName)->where('id', $newId)->find();
-        $this->assertEquals(1, $created['tenant_id'], 'Should use context tenant_id, not payload');
-        $this->assertEquals(1, $created['site_id'], 'Should use context site_id, not payload');
+        try {
+            // Try to inject tenant_id in payload (should be rejected) | 尝试在负载中注入 tenant_id（应当被拒绝）
+            $this->formDataManager->save($this->testTableName, [
+                'name' => 'malicious_item',
+                'value' => 'value',
+                'tenant_id' => 999,  // spoofing | 伪造租户
+                'site_id' => 999,    // spoofing | 伪造站点
+            ], 1, 1);
+
+            $this->fail('Expected ForbiddenException was not thrown');
+        } catch (ForbiddenException $e) {
+            $this->assertSame(ErrorCode::FORBIDDEN, $e->getCode());
+            $after = Db::table($this->testTableName)->count();
+            $this->assertSame($before, $after, 'Forbidden save should not create any record');
+        }
     }
 }

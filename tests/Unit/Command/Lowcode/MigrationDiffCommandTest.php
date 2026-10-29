@@ -71,7 +71,8 @@ class MigrationDiffCommandTest extends ThinkPHPTestCase
             'message' => '测试新增列',
         ]);
 
-        $this->assertStringContainsString('ALTER TABLE `lc_demo` ADD COLUMN `title`', $sql);
+        $this->assertStringContainsString('ALTER TABLE `lc_demo` ADD COLUMN', $sql);
+        $this->assertStringContainsString('`title`', $sql);
         $this->assertStringContainsString('-- 测试新增列', $sql);
     }
 

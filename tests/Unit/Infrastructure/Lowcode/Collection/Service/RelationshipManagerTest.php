@@ -70,7 +70,7 @@ class RelationshipManagerTest extends ThinkPHPTestCase
 
         $relationshipRepo->expects($this->once())
             ->method('save')
-            ->with($relationship, 10)
+            ->with($relationship, 10, $tenantId)
             ->willReturn(100);
 
         $collectionManager->expects($this->once())
@@ -109,7 +109,7 @@ class RelationshipManagerTest extends ThinkPHPTestCase
 
         $relationshipRepo->expects($this->once())
             ->method('delete')
-            ->with(20, 'author')
+            ->with(20, 'author', $tenantId)
             ->willReturn(true);
 
         $collectionManager->expects($this->once())
@@ -171,7 +171,7 @@ class RelationshipManagerTest extends ThinkPHPTestCase
 
         $relationshipRepo->expects($this->once())
             ->method('save')
-            ->with($relationship, 10)
+            ->with($relationship, 10, $tenantId)
             ->willReturn(200);
 
         $collectionManager->expects($this->once())
@@ -193,13 +193,19 @@ class RelationshipManagerTest extends ThinkPHPTestCase
                 $this->assertArrayHasKey('post_id', $columns);
                 $this->assertArrayHasKey('tag_id', $columns);
 
+                $this->assertArrayHasKey('tenant_id', $columns);
+                $this->assertArrayHasKey('site_id', $columns);
+                $this->assertArrayHasKey('idx_tenant_site', $indexes);
                 $this->assertArrayHasKey('idx_pivot_local', $indexes);
                 $this->assertArrayHasKey('idx_pivot_foreign', $indexes);
                 $this->assertArrayHasKey('idx_pivot_local_foreign', $indexes);
+                $this->assertArrayHasKey('uk_pivot_local_foreign_tenant', $indexes);
 
+                $this->assertSame(['tenant_id', 'site_id'], $indexes['idx_tenant_site']['columns']);
                 $this->assertSame(['post_id'], $indexes['idx_pivot_local']['columns']);
                 $this->assertSame(['tag_id'], $indexes['idx_pivot_foreign']['columns']);
-                $this->assertSame(['post_id', 'tag_id'], $indexes['idx_pivot_local_foreign']['columns']);
+                $this->assertSame(['tenant_id', 'site_id', 'post_id', 'tag_id'], $indexes['idx_pivot_local_foreign']['columns']);
+                $this->assertSame(['tenant_id', 'site_id', 'post_id', 'tag_id'], $indexes['uk_pivot_local_foreign_tenant']['columns']);
 
                 return true;
             });
@@ -208,4 +214,3 @@ class RelationshipManagerTest extends ThinkPHPTestCase
         $manager->addRelationship('posts', $relationship, $tenantId);
     }
 }
-

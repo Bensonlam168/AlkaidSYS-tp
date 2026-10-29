@@ -20,7 +20,7 @@ class FieldTypeSystemTest extends TestCase
     }
 
     /**
-     * Test FieldTypeRegistry has default types | 测试字段类型注册表包含默认类型
+     * Test FieldFactory has default types | 测试字段工厂包含默认类型
      */
     public function testRegistryHasDefaultTypes()
     {
@@ -30,6 +30,8 @@ class FieldTypeSystemTest extends TestCase
         $this->assertContains('integer', $types);
         $this->assertContains('boolean', $types);
         $this->assertContains('date', $types);
+        $this->assertContains('json', $types);
+        $this->assertContains('enum', $types);
         $this->assertGreaterThanOrEqual(4, count($types));
     }
 
@@ -102,6 +104,53 @@ class FieldTypeSystemTest extends TestCase
         // Reject other values
         $this->assertFalse($field->validate('true'));
         $this->assertFalse($field->validate('yes'));
+    }
+
+    /**
+     * Test enum field validation | 测试枚举字段验证
+     */
+    public function testEnumFieldValidation()
+    {
+        $field = FieldFactory::create('enum', 'status', [
+            'nullable' => false,
+            'enum' => ['draft', 'published'],
+        ]);
+
+        $this->assertTrue($field->validate('draft'));
+        $this->assertTrue($field->validate('published'));
+        $this->assertFalse($field->validate('archived'));
+        $this->assertFalse($field->validate(null));
+    }
+
+    public function testDbColumnDefinitionIncludesDefaultsAndOptions(): void
+    {
+        $field = FieldFactory::create('integer', 'score', [
+            'nullable' => false,
+            'default' => 1,
+            'unsigned' => true,
+            'title' => '评分',
+        ]);
+
+        $column = $field->getDbColumn();
+
+        $this->assertSame('INT(11) UNSIGNED', $column['type']);
+        $this->assertFalse($column['nullable']);
+        $this->assertSame(1, $column['default']);
+        $this->assertSame('评分', $column['comment']);
+    }
+
+    public function testTimestampColumnDefinitionIncludesOnUpdate(): void
+    {
+        $field = FieldFactory::create('timestamp', 'updated_time', [
+            'default_current' => true,
+            'on_update_current' => true,
+        ]);
+
+        $column = $field->getDbColumn();
+
+        $this->assertSame('TIMESTAMP', $column['type']);
+        $this->assertSame('CURRENT_TIMESTAMP', $column['default']);
+        $this->assertSame('CURRENT_TIMESTAMP', $column['on_update']);
     }
 
     /**

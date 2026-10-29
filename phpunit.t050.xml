@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true">
+    <!--
+      T-050 专用覆盖率配置：
+      聚焦低代码表单验证器（生成器/管理器/数据管理器），确保校验规则与多租户守护达到 ≥80% 覆盖。
+    -->
+    <testsuites>
+        <testsuite name="T050">
+            <directory>tests/Unit/Lowcode/FormDesigner</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <env name="APP_ENV" value="dev"/>
+        <env name="DB_TYPE" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_NAME" value="alkaid_sys"/>
+        <env name="DB_USER" value="root"/>
+        <env name="DB_PASS" value="root"/>
+        <env name="DB_PORT" value="3306"/>
+    </php>
+    <coverage includeUncoveredFiles="true"/>
+    <source>
+        <include>
+            <directory suffix=".php">infrastructure/Lowcode/FormDesigner/Service</directory>
+        </include>
+    </source>
+</phpunit>

@@ -43,7 +43,7 @@ class FieldManagerTest extends ThinkPHPTestCase
 
         $fieldRepo->expects($this->once())
             ->method('save')
-            ->with($field, 123);
+            ->with($field, 123, $tenantId);
 
         $collectionManager->expects($this->once())
             ->method('clearCache')
@@ -79,7 +79,7 @@ class FieldManagerTest extends ThinkPHPTestCase
 
         $fieldRepo->expects($this->once())
             ->method('delete')
-            ->with(456, 'bar');
+            ->with(456, 'bar', $tenantId);
 
         $collectionManager->expects($this->once())
             ->method('clearCache')
@@ -88,5 +88,82 @@ class FieldManagerTest extends ThinkPHPTestCase
         $manager = new FieldManager($schemaBuilder, $fieldRepo, $collectionManager);
         $manager->removeField('test_collection', 'bar', $tenantId);
     }
-}
 
+    public function testUpdateFieldUpdatesMetadataAndClearsTenantCache(): void
+    {
+        $schemaBuilder = $this->createMock(SchemaBuilderInterface::class);
+        $fieldRepo = $this->createMock(FieldRepository::class);
+        $collectionManager = $this->createMock(CollectionManager::class);
+
+        $field = $this->createMock(FieldInterface::class);
+        $field->method('getName')->willReturn('email');
+
+        $collection = $this->getMockBuilder('Domain\\Lowcode\\Collection\\Model\\Collection')
+            ->disableOriginalConstructor()
+            ->onlyMethods(['getField', 'getId'])
+            ->getMock();
+        $collection->method('getId')->willReturn(999);
+        $collection->method('getField')->with('email')->willReturn($field);
+
+        $tenantId = 8;
+
+        $collectionManager->expects($this->once())
+            ->method('get')
+            ->with('test_collection', $tenantId)
+            ->willReturn($collection);
+
+        $fieldRepo->expects($this->once())
+            ->method('save')
+            ->with($field, 999, $tenantId)
+            ->willReturn(1);
+
+        $collectionManager->expects($this->once())
+            ->method('clearCache')
+            ->with('test_collection', $tenantId);
+
+        $manager = new FieldManager($schemaBuilder, $fieldRepo, $collectionManager);
+        $manager->updateField('test_collection', 'email', ['title' => 'Email'], $tenantId);
+    }
+
+    public function testUpdateFieldThrowsWhenCollectionNotFound(): void
+    {
+        $schemaBuilder = $this->createMock(SchemaBuilderInterface::class);
+        $fieldRepo = $this->createMock(FieldRepository::class);
+        $collectionManager = $this->createMock(CollectionManager::class);
+
+        $tenantId = 8;
+        $collectionManager->expects($this->once())
+            ->method('get')
+            ->with('missing_collection', $tenantId)
+            ->willReturn(null);
+
+        $manager = new FieldManager($schemaBuilder, $fieldRepo, $collectionManager);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $manager->updateField('missing_collection', 'email', [], $tenantId);
+    }
+
+    public function testUpdateFieldThrowsWhenFieldNotFound(): void
+    {
+        $schemaBuilder = $this->createMock(SchemaBuilderInterface::class);
+        $fieldRepo = $this->createMock(FieldRepository::class);
+        $collectionManager = $this->createMock(CollectionManager::class);
+
+        $collection = $this->getMockBuilder('Domain\\Lowcode\\Collection\\Model\\Collection')
+            ->disableOriginalConstructor()
+            ->onlyMethods(['getField'])
+            ->getMock();
+        $collection->method('getField')->with('missing')->willReturn(null);
+
+        $tenantId = 8;
+        $collectionManager->expects($this->once())
+            ->method('get')
+            ->with('test_collection', $tenantId)
+            ->willReturn($collection);
+
+        $manager = new FieldManager($schemaBuilder, $fieldRepo, $collectionManager);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $manager->updateField('test_collection', 'missing', [], $tenantId);
+    }
+}

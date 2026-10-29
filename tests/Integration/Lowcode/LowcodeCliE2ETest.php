@@ -125,7 +125,12 @@ class LowcodeCliE2ETest extends ThinkPHPTestCase
         $this->assertSame(0, $createExitCode, "prepare collection failed. Output:\n" . $createOutput);
 
         // 对单个 Collection 执行 migration:diff --check
-        $diffArgs = sprintf('lowcode:migration:diff %s --check', escapeshellarg($name));
+        // 注意：diff 必须携带 tenant/site 维度，否则会默认 tenant_id=0 导致找不到集合
+        $diffArgs = sprintf(
+            'lowcode:migration:diff %s --check --tenant-id=%d',
+            escapeshellarg($name),
+            self::TEST_TENANT_ID
+        );
 
         $diffExitCode = 0;
         $diffOutput = $this->runCli($diffArgs, $diffExitCode);
