@@ -178,13 +178,15 @@ API 网关层    Nginx + Swoole（路由分发 / 限流 / 认证）
 | 测试 | 424 用例 / 1,829 断言，**42~43 个失败**（全部为跨测试污染，业务缺陷 0） |
 | 设计文档 | 73 份 |
 | 技术规格 | 39 份 |
-| 最大阻塞项 | 4 个 Critical（见配套质量审查报告） |
+| 最大阻塞项 | 4 个 Critical（**已修复 1 个**，见下方与配套质量审查报告） |
 
 ### 三个比写代码更紧急的问题
 
-1. **`frontend/` 是悬空 gitlink** —— 1,290 个前端文件**不在版本库中**，一次 `git clean -fdx` 即永久丢失
-2. **`plugins/workflow-engine/vendor` 已入库** —— 4,270 文件 / 39.28 MB，占全仓跟踪内容 78.8%
-3. **`/auth/register` 跨租户账号注入** —— 无 Auth 中间件 + 客户端可控 `X-Tenant-ID`
+| # | 问题 | 状态 |
+|---|---|---|
+| 1 | **`frontend/` 曾悬空为 gitlink** —— 1,273 个前端源文件不在版本库，一次 `git clean -fdx` 即永久丢失 | ✅ **已修复（2026-10-30，`bc2357e`）**：1,678 文件 / 8.49 MB 已入库 |
+| 2 | **`plugins/workflow-engine/vendor` 已入库** —— 4,270 文件 / 39.28 MB，占全仓跟踪内容 78.8% | ⏳ 待修 |
+| 3 | **`/auth/register` 跨租户账号注入** —— 无 Auth 中间件 + 客户端可控 `X-Tenant-ID` | ⏳ 待修 |
 
 ---
 
@@ -240,8 +242,9 @@ docker exec alkaid-backend php think migrate:status | grep -cE '^\s+up\s'
 docker exec alkaid-backend php think test
 
 # 前端是否在版本库（关键验证）
-git ls-files frontend | wc -l          # 期望 1（仅 gitlink），而非 1290
-git cat-file -t $(git ls-tree HEAD frontend | awk '{print $3}')  # 期望 fatal
+git ls-files frontend | wc -l                              # 期望 1678（已修复；修复前为 1）
+git ls-tree HEAD frontend                                  # 期望 040000 tree（非 160000 commit）
+git ls-files | grep -c node_modules                        # 期望 0（产物不入库）
 
 # vendor 是否入库
 git ls-tree -r -l HEAD -- plugins/workflow-engine/vendor | awk '{s+=$4;n++}END{print n, s/1048576" MB"}'

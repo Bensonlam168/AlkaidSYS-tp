@@ -22,6 +22,8 @@ module.exports = {
         'security', 'performance', 'testing', 'docs', 'assets',
         // 业务模块
         'lowcode', 'workflow', 'system', 'event', 'plugin', 'permission',
+        // 前端
+        'frontend',
       ],
     ],
     // Enforce maximum header length

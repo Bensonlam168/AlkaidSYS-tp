@@ -7,7 +7,7 @@
 | 审查方法 | superpowers `requesting-code-review` / `code-reviewer.md` 五维清单 |
 | 审查范围 | 后端 335 个 PHP / 57,376 行；`plugins/` 4,630 个跟踪文件；`frontend/`（见 C-2）；`design/` 73 份；`docs/` 111 份（不含归档） |
 | 核查方式 | 四路独立只读审计 + 主审对**每一条结论**逐项复核（复核记录见第十章） |
-| 最终结论 | **No（不建议合并）** —— 4 Critical / 9 Important / 17 Minor |
+| 最终结论 | **No（不建议合并）** —— 原始 4 Critical / 9 Important / 17 Minor；**截至 2026-10-30 已修复 1 个 Critical（C-2）**，剩余 3 Critical |
 
 > **计数口径说明**：所有依赖 git 状态的数字以审查基线 `f119d98` 为准。本报告自身的提交会使"从 develop 可达提交数"与"跟踪文件数"小幅递增，属正常增量，不影响结论。
 
@@ -258,7 +258,15 @@ hasColumn("users` WHERE 1=1 -- ", 'totally_missing_col')  → bool(true)    注�
 
 ---
 
-#### C-2 `frontend/` 是悬空 gitlink —— 前端源码不在版本库中
+#### C-2 `frontend/` 是悬空 gitlink —— 前端源码不在版本库中 ✅ **已修复（2026-10-30，提交 `bc2357e`）**
+
+> **修复结果**：gitlink 已替换为普通目录，**1,678 个前端文件（8.49 MB）已纳入版本控制**。
+> 验证：`git ls-tree HEAD frontend` → `040000 tree`（不再是 `160000 commit`）；
+> `git ls-files frontend` → 1,678；`node_modules` / `dist` / `.nitro` / `.turbo` 均未入库。
+> 其中 `.vue/.ts` 源文件 1,273 个（另有 17 个在 `dist/`、`.nitro/types/` 下的产物被正确排除）。
+> 原始问题描述保留如下，供追溯。
+
+**原始状态**：
 
 ```
 160000 commit f09aace7655656f002d4fe6b511be5bd06826c07    frontend
