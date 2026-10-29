@@ -24,6 +24,16 @@ class LegacyCollectionUsageGuardTest extends TestCase
     {
         $projectRoot = dirname(__DIR__, 2);
 
+        // Legacy 文件不应再存在
+        $legacyFiles = [
+            'infrastructure/Collection/CollectionManager.php',
+            'domain/Model/Collection.php',
+            'infrastructure/Field/FieldTypeRegistry.php',
+        ];
+        foreach ($legacyFiles as $legacyFile) {
+            $this->assertFileDoesNotExist($projectRoot . DIRECTORY_SEPARATOR . $legacyFile, "Legacy file {$legacyFile} should be removed");
+        }
+
         $legacyClasses = [
             'Domain\\Model\\Collection',
             'Infrastructure\\Collection\\CollectionManager',
@@ -32,20 +42,40 @@ class LegacyCollectionUsageGuardTest extends TestCase
 
         // Relative paths from project root where legacy references are allowed
         $allowList = [
-            'infrastructure/Collection/CollectionManager.php',
-            'domain/Model/Collection.php',
-            'infrastructure/Field/FieldTypeRegistry.php',
             'tests/Legacy/LegacyCollectionUsageGuardTest.php',
         ];
 
+        // 扩展扫描范围，覆盖脚本/扩展/插件等目录，避免新增 Legacy 依赖漏网
         $dirsToScan = [
             'app',
             'domain',
             'infrastructure',
             'tests',
+            'config',
+            'database',
+            'scripts',
+            'extend',
+            'route',
+            'addons',
+            'plugins',
+            'deploy',
+            'public',
+            'view',
         ];
 
         $violations = [];
+        $scanFile = static function (string $fullPath, string $relativePath) use ($legacyClasses, &$violations): void {
+            $contents = @file_get_contents($fullPath);
+            if ($contents === false) {
+                return;
+            }
+
+            foreach ($legacyClasses as $class) {
+                if (strpos($contents, $class) !== false) {
+                    $violations[] = [$relativePath, $class];
+                }
+            }
+        };
 
         foreach ($dirsToScan as $dir) {
             $baseDir = $projectRoot . DIRECTORY_SEPARATOR . $dir;
@@ -69,17 +99,22 @@ class LegacyCollectionUsageGuardTest extends TestCase
                     continue;
                 }
 
-                $contents = @file_get_contents($file->getPathname());
-                if ($contents === false) {
-                    continue;
-                }
-
-                foreach ($legacyClasses as $class) {
-                    if (strpos($contents, $class) !== false) {
-                        $violations[] = [$relativePath, $class];
-                    }
-                }
+                $scanFile($file->getPathname(), $relativePath);
             }
+        }
+
+        // 扫描仓库根目录下的 PHP 脚本，避免调试脚本遗漏
+        foreach (new \DirectoryIterator($projectRoot) as $file) {
+            if (!$file->isFile() || $file->getExtension() !== 'php') {
+                continue;
+            }
+
+            $relativePath = $file->getFilename();
+            if (in_array($relativePath, $allowList, true)) {
+                continue;
+            }
+
+            $scanFile($file->getPathname(), $relativePath);
         }
 
         if (!empty($violations)) {
@@ -94,4 +129,3 @@ class LegacyCollectionUsageGuardTest extends TestCase
         $this->assertTrue(true); // Explicit assertion for clarity
     }
 }
-
