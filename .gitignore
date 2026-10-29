@@ -64,3 +64,16 @@ README.local-merge-backup.md
 .php-cs-fixer.cache
 .phpunit.cache
 .phpunit.result.cache
+.openbitfun/
+.phpunit.result.cache
+/logs/
+/storage/
+
+# Serena 工具缓存（体积大，不入库）
+/.serena/cache/
+
+# PHPUnit 结果缓存
+/.phpunit.result.cache
+
+# 本地容器端口冲突 override（不入库）
+docker-compose.override.local.yml
