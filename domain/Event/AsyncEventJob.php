@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Domain\Event;
 
-use think\facade\Event;
 use think\queue\Job;
+use Infrastructure\Event\EventMonitor;
+use think\facade\Config;
 
 /**
  * Async Event Job | 异步事件任务
@@ -17,6 +18,26 @@ use think\queue\Job;
  */
 class AsyncEventJob
 {
+    protected EventMonitor $monitor;
+
+    public function __construct(?EventMonitor $monitor = null)
+    {
+        $this->monitor = $monitor ?? new EventMonitor();
+    }
+
+    /**
+     * 当重试超过阈值时写入死信（DLQ）表。
+     */
+    protected function recordDeadLetter(string $event, ?EventContext $context, \Throwable $e, int $attempts, mixed $payload = null): void
+    {
+        $code = (int) $e->getCode();
+        if (!in_array($code, [2001, 2002], true)) {
+            $code = 2001;
+        }
+
+        $this->monitor->recordDeadLetter($event, $context, $e, $attempts, $code, $payload);
+    }
+
     /**
      * Execute the job | 执行任务
      *
@@ -28,19 +49,40 @@ class AsyncEventJob
     {
         $event = $data['event'] ?? null;
         $params = $data['params'] ?? [];
+        $context = isset($data['context']) && is_array($data['context']) ? EventContext::fromArray($data['context']) : null;
+        $serviceClass = $data['service_class'] ?? EventService::class;
 
         if ($event) {
             try {
-                // Trigger the event | 触发事件
-                Event::trigger($event, $params);
+                // Trigger the event | 触发事件（统一传递 EventPayload，透传上下文）
+                /** @var EventService $service */
+                $service = new $serviceClass();
+                $service->trigger($event, $params, $context);
                 $job->delete();
             } catch (\Throwable $e) {
                 // Log error | 记录错误
+                // 记录 trace 便于排查
+                \think\facade\Log::warning('event.async.failed', [
+                    'event' => $event,
+                    'trace_id' => $context?->getTraceId(),
+                    'tenant_id' => $context?->getTenantId(),
+                    'site_id' => $context?->getSiteId(),
+                    'user_id' => $context?->getUserId(),
+                    'attempts' => $job->attempts(),
+                    'error' => $e->getMessage(),
+                ]);
                 // If max retries reached, delete | 如果达到最大重试次数，删除任务
-                if ($job->attempts() > 3) {
+                $maxAttempts = (int) Config::get('event.dlq.max_attempts', 3);
+                if ($job->attempts() > $maxAttempts) {
+                    $this->recordDeadLetter($event, $context, $e, $job->attempts(), [
+                        'event' => $event,
+                        'params' => $params,
+                        'context' => $data['context'] ?? null,
+                    ]);
                     $job->delete();
                 } else {
-                    $job->release(10); // Retry after 10 seconds | 10秒后重试
+                    $delay = (int) Config::get('event.dlq.retry_delay_seconds', 10);
+                    $job->release($delay); // Retry after delay | 延迟后重试
                 }
             }
         } else {
