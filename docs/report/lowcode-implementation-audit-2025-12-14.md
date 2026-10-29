@@ -28,7 +28,7 @@
   - FormDesigner 通过 FormDataManager 将动态表访问统一到“集合/表单 Schema → 物理表 + 行级多租户过滤”的路径。
 - **核心风险**：
   - **LC-LOWCODE-01（Major）**：低代码多租户化仍处于“模板租户 0 + 显式 tenantId 传递”的过渡态，部分模块（如 Relationship）在租户维度上尚未完全统一；
-  - **LC-LEGACY-01（Major）**：Legacy `Domain\Model\Collection` / `Infrastructure\Collection\CollectionManager` 等旧实现仍存在并在少量路径中被使用，缺乏技术护栏防止新代码继续依赖；
+- **LC-LEGACY-01（Major）**：Legacy `Domain\Model\Collection` / `Infrastructure\Collection\CollectionManager` 等旧实现曾存在，现已移除并由 Guard 测试阻断新增引用；
   - **索引与性能（Minor）**：关系中间表与部分动态表索引未完全达到设计中推荐的索引组合，对高负载场景存在潜在性能风险；
   - **测试覆盖（Minor/Info）**：Collection 及多租户主路径已有较好测试，Field/Relationship/SchemaBuilder/CLI 等模块的测试矩阵仍需增强。
 
@@ -216,7 +216,7 @@
   - 测试不足：LC-TEST-01；
   - 设计/体验偏差：LC-CLI-UX-01。
 
-> 注：LEGACY-01 对应的具体问题 LC-LEGACY-01：Legacy `Domain\Model\Collection` / `Infrastructure\Collection\CollectionManager` 等旧实现仍在仓库中存在，部分历史路径继续依赖，且缺少技术护栏（如 deprecation wrappers、静态检查）阻止新代码引用。该问题在本报告与 `docs/report/design-compliance-audit-2025-12-14.md` 中保持一致。
+> 注：LEGACY-01 对应的具体问题 LC-LEGACY-01：Legacy `Domain\Model\Collection` / `Infrastructure\Collection\CollectionManager` 等旧实现曾存在，现已删除，并由静态 Guard 测试阻断新增引用。
 
 ---
 
@@ -227,7 +227,7 @@
      - 补全 Domain Collection/Relationship 对 `tenant_id/site_id` 的显式使用，并在 Service/Controller 层强制从 Request 上下文传递；
      - 统一 RelationshipController 等控制器的 CollectionManager 调用，显式传入 tenantId；
   2. **添加 Legacy 技术护栏（LC-LEGACY-01）**：
-     - 对 `Domain\Model\Collection` / `Infrastructure\Collection\CollectionManager` 等 Legacy 类增加明确的 `@deprecated` 标注与运行时日志告警；
+    - Legacy 类已删除，迁移路线见 `docs/report/arch-01-legacy-migration-plan-2025-12-18.md`，Guard 测试常驻阻断新引用。
      - 在代码审查/静态检查规则中增加“禁止新依赖 Legacy Collection 类”的检查。
 
 - **中期（约 1 个月，Minor + 性能 + 测试）**：
@@ -256,4 +256,3 @@
   - LEGACY-01 → LC-LEGACY-01；
   - LOWCODE-01 → LC-LOWCODE-01；
   - MT-01/RAWSQL-01/TEST-01 等多租户/原生 SQL/测试问题在本报告中分别通过 LC-SCHEMA-IDX-01、数据访问说明与 LC-TEST-01 进行呼应与延伸。
-

@@ -281,7 +281,7 @@ docker exec -it alkaid-backend php think test --coverage-html
 1. **制定迁移计划**:
    ```php
    // 逐步替换Legacy依赖
-   // Domain\Model\Collection -> Domain\Lowcode\Collection\Model\Collection
+  // Legacy 类已删除，低代码 Collection 仅保留 Domain\Lowcode\Collection\Model\Collection
    // Infrastructure\Collection\CollectionManager -> Infrastructure\Lowcode\Collection\Service\CollectionManager
    ```
 

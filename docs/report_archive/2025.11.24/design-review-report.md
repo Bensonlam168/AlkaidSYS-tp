@@ -71,7 +71,7 @@
 ### 5.1 代码质量与结构
 - 优点: PSR-4 目录清晰; 低代码模块命名规范、注释中英双语; 控制器和服务使用类型声明
 - 问题:
-  - 存在 `Domain\Model\Collection` 与 `Domain\Lowcode\Collection\Model\Collection` 等重复概念, 需统一
+  - 低代码 Collection 现仅保留 `Domain\Lowcode\Collection\Model\Collection`，Legacy 类已移除，Guard 测试在 CI 中阻断新增引用
   - 已新增 ApiController 统一 success/error/paginate 等响应方法, 但仍有个别控制器分支(如 RelationshipController::save 中的 404 分支)直接 `json()` 返回, 响应结构略有不一致
   - 部分服务(MigrationManager、SchemaBuilder) 直接文件写入或拼接 SQL, 缺少错误处理与日志, 不利于排障
 
@@ -139,7 +139,7 @@
 - [重要][❌ 未解决] Nginx 网关、灰度/限流/熔断等运维设施
   - docker-compose 仍仅包含 backend+MySQL+Redis+RabbitMQ, 未加入 Nginx 网关容器, 应用级限流(RateLimit)、熔断与灰度发布逻辑尚未实现
 - [一般][❌ 未解决] 领域模型命名和职责重叠
-  - 仍存在多套 Collection 相关模型并存(如 Domain\Model\Collection 与 Domain\Lowcode\Collection\Model\Collection), 容易混淆职责, 建议统一收敛
+- 已统一为 `Domain\Lowcode\Collection\Model\Collection`，消除重复模型
 - [一般][⚠️ 部分解决] 系统化单元/集成测试
   - 已新增 tests/Unit 与 tests/Feature 目录及多组测试用例, 但目前覆盖范围仍主要集中在低代码与部分基础设施, 对多租户/安全等关键路径覆盖度有限
 - [一般][🆕 新增问题] 多租户中间件与认证中间件在路由层挂载不统一
@@ -201,4 +201,3 @@ return $this->paginate($result['list'], $result['total'], $result['page'], $resu
 
 - 与初版评审相比, 项目在多租户上下文、认证授权、平台核心数据模型和统一 API 响应方面已有实质性进展, 平台形态更清晰;
 - 仍建议在下一阶段优先完成: **(1) 全局启用并验证多租户/认证/权限/限流等关键中间件; (2) 为 SchemaBuilder 等运行时 DDL 增加环境级防护; (3) 引入 Nginx 网关与基础监控/日志; (4) 针对多租户与安全路径补齐集成测试**, 以提升整体工程可靠性。
-

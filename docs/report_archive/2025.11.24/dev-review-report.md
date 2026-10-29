@@ -124,7 +124,7 @@
   - 控制器方法和服务函数有类型声明，符合 PHP 8 风格
 
 - 问题：
-  - 存在多套“Collection”模型（老的 `Domain\Model\Collection` 与新的 `Domain\Lowcode\Collection\Model\Collection`）并存，易造成困惑
+- 已统一为 `Domain\Lowcode\Collection\Model\Collection`，Legacy 类已移除
   - BaseController 没有统一 success/error/paginate，导致各控制器自己构造 JSON，风格不完全统一
   - MigrationManager 等类直接写文件，缺少统一错误处理与日志
 
