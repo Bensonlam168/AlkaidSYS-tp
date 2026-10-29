@@ -39,6 +39,7 @@ type: "always_apply"
      - `Domain\\Model\\Collection`
      - `Infrastructure\\Collection\\CollectionManager`
      - 旧版 `Infrastructure\\Field\\FieldTypeRegistry`
+   - 低代码表单校验需保持前后端一致：前端获取表单详情调用 `GET /v1/lowcode/forms/{name}?with_validator=1&with_parsed=1`，使用返回的 `validator.rules/messages` 与 `parsed.components/permissions`，前端本地校验仅作兜底，禁止与后端规则漂移。
 
 ---
 

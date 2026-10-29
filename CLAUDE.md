@@ -152,6 +152,7 @@ graph LR
 | **I18n** | `domain/I18n/` | 国际化 | 多语言支持 |
 | **RateLimit** | `domain/RateLimit/` | 限流控制 | 令牌桶、漏桶 |
 | **Validator** | `domain/Validator/` | 数据验证 | 验证器生成 |
+| **Lowcode Validator/Schema Parser** | `infrastructure/Lowcode/FormDesigner/Service` / `infrastructure/Lowcode/Schema/SchemaParser.php` | 表单校验生成、Schema 解析 | 前端获取表单详情时调用 `GET /v1/lowcode/forms/{name}?with_validator=1&with_parsed=1`，优先使用返回的 `validator.rules/messages` 与 `parsed.components/permissions`，本地 zod 规则仅作兜底 |
 
 ---
 

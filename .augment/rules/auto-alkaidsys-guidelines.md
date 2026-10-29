@@ -63,6 +63,7 @@ type: "always_apply"
 1. **Schema-first**
    - 动态实体优先通过低代码 Schema 定义集合、字段和关系。
    - 数据库表结构与索引优先通过迁移脚本自动生成，避免手写 DDL。
+  - 表单校验一致性：前端获取低代码表单详情时调用 `GET /v1/lowcode/forms/{name}?with_validator=1&with_parsed=1`，使用返回的 `validator.rules/messages` 与 `parsed.components/permissions` 构建校验/渲染，前端本地规则仅作兜底，禁止与后端漂移。
 
 2. **漂移检测与同步（规划中）**
    - 推荐工作流：
@@ -104,4 +105,3 @@ type: "always_apply"
 2. **PR 粒度**
    - 优先拆分为若干小而清晰的 PR，每个 PR 聚焦一个明确主题。
    - PR 描述中简要列出：变更点、涉及规范条目、测试情况。
-

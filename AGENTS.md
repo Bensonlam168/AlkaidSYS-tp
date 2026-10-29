@@ -16,6 +16,7 @@
 - **分层/DDD**：控制器仅做路由、校验、调用 Service/Domain 与统一响应；数据访问放 Repository/Infrastructure。
 - **多租户与安全**：所有租户级数据包含 `tenant_id`（必要时 `site_id`），请求/任务需传递权限与 trace_id，上下文过滤不可遗漏。
 - **REST 与错误码**：遵守统一响应结构 `code/message/data/timestamp(/trace_id)`；认证/权限错误码按规范使用 2001/2002。
+- **低代码表单校验对齐**：前端获取表单详情如需复用后端校验，调用 `GET /v1/lowcode/forms/{name}?with_validator=1&with_parsed=1`，优先使用返回的 `validator.rules/messages` 与 `parsed.components/permissions` 渲染和控制可见性，前端本地 zod 规则仅作兜底，不得覆盖后端规则。
 
 ## Project Structure & Module Organization
 - `app/`: ThinkPHP application code (controllers, middleware, console commands).
