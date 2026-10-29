@@ -5,9 +5,9 @@
 | 报告日期 | 2026-10-30 |
 | 审查基线 | 本地 `develop` HEAD（分支整理重建后） |
 | 审查范围 | `design/` 73 份（50,390 行）+ `docs/` 111 份（33,284 行，不含 `report_archive/`）= **184 份 / 83,674 行** |
-| 审查方法 | 全量自动化扫描（链接、围栏、版本、日期、任务号）+ 核心文档精读 + 与源码交叉验证 |
-| 问题总数 | **20 项**（4 阻断 / 6 严重 / 5 中等 / 5 轻微） |
-| 总体结论 | 文档体系**结构完整、覆盖面广**，但存在**系统性维护滞后**与**若干会误导开发的具体错误**，建议在重启开发前完成 P0 修复 |
+| 审查方法 | 全量自动化扫描（链接、围栏、版本、日期、任务号、类引用）+ 核心文档精读 + 与源码交叉验证 |
+| 问题总数 | **22 项**（5 阻断 / 7 严重 / 7 中等 / 3 轻微） |
+| 总体结论 | 文档体系**结构完整、覆盖面广**，但存在**系统性维护滞后**与**示例代码命名空间整体脱节**，建议在重启开发前完成 P0 修复 |
 
 ---
 
@@ -114,6 +114,22 @@
 `[证据: 遍历 design/*/ 逐个在 README.md 中 grep]`
 
 **影响**：作为 `design/` 唯一入口，漏列使 `domain-model-unification-plan.md`（领域模型统一方案）与 `ratelimit-strategy.md`（限流策略）**无法从入口被发现**。
+
+> ✅ **已于 2026-10-30 修复**：`design/README.md` 已补列 `02-domain-layer`、`06-ratelimit`，并补齐 `prompt-templates`、`sdk-builder`，现 15/15 目录全覆盖。
+
+---
+
+#### A-5 【补做新发现】归档目录入口 README 链接少一层 `../`
+
+```
+docs/report_archive/2025.12.18/README.md -> ../report/README.md
+```
+
+实际应为 `../../report/README.md`（该 README 位于 `docs/report_archive/2025.12.18/`，需上溯两层才到 `docs/`）。
+
+`[证据: 归档目录链接扫描，149 处失效链接中仅此 1 处属路径层级错误，其余为归档后路径天然失效]`
+
+**影响**：轻微。归档文档的链接本就不要求有效，但入口 README 的导航失效会影响检索。
 
 ---
 
@@ -229,6 +245,29 @@ design/00-core-planning/01-MASTER-IMPLEMENTATION-PLAN.md:142
 
 ---
 
+#### B-7 【补做新发现·严重】39 处示例代码引用指向不存在的类
+
+对全部代码示例的 `use` 声明做解析，**48 个项目自有类引用中仅 9 个存在，39 个指向不存在的文件**。
+
+按根因分 6 类（详见第八章 8.1）：
+
+| 类别 | 数量 | 代表 |
+|---|---|---|
+| `app\common\*` 命名空间**从未存在** | **15** | `app\common\model\User`、`app\common\service\AuthService`、`app\common\plugin\BasePlugin`、`app\common\controller\BaseController` |
+| `app\lowcode\*` 不存在 | 3 | `app\lowcode\workflow\registry\NodeTypeRegistry` |
+| `app\service\*` 不存在 | 3 | `app\service\core\addon\CorePluginBaseService`（实际为 `Infrastructure\Plugin\CorePluginBaseService`） |
+| `Alkaid\Workflow\Engine\{Execution,Models,Services}\*` 子层划分与实现不符 | **13** | `Alkaid\Workflow\Engine\Execution\ExecutionContext`（实现用 `Core/`、`Model/`、`Definition/`） |
+| Legacy 类（**文档已正确标注为不存在**） | 3 | `Infrastructure\Field\FieldTypeRegistry` |
+| 试探性命名 | 2 | `Alkaid\Framework\Http\Controller` |
+
+`[证据: 解析 design/ + docs/technical-specs/ + docs/developer-guides/ 全部 use 声明，按 PSR-4 映射到文件路径后 [ -f ] 判定；框架类在容器内 class_exists() 复核]`
+
+**影响**：设计文档里的示例代码**基本无法直接运行**——不是语法问题，而是类根本不存在。这比 B-4 的单点问题严重得多，因为它意味着**整套设计文档的命名空间假设与实际代码结构脱节**。
+
+**建议**：不重写全部示例（成本过高）。在每份含示例的设计文档头部统一声明「本文示例使用设计阶段命名，实际命名空间以 `lowcode-architecture-guidelines.md` 映射表为准」，并**扩充该映射表**以覆盖 `app\common\*` → 实际路径。
+
+---
+
 ### C 类：文档内部自相矛盾（P1）
 
 #### C-1 `10-api-design.md` 同一文档内分页字段名前后不一致
@@ -327,6 +366,22 @@ docs/todo/ 中出现的任务号：114 个
 
 ---
 
+#### D-5 【补做新发现】同一主题存在两版设计且未标注取代关系
+
+| 文档 | 版本 | 标题 |
+|---|---|---|
+| `09-lowcode-framework/44-lowcode-workflow.md` | **v1.0** | AlkaidSYS 低代码工作流引擎插件设计 |
+| `09-lowcode-framework/47-workflow-backend-engine.md` | **v2.0** | AlkaidSYS 工作流后端统一引擎详细设计 |
+
+两份文档**创建日期均为 2025-01-20**，主题重叠（工作流引擎），v2.0 显然是对 v1.0 的重构，但：
+
+- `44` **未标注**「已被 47 取代」
+- `50-workflow-review-and-impact-analysis.md` 的文档列表把两份**并列**为参考文档，未说明关系
+
+**影响**：读者无法判断该以哪一份为准。实际实现（`plugins/workflow-engine`）的分层是 `Definition / Core / Expression / Nodes / Integration / Multitenant / Monitor`，与 47 更接近，但也不完全一致（见 B-7）。
+
+---
+
 ### E 类：技术栈版本漂移（P2）
 
 #### E-1 Redis 版本不一致
@@ -352,6 +407,24 @@ docs/todo/ 中出现的任务号：114 个
 
 `[证据: grep -rhoE 'Swoole[ ]?[0-9]+(\.[0-9]+)?' design/ | sort | uniq -c；grep 'FROM' Dockerfile]`
 
+#### E-3 【补做新发现】引用了未安装的框架门面
+
+```php
+// design/02-app-plugin-ecosystem/06-5-developer-ecosystem-design.md:106
+use think\facade\Mail;
+```
+
+容器内实测：
+
+```
+think\facade\Mail → ✗ 不存在（composer.json 未声明 think-mail，vendor 中无该类）
+其余 30 个被引用的框架类 → 全部存在
+```
+
+`[证据: docker exec alkaid-backend php -r 'require "vendor/autoload.php"; class_exists("think\\facade\\Mail")' → false]`
+
+**影响**：示例演示的是「邮件通知开发者」能力，但项目中并不存在邮件组件。若要实现需先引入 `topthink/think-mail`。
+
 ---
 
 ## 四、逐文档问题索引
@@ -360,56 +433,74 @@ docs/todo/ 中出现的任务号：114 个
 |---|---|
 | `00-core-planning/01-MASTER-IMPLEMENTATION-PLAN.md` | A-1、B-5、C-2、D-1、D-2 |
 | `00-core-planning/03-PROJECT-DEPENDENCIES.md` | E-1（间接） |
-| `01-architecture-design/04-multi-tenant-design.md` | **A-3**、B-1、B-2、E-1 |
-| `01-architecture-design/08-low-code-design.md` | B-3 |
-| `02-app-plugin-ecosystem/06-2-plugin-system-design.md` | A-1 |
+| `01-architecture-design/04-multi-tenant-design.md` | **A-3**、B-1、B-2、B-7、E-1 |
+| `01-architecture-design/05-multi-site-design.md` | B-7（`app\common\model\Site`） |
+| `01-architecture-design/06-application-plugin-system-design.md` | B-7（`app\service\core\addon\*`） |
+| `01-architecture-design/08-low-code-design.md` | B-3、B-7（`app\common\model\`） |
+| `02-app-plugin-ecosystem/06-1-application-system-design.md` | B-7（`app\model\BaseModel`） |
+| `02-app-plugin-ecosystem/06-2-plugin-system-design.md` | A-1、B-7（`addon\*`） |
+| `02-app-plugin-ecosystem/06-3-application-market-design.md` | B-7（`app\service\market\AppService`） |
+| `02-app-plugin-ecosystem/06-5-developer-ecosystem-design.md` | **E-3**（`think\facade\Mail`） |
 | `02-domain-layer/domain-model-unification-plan.md` | A-4（未索引）、B-6 |
-| `03-data-layer/10-api-design.md` | C-1 |
-| `04-security-performance/11-security-design.md` | **A-2** |
+| `03-data-layer/10-api-design.md` | C-1、B-7（`app\common\*`） |
+| `04-security-performance/11-security-design.md` | **A-2**、B-7（`app\common\service\*`） |
 | `04-security-performance/12-performance-optimization.md` | E-1 |
+| `04-security-performance/13-monitoring-logging.md` | B-7（`app\common\service\*`） |
 | `05-deployment-testing/14-deployment-guide.md` | E-1 |
+| `05-deployment-testing/15-testing-strategy.md` | B-7（`app\common\model\User`） |
 | `06-ratelimit/ratelimit-strategy.md` | A-4（未索引） |
+| `07-integration-ops/25-system-integration.md` | B-7（`app\common\model\Order`） |
+| `07-integration-ops/27-training-materials.md` | B-7（`app\common\plugin\BasePlugin`） |
 | `07-integration-ops/30-project-summary.md` | A-1、B-4 |
 | `08-developer-guides/31-application-development-guide.md` | **A-2**、E-1 |
-| `08-developer-guides/32-plugin-development-guide.md` | **A-2**、**B-4**、E-1 |
-| `09-lowcode-framework/50-workflow-review-and-impact-analysis.md` | A-1 |
+| `08-developer-guides/32-plugin-development-guide.md` | **A-2**、**B-4**、B-7、E-1 |
+| `09-lowcode-framework/42-lowcode-data-modeling.md` | B-7（`alkaid\lowcode\*`） |
+| `09-lowcode-framework/44-lowcode-workflow.md` | **D-5**（v1.0 未标注被取代） |
+| `09-lowcode-framework/45-lowcode-cli-integration.md` | B-7（`alkaid\lowcode\*`） |
+| `09-lowcode-framework/47-workflow-backend-engine.md` | **D-5**、B-7（`Execution/Models/Services` 子层不存在） |
+| `09-lowcode-framework/50-workflow-review-and-impact-analysis.md` | A-1、D-5 |
 | `10-batch-summaries/BATCH-2/3-SUMMARY.md`、`FINAL-SUMMARY.md` | A-1、E-1 |
-| `design/README.md` | A-4 |
-| `docs/technical-specs/lowcode/lowcode-architecture-guidelines.md` | A-1 |
+| `design/README.md` | A-4（**已修**） |
+| `docs/technical-specs/lowcode/lowcode-architecture-guidelines.md` | A-1（**已修**） |
+| `docs/report_archive/2025.12.18/README.md` | **A-5** |
 
-**无问题的文档**：其余约 55 份设计文档未发现结构性问题（不代表内容全部正确，仅表示本次扫描未命中）。
+**未发现问题的文档**：其余约 45 份文档在本次全量可机检项（链接、围栏、版本、日期、任务号、类引用）中未命中（不代表语义内容全部正确，见第八章 8.6）。
 
 ---
 
 ## 五、修复建议
 
-### P0（重启开发前必做，均为机械性修改）
+### ✅ P0 已完成（2026-10-30）
 
-| # | 动作 | 工作量 |
+| # | 动作 | 状态 |
 |---|---|---|
-| 1 | 修复 22 处失效链接（15 处删一层 `../`；3 处 `reference-project-analysis` 改为「详见归档」或删除；2 处 `IFRAME` 引用改为「已归档，全库未保留」；2 处 docs 侧路径改指正确 design 路径） | ~30 分钟 |
-| 2 | 修复 3 份文档的代码围栏（补齐缺失围栏） | ~20 分钟 |
-| 3 | 修复 `04-multi-tenant-design.md:342` 孤立围栏，并删除 337-341 游离代码残片 | ~10 分钟 |
-| 4 | `design/README.md` 补列 `02-domain-layer`、`06-ratelimit` | ~5 分钟 |
-| 5 | **修正 `32-plugin-development-guide.md` 的 FieldTypeRegistry 示例**：改为 `FieldFactory` 的真实用法，或删除该示例 | ~30 分钟 |
+| 1 | 修复 22 处失效链接 | ✅ 已完成，复验剩 0 |
+| 2 | 修复 3 份文档代码围栏（11-security / 31-app-guide / 32-plugin-guide） | ✅ 已完成，185 份全库围栏配平 |
+| 3 | 修复 `04-multi-tenant-design.md` 结构错乱（删除 334-342 行残片 + 补 260 行闭合围栏） | ✅ 已完成 |
+| 4 | `design/README.md` 补列缺失目录 | ✅ 已完成，15/15 全覆盖 |
+| 5 | 修正 `32-plugin-development-guide.md` 的 `FieldTypeRegistry` 示例 | ✅ 已完成，改用 `FieldFactory` 并说明无 `unregister()` |
 
-### P1（1 周内）
+### P1（重启开发前应做）
 
-| # | 动作 |
-|---|---|
-| 6 | **为所有设计文档加「实现状态」标记**：`已实现` / `部分实现` / `未实现` / `已废弃`。至少覆盖 B-2（模式 2/3）、B-3（页面设计器）、B-6（domain 统一方案）、B-5（Field Type Registry） |
-| 7 | **回填 MASTER PLAN 进度**：179 项未勾选任务中，已完成者勾选；或明确标注「本计划为初始规划，实际进度见 `docs/todo/plan/`」 |
-| 8 | 统一分页字段名（建议以实现的 `page_size` + `total_pages` 为准，修正 `10-api-design.md:173`） |
-| 9 | 修正 Redis 版本（6.0 → 7.2）与 Swoole 版本（5.0 → 5.1） |
-| 10 | 明确市场设计文档的定位（在范围内 / 仅远期参考 / 归档） |
+| # | 动作 | 关联问题 |
+|---|---|---|
+| 6 | **在含示例的设计文档头部统一声明「设计阶段命名」**，并扩充 `lowcode-architecture-guidelines.md` 的映射表覆盖 `app\common\*` | **B-7** |
+| 7 | 为所有设计文档加「实现状态」标记（已实现/部分实现/未实现/已废弃） | B-2、B-3、B-5、B-6 |
+| 8 | 标注 `44-lowcode-workflow.md` 已被 `47-workflow-backend-engine.md` 取代 | D-5 |
+| 9 | 回填 MASTER PLAN 进度，或明确标注「本计划为初始规划」 | D-1 |
+| 10 | 统一分页字段名（以实现的 `page_size` + `total_pages` 为准） | C-1 |
+| 11 | 修正 Redis（6.0→7.2）、Swoole（5.0→5.1）版本 | E-1、E-2 |
+| 12 | 决定是否引入 `think-mail`，或删除相关示例 | E-3 |
+| 13 | 修复 `report_archive/2025.12.18/README.md` 的相对链接 | A-5 |
+| 14 | 明确市场设计文档的定位（在范围内 / 仅远期参考 / 归档） | C-2 |
 
 ### P2（技术债）
 
 | # | 动作 |
 |---|---|
-| 11 | 建立文档修订机制：新增/修改代码时同步更新对应设计文档的「最后更新」 |
-| 12 | 建立设计↔任务的双向引用（设计文档标注实现它的 T-xxx；任务报告链接对应设计章节） |
-| 13 | 在 CI 中加文档检查：链接有效性、围栏配平（可用 markdownlint） |
+| 15 | 建立文档修订机制：新增/修改代码时同步更新对应设计文档的「最后更新」 |
+| 16 | 建立设计↔任务的双向引用（设计文档标注实现它的 T-xxx；任务报告链接对应设计章节） |
+| 17 | 在 CI 中加文档检查：链接有效性、围栏配平、示例代码类引用存在性（可用 markdownlint + 自定义脚本） |
 
 ---
 
@@ -443,17 +534,108 @@ docs/todo/ 中出现的任务号：114 个
 
 ---
 
-## 八、未覆盖与未验证
+## 八、补充核查（原「未覆盖项」的补做结果）
 
-1. **55 份未精读文档的内容正确性**：本次为全量结构扫描 + 核心文档精读，未逐字读完 84k 行。未命中不代表内容无误。
-2. **设计文档中示例代码的可运行性**：除 B-4 的 FieldTypeRegistry 外，未逐段验证其余示例代码（如 `32-plugin-development-guide.md` 有 57 个围栏，仅抽查）。
-3. **业务合理性的判断**：如 06-3 市场设计的商业逻辑是否成立，属产品判断，不在技术审查范围。
-4. **`docs/Example/` 内嵌的两个 git 仓库快照**（`ingenious/`、`demo/`）未审阅——它们被 `.gitignore` 排除，不属项目文档。
-5. **`docs/report_archive/` 60 份归档文档**未纳入本次审查范围。
-6. **中英文双语文档一致性**：`docs/technical-specs/` 有 12 份 `.zh-CN.md`，未逐份比对与英文版内容是否同步。
+> **说明**：本章原为「未覆盖与未验证」清单。2026-10-30 完成补做，以下为实测结果。
+> 补做过程中发现 **1 项新的严重问题**（B-7，已回填至第三章）与 **3 项新的次要问题**。
+
+### 8.1 ✅ 已补做：设计文档示例代码的可运行性（原第 2 项）
+
+对 `design/`、`docs/technical-specs/`、`docs/developer-guides/` 中所有代码示例的 `use` 声明做全量解析，共 **133 个去重类引用**：
+
+| 分类 | 数量 | 结果 |
+|---|---|---|
+| 框架/vendor 类 | 85 | 容器内 `class_exists()` 实测 **84 个存在**；仅 `think\facade\Mail` 缺失（未安装 `think-mail`） |
+| 项目自有类 | 48 | **仅 9 个存在，39 个指向不存在的文件** |
+
+39 个失效引用按根因分 6 类：
+
+| 类别 | 数量 | 说明 |
+|---|---|---|
+| `app\common\*` | **15** | `app/common/` 命名空间**从未存在**。设计假设 `app\common\model\User`、`app\common\service\{AuthService,UserService,LogService,AlertService,EncryptService,PermissionService,TenantDatabaseService}`、`app\common\controller\BaseController`、`app\common\plugin\BasePlugin`、`app\common\validate\*`、`app\common\application\BaseApplication`；实际布局为 `app\controller\*`、`app\model\BaseModel`、`domain\*`、`infrastructure\*` |
+| `app\lowcode\*` | 3 | 该命名空间不存在。实际为 `Domain\Lowcode\*` / `Infrastructure\Lowcode\*` |
+| `app\service\*` | 3 | `app\service\core\addon\CoreAddonBaseService`、`CorePluginBaseService`、`app\service\market\AppService` 均不存在。实际插件基类为 `Infrastructure\Plugin\CorePluginBaseService` |
+| `Alkaid\Workflow\Engine\{Execution,Models,Services}\*` | **13** | 根命名空间 `Alkaid\Workflow\Engine` 存在（213 个 PHP），但设计文档使用的 `Execution/`、`Models/`、`Services/` 三个子层**实际不存在**；实现采用 `Core/`、`Model（小写 model/）`、`Definition/` 等不同划分 |
+| Legacy 类 | 3 | `Domain\Model\Collection`、`Infrastructure\Collection\CollectionManager`、`Infrastructure\Field\FieldTypeRegistry` —— 这三处**已在 `lowcode-architecture-guidelines.md` 明确标注为「❌ 不存在 / 旧代码」**，属正确文档，不计为缺陷 |
+| 其他试探性命名 | 2 | `Alkaid\Framework\Http\Controller`、`Alkaid\Plugin\HookToolRegistry` |
+
+**修复建议**：不重写全部示例（成本过高），而是在每份含示例的设计文档头部统一加一句「本文示例使用设计阶段命名，实际命名空间以 `docs/technical-specs/lowcode/lowcode-architecture-guidelines.md` 的映射表为准」，并在该映射表中**补充 `app\common\*` → 实际路径的对照**（当前映射表只覆盖了 Lowcode 相关 3 个类）。
+
+### 8.2 ✅ 已补做：中英文双语文档一致性（原第 6 项）
+
+`docs/technical-specs/` 下 **13 份** `.zh-CN.md`（原报告写 12 份，实测 13 份）：
+
+- **全部 13 份均有对应英文版**
+- **标题节数全部一致**（13/13）
+- 行数差异仅 4 份为 1-2 行（`database-guidelines` 74/72、`branch-protection` 79/77、`git-workflow-automation-test-report` 79/80、`testing-guidelines` 132/133），属排版差异
+- 抽样比对 `database-guidelines` 中英前 10 行，**内容语义一致**（含「唯一权威规范」等关键约束表述）
+
+**结论：无显著问题，该项可关闭。**
+
+### 8.3 ✅ 已补做：`docs/report_archive/` 60 份归档文档（原第 5 项）
+
+| 检查项 | 结果 |
+|---|---|
+| 文档数 | 60 |
+| 代码围栏不配平 | **0** |
+| 失效相对链接 | **149** |
+
+149 处失效链接的性质：绝大多数是**归档文档天然失效**（原在 `design/` 下、被移到 `docs/report_archive/` 后相对路径全部改变），属归档预期行为，不建议修。
+
+但其中 1 处是**真实缺陷**：
+```
+docs/report_archive/2025.12.18/README.md -> ../report/README.md
+```
+应为 `../../report/README.md`（少一层 `../`）。
+
+**修复建议**：归档目录不要求链接有效，但应在 `report_archive/README.md` 顶部声明「归档文档中的链接可能失效，仅作历史记录」。
+
+### 8.4 ✅ 已核实：`docs/Example/` 内嵌 git 仓库（原第 4 项）
+
+```
+docs/Example/ingenious/         ← 完整第三方项目快照，含 .git
+docs/Example/ingenious/demo/    ← 内嵌第二层 .git
+git ls-files docs/Example       → 0（未被跟踪）
+git check-ignore -v docs/Example → .gitignore:40:/docs/Example
+```
+
+**结论**：这是本地参考资料（第三方项目 ingenious 的源码快照），**已被 `.gitignore` 排除**，不属于项目文档，无需审查。但需注意：**新克隆仓库不会有这份资料**，若设计文档有引用需改为外部说明。
+
+### 8.5 ✅ 已补做：55 份未精读文档的可机检项（原第 1 项）
+
+对未精读的文档补做了以下自动化检查（覆盖可机检项，不替代逐字精读）：
+
+| 检查项 | 覆盖 |
+|---|---|
+| 相对链接有效性 | 全量 185 份 |
+| 代码围栏配平 | 全量 185 份 |
+| 技术栈版本一致性 | 全量 |
+| 文档版本/日期字段 | 全量 |
+| 任务号覆盖 | 全量 |
+| 进度标记 `[ ]`/`[x]` | 全量 |
+| 示例代码类引用 | 全量（见 8.1） |
+| 内部链接锚点 | 未覆盖 |
+
+补做中新发现 3 项问题，已回填第三章：
+
+- **D-5**：`44-lowcode-workflow.md`（v1.0）与 `47-workflow-backend-engine.md`（v2.0）为同一主题的两版设计，**创建日期相同、均未标注取代关系**
+- **E-3**：`think\facade\Mail` 在 `06-5-developer-ecosystem-design.md:106` 被引用，但项目未安装 `think-mail`
+- **A-5**：`docs/report_archive/2025.12.18/README.md` 的相对链接少一层 `../`
+
+### 8.6 ❌ 仍然未覆盖（明确声明）
+
+| # | 事项 | 原因 |
+|---|---|---|
+| 1 | **55 份文档的逐字精读**（语义、逻辑、业务合理性） | 已用自动化覆盖可机检项；逐字精读 84k 行不现实，且语义判断需领域知识 |
+| 2 | **业务/商业逻辑合理性**（如 06-3 市场设计、06-5 开发者生态的商业模型） | 属产品决策，不在技术审查范围 |
+| 3 | **示例代码的运行时正确性**（能否真正跑通） | 仅验证了类是否存在，未执行；多数示例依赖尚未实现的组件（如 `app\common\*`），实际无法运行 |
+| 4 | **Markdown 锚点链接**（`#标题` 片段）有效性 | 未做标题 slug 化比对 |
+| 5 | **图表正确性**（Mermaid 语法与渲染） | 未做 Mermaid 语法校验 |
+| 6 | **`docs/report_archive/` 的内容准确性** | 仅做结构扫描，未核对归档文档的结论是否正确 |
+| 7 | **`docs/Example/` 内第三方项目内容** | 非项目文档，有意排除 |
 
 ---
 
-**报告生成时间**：2026-10-30
+**报告生成时间**：2026-10-30（第八章于同日补做后更新）
 **审查对象**：AlkaidSYS-tp `design/`（73 份）+ `docs/`（111 份）
 **配套报告**：`quality-review-superpowers-2026-10-30.md`（代码质量审查，4 Critical / 9 Important / 17 Minor）
