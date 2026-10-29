@@ -414,6 +414,11 @@ class IntegerField extends AbstractField
 /**
  * 字段类型注册表
  */
+> **实现状态校正（2026-10-30）**：本文档中的命名空间与类名为**设计提案阶段的命名**。
+> 实际落地时采用了 `Infrastructure\Lowcode\Collection\Field\FieldFactory` 作为字段类型注册表的单一入口，
+> 未使用 `FieldTypeRegistry`（该名称仅存在于早期 Legacy 实现 `Infrastructure\Field\FieldTypeRegistry`，已于提交 `e166c8b` 删除）。
+> 阅读示例代码时请将 `FieldTypeRegistry` 理解为 `FieldFactory`，并参考 `docs/technical-specs/lowcode/lowcode-architecture-guidelines.md` 的迁移映射表。
+
 class FieldTypeRegistry
 {
     protected static array $types = [];

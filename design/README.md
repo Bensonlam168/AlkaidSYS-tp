@@ -6,15 +6,19 @@
 
 1. `00-core-planning`：总体规划与技术选型；
 2. `01-architecture-design`：整体架构与多租户/多站点设计；
-3. `03-data-layer`：数据库与 API 设计；
-4. `04-security-performance`：安全、性能与可观测性；
-5. `05-deployment-testing`：部署、测试与开发流程；
-6. `06-frontend-design`：前端整体架构与工程实践；
-7. `02-app-plugin-ecosystem`：应用与插件生态设计；
-8. `07-integration-ops`：集成、运维与项目交付；
-9. `08-developer-guides`：应用/插件开发指南；
-10. `09-lowcode-framework`：低代码与工作流子系统设计；
-11. `10-batch-summaries`：阶段性批次总结与回顾。
+3. `02-app-plugin-ecosystem`：应用与插件生态设计；
+4. `02-domain-layer`：领域模型统一方案（**注：描述的是 Legacy 下线前的旧结构，现状见 T-118 迁移报告**）；
+5. `03-data-layer`：数据库与 API 设计；
+6. `04-security-performance`：安全、性能与可观测性；
+7. `05-deployment-testing`：部署、测试与开发流程；
+8. `06-frontend-design`：前端整体架构与工程实践；
+9. `06-ratelimit`：限流策略；
+10. `07-integration-ops`：集成、运维与项目交付；
+11. `08-developer-guides`：应用/插件开发指南；
+12. `09-lowcode-framework`：低代码与工作流子系统设计；
+13. `10-batch-summaries`：阶段性批次总结与回顾；
+14. `prompt-templates`：提示词模板；
+15. `sdk-builder`：SDK 构建器说明。
 
 ## 2. 子目录说明
 
@@ -33,6 +37,11 @@
 
 - **02-app-plugin-ecosystem**
   - 应用与插件生态、应用市场/插件市场设计、开发者生态建设等。
+
+- **02-domain-layer**
+  - 领域模型统一方案（`domain-model-unification-plan.md`）。
+  - ⚠️ **注意**：该文档描述的是 Legacy 下线前的旧结构（`Domain\Model\Collection`、`Infrastructure\Collection\CollectionManager`、`Infrastructure\Field\FieldTypeRegistry`），
+    这些类已于提交 `e166c8b` 删除，现状见 `docs/report/t118-lowcode-legacy-migration-audit-2025-12-18.md`。
 
 - **03-data-layer**
   - 数据库与数据访问层设计；
@@ -60,6 +69,9 @@
 
 - **06-frontend-design**
   - 管理端、Web 端、移动端前端架构与工程实践，包括状态管理、路由、组件、构建、测试等。
+
+- **06-ratelimit**
+  - 限流策略设计（`ratelimit-strategy.md`）。
 
 - **07-integration-ops**
   - 系统集成、数据迁移、培训、运维手册与项目总结等。

@@ -929,13 +929,21 @@ class ColorField implements FieldInterface
 
 **注册自定义字段类型**：
 
+> **实现说明（2026-10-30 校正）**：字段类型的唯注册入口是
+> `Infrastructure\Lowcode\Collection\Field\FieldFactory`（见其类注释：
+> 「本注册表是低代码字段类型的单一入口」）。
+> 历史上存在的 `FieldTypeRegistry`（原命名空间 `Infrastructure\Field`）
+> 已于提交 `e166c8b` 随 Legacy Collection 一并下线，请勿再使用。
+> 当前 `FieldFactory` 提供 `create()` / `register()` / `getTypes()` / `hasType()` 四个方法，
+> **不提供 `unregister()`**。
+
 ```php
 <?php
 // /plugins/custom-fields/Plugin.php
 
 namespace plugins\customfields;
 
-use app\lowcode\datamodeling\registry\FieldTypeRegistry;
+use Infrastructure\Lowcode\Collection\Field\FieldFactory;
 use plugins\customfields\field\ColorField;
 
 class Plugin
@@ -945,8 +953,8 @@ class Plugin
      */
     public function install(): void
     {
-        // 注册自定义字段类型
-        FieldTypeRegistry::register('color', ColorField::class);
+        // 注册自定义字段类型（写入 FieldFactory 的静态注册表）
+        FieldFactory::register('color', ColorField::class);
     }
 
     /**
@@ -954,8 +962,14 @@ class Plugin
      */
     public function uninstall(): void
     {
-        // 注销自定义字段类型
-        FieldTypeRegistry::unregister('color');
+        // FieldFactory 目前未提供 unregister()。
+        // 注销自定义字段类型需通过以下方式之一实现：
+        //   1) 在插件卸载时校验并拒绝仍被引用的字段类型；
+        //   2) 由框架后续版本补充 unregister() 能力；
+        //   3) 保留注册项（无副作用：仅表示该类型可被识别）。
+        if (FieldFactory::hasType('color')) {
+            // TODO: 待框架提供 unregister() 后在此注销
+        }
     }
 }
 ```
@@ -1154,8 +1168,6 @@ alkaid publish plugin \
   --api-secret=YOUR_API_SECRET
 ```
 
-# 生成的文件：payment-wechat-1.0.0.zip
-```
 
 ### 2. 发布插件
 

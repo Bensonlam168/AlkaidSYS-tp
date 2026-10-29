@@ -258,6 +258,8 @@ class User extends BaseModel
         'updated_at' => 'datetime',
     ];
 
+```
+
 ## 🌐 多租户 / 多站点请求上下文契约（T0-MT-CONTEXT 冻结版）
 
 > 本小节描述 AlkaidSYS-tp 在 T0 阶段冻结的「请求上下文」实现约定，
@@ -331,15 +333,6 @@ $rows = SomeModel::select();
 - 业务代码不应绕过 `Request` / `BaseModel` 直接根据 Header 决定租户 / 站点。
 - 使用 `withoutTenantScope()` 时必须在审计日志中记录实际的 `tenant_id/site_id` 与操作人信息。
 
-    /**
-     * 关联租户
-     */
-    public function tenant()
-    {
-        return $this->belongsTo(Tenant::class, 'tenant_id');
-    }
-}
-```
 
 ### 使用示例
 

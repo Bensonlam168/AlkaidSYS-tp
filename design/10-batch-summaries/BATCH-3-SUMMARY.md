@@ -60,7 +60,7 @@
 - 🌟 Pinia 状态管理
 - 🌟 首屏加载 < 1s
 
-### 4. [20-frontend-state-management.md](../../06-frontend-design/20-frontend-state-management.md)
+### 4. [20-frontend-state-management.md](../06-frontend-design/20-frontend-state-management.md)
 **前端状态管理**
 
 **核心内容**：

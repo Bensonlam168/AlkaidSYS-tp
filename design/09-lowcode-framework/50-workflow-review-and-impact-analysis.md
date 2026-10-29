@@ -1159,16 +1159,16 @@ graph TB
 
 ## 📚 相关文档
 
-- [低代码能力概述](../../09-lowcode-framework/41-lowcode-overview.md)
-- [低代码框架架构优化](../../09-lowcode-framework/40-lowcode-framework-architecture.md)
-- [数据建模插件设计](../../09-lowcode-framework/42-lowcode-data-modeling.md)
-- [工作流引擎插件设计 v1.0](../../09-lowcode-framework/44-lowcode-workflow.md)
-- [工作流后端统一引擎详细设计 v2.0](../../09-lowcode-framework/47-workflow-backend-engine.md)
-- [工作流前端三个应用详细设计 v2.0](../../09-lowcode-framework/48-workflow-frontend-apps.md)
-- [工作流实施计划和工作量评估](../../09-lowcode-framework/49-workflow-implementation-plan.md)
-- [工作流优化设计总结报告](../reference-project-analysis/00-WORKFLOW-OPTIMIZATION-SUMMARY.md)
-- [Ingenious 分析总结](../reference-project-analysis/ingenious/00-INGENIOUS-ANALYSIS-SUMMARY.md)
-- [n8n 分析总结](../reference-project-analysis/n8n/00-N8N-ANALYSIS-SUMMARY.md)
+- [低代码能力概述](41-lowcode-overview.md)
+- [低代码框架架构优化](40-lowcode-framework-architecture.md)
+- [数据建模插件设计](42-lowcode-data-modeling.md)
+- [工作流引擎插件设计 v1.0](44-lowcode-workflow.md)
+- [工作流后端统一引擎详细设计 v2.0](47-workflow-backend-engine.md)
+- [工作流前端三个应用详细设计 v2.0](48-workflow-frontend-apps.md)
+- [工作流实施计划和工作量评估](49-workflow-implementation-plan.md)
+- 工作流优化设计总结报告（参考资料已不在仓库中保留）
+- Ingenious 分析总结（参考资料已不在仓库中保留）
+- n8n 分析总结（参考资料已不在仓库中保留）
 
 ---
 

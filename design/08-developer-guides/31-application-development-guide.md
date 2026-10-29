@@ -949,6 +949,7 @@ cd ..
 alkaid build app
 
 # 生成的文件：my-ecommerce-1.0.0.zip
+```
 
 ### 3. 包完整性校验（SHA-256）
 

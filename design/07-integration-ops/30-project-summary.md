@@ -580,13 +580,13 @@ graph TB
 **投资回报率**：极高，强烈建议实施
 
 详细设计请参考：
-- [低代码能力概述](../../09-lowcode-framework/41-lowcode-overview.md)
-- [框架底层架构优化分析](../../09-lowcode-framework/40-lowcode-framework-architecture.md)
-- [数据建模插件设计](../../09-lowcode-framework/42-lowcode-data-modeling.md)
-- [表单设计器插件设计](../../09-lowcode-framework/43-lowcode-form-designer.md)
-- [工作流引擎插件设计](../../09-lowcode-framework/44-lowcode-workflow.md)
-- [CLI 工具集成设计](../../09-lowcode-framework/45-lowcode-cli-integration.md)
-- [低代码管理应用设计](../../09-lowcode-framework/46-lowcode-management-app.md)
+- [低代码能力概述](../09-lowcode-framework/41-lowcode-overview.md)
+- [框架底层架构优化分析](../09-lowcode-framework/40-lowcode-framework-architecture.md)
+- [数据建模插件设计](../09-lowcode-framework/42-lowcode-data-modeling.md)
+- [表单设计器插件设计](../09-lowcode-framework/43-lowcode-form-designer.md)
+- [工作流引擎插件设计](../09-lowcode-framework/44-lowcode-workflow.md)
+- [CLI 工具集成设计](../09-lowcode-framework/45-lowcode-cli-integration.md)
+- [低代码管理应用设计](../09-lowcode-framework/46-lowcode-management-app.md)
 
 ---
 

@@ -26,7 +26,7 @@
 
 ### 混合加载方案
 
-基于 [iframe vs micro-app 深度技术分析](../IFRAME-VS-MICROAPP-ANALYSIS-2025-01-20.md)，AlkaidSYS 采用**混合方案（钩子 + iframe + 组件）**，根据插件类型选择最合适的加载方式：
+基于 iframe vs micro-app 深度技术分析（参考资料已不在仓库中保留），AlkaidSYS 采用**混合方案（钩子 + iframe + 组件）**，根据插件类型选择最合适的加载方式：
 
 | 插件类型 | 加载模式 | 隔离级别 | 适用场景 | 性能 | 安全性 |
 |---------|---------|---------|---------|------|--------|
@@ -979,7 +979,7 @@ graph TB
 
 ### 2. IframePluginLoader 实现
 
-详细实现请参考 [iframe vs micro-app 深度技术分析](../IFRAME-VS-MICROAPP-ANALYSIS-2025-01-20.md#技术实现细节)。
+详细实现参见 iframe vs micro-app 深度技术分析（参考资料已不在仓库中保留），此处从略。
 
 **核心特性**：
 - ✅ **浏览器原生隔离**：使用 iframe sandbox 属性，最强安全隔离
@@ -1115,7 +1115,7 @@ onMounted(async () => {
 
 ## 🗺️ 实施路线图
 
-基于 [iframe vs micro-app 深度技术分析](../IFRAME-VS-MICROAPP-ANALYSIS-2025-01-20.md#实施路线图)，插件系统的实施分为 4 个阶段：
+基于 iframe vs micro-app 深度技术分析（参考资料已不在仓库中保留），插件系统的实施分为 4 个阶段：
 
 ### 阶段 1：当前（0-3 个月）- 完善钩子机制
 

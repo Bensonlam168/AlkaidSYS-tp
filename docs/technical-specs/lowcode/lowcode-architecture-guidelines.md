@@ -704,8 +704,8 @@ $field = FieldFactory::create('string', 'name', [
 
 ## 八、相关文档
 
-- [低代码架构设计文档](../../design/05-lowcode/01-lowcode-design.md)
-- [多租户设计文档](../../design/04-multi-tenant/01-tenant-design.md)
+- [低代码架构设计文档](../../../design/01-architecture-design/08-low-code-design.md)
+- [多租户设计文档](../../../design/01-architecture-design/04-multi-tenant-design.md)
 - [性能基准测试计划](./performance-benchmark-plan.md)
 - [Legacy 迁移报告](../../report/arch-01-legacy-migration-plan-2025-12-18.md)
 - [T-118 任务审查报告](../../report/t118-lowcode-legacy-migration-audit-2025-12-18.md)

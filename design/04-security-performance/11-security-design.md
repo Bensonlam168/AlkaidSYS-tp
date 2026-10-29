@@ -149,6 +149,7 @@ class AuthService extends BaseService
             throw new \Exception('Token 无效或已过期');
         }
     }
+```
 ### 🔐 JWT Issuer（iss） 配置与校验策略
 
 - **配置来源**：后端通过 `env('JWT_ISSUER', 'https://api.alkaidsys.local')` 读取 issuer 配置；

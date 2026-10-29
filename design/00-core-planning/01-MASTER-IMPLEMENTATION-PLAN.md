@@ -72,7 +72,7 @@
 4. ✅ `../11-archived-reports/00-FINAL-COMPLETION-REPORT.md` - 最终完成报告（已归档）
 5. ✅ `01-alkaid-system-overview.md` - 系统概述
 6. ✅ `../01-architecture-design/02-architecture-design.md` - 架构设计
-7. ✅ `../other/IFRAME-VS-MICROAPP-ANALYSIS-2025-01-20.md` - iframe vs micro-app 深度技术分析
+7. ✅ iframe vs micro-app 深度技术分析（原 `design/other/` 参考文档已不在仓库中保留）
 8. ✅ `../other/DOOTASK-OPTIMIZATION-REPORT-2025-01-20.md` - DooTask 优化报告
 
 ---
@@ -803,7 +803,7 @@ graph TB
 **注意**：
 - 考虑并行开发，实际工期可缩短至 **48-55 周**
 - 阶段 5 可以与阶段 4 部分并行，节省约 5-8 周
-- 基于 [iframe vs micro-app 深度技术分析](../IFRAME-VS-MICROAPP-ANALYSIS-2025-01-20.md)，阶段 5 采用渐进式实施：
+- 基于 iframe vs micro-app 深度技术分析（参考资料已不在仓库中保留），阶段 5 采用渐进式实施：
   - 短期（0-3 个月）：完善钩子机制
   - 中期（3-6 个月）：引入 iframe 隔离
   - 长期（6-12 个月）：支持后端异构
