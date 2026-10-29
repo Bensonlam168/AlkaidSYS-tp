@@ -4,14 +4,14 @@
 
 **强大、现代、低代码的企业级 SAAS 系统框架**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 [![PHP](https://img.shields.io/badge/PHP-8.2+-777BB4?logo=php&logoColor=white)](https://www.php.net/)
 [![ThinkPHP](https://img.shields.io/badge/ThinkPHP-8.0-brightgreen)](https://www.thinkphp.cn/)
 [![Swoole](https://img.shields.io/badge/Swoole-5.0+-blue)](https://www.swoole.com/)
 [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-[简体中文](README.md) | [English](README.en.md)
+简体中文 | English（英文版尚未提供）
 
 </div>
 
@@ -227,6 +227,9 @@ php think swoole:server start
 
 ## 📚 文档导航
 
+> ⚠️ **README 描述的是设计目标，不代表当前实现进度。**
+> 想了解「实际建成了什么、还差什么」，请先读 [**项目全貌（设计与现实对照）**](docs/PROJECT-OVERVIEW.md)。
+
 ### 设计文档
 
 完整的设计文档位于 [`design/`](design/) 目录，推荐阅读顺序：
@@ -426,7 +429,7 @@ php think lowcode:generate crud Product
 
 ## 📄 许可证
 
-本项目采用 [MIT 许可证](LICENSE)。
+本项目采用 [MIT 许可证](LICENSE.txt)。
 
 ---
 
