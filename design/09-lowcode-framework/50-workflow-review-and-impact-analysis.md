@@ -100,7 +100,7 @@ graph TB
     
     subgraph "核心框架层"
         F1[ThinkPHP 8.0]
-        F2[Swoole 5.0]
+        F2[Swoole 5.1]
         F3[ORM 层]
         F4[依赖注入容器]
     end
@@ -323,9 +323,9 @@ graph LR
 | 技术栈 | 低代码平台 | 工作流模块 v2.0 | 兼容性 | 备注 |
 |--------|-----------|----------------|--------|------|
 | **后端框架** | ThinkPHP 8.0 | ThinkPHP 8.0 | ✅ 完全兼容 | 无冲突 |
-| **异步执行** | Swoole 5.0 | Swoole 5.0 | ✅ 完全兼容 | 使用协程异步执行 |
+| **异步执行** | Swoole 5.1 | Swoole 5.1 | ✅ 完全兼容 | 使用协程异步执行 |
 | **数据库** | MySQL 8.0 | MySQL 8.0 | ✅ 完全兼容 | 无冲突 |
-| **缓存** | Redis 6.0 | Redis 6.0 | ✅ 完全兼容 | 无冲突 |
+| **缓存** | Redis 7.2 | Redis 7.2 | ✅ 完全兼容 | 无冲突 |
 | **队列** | think-queue | think-queue | ✅ 完全兼容 | 无冲突 |
 | **前端框架** | Vue 3 | Vue 3 | ✅ 完全兼容 | 无冲突 |
 | **UI 组件库** | Ant Design Vue 4.x | Ant Design Vue 4.x | ✅ 完全兼容 | 无冲突 |

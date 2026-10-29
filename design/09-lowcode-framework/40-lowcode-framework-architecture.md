@@ -5,6 +5,10 @@
 > **最后更新**：2025-01-20
 > **作者**：AlkaidSYS 架构团队
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ---
 
 ## 📋 目录
@@ -102,7 +106,7 @@ AlkaidSYS 框架
 
 ### 2.3 技术栈
 
-- **后端**：ThinkPHP 8.0 + Swoole 5.0 + MySQL 8.0 + Redis 6.0
+- **后端**：ThinkPHP 8.0 + Swoole 5.1 + MySQL 8.0 + Redis 7.2
 - **前端**：Vue 3 + Vben Admin 5.x + Ant Design Vue + TypeScript 5.x
 - **ORM**：Think-ORM（基于 PDO）
 - **缓存**：Redis + Swoole Table（多级缓存）
@@ -230,8 +234,6 @@ class SchemaBuilder
 }
 ```
 > **环境与规范说明：** 上面的 `SchemaBuilder` 示例主要用于说明框架在 **dev/test 环境** 具备运行时 DDL 能力（用于快速建表/加字段/删字段），以支撑低代码引擎生成迁移脚本和演练流程。**stage/prod 环境** 的真实结构变更必须遵守《数据库演进与迁移策略》（`../03-data-layer/11-database-evolution-and-migration-strategy.md`）和《数据演进蓝皮书》（`../03-data-layer/13-data-evolution-bluebook.md`），通过蓝皮书审批与标准迁移管道执行，禁止直接在生产环境使用运行时 DDL。
-
-
 
 **方案 2：实现 Collection 抽象层**
 
@@ -1249,7 +1251,7 @@ graph TB
 
     subgraph "数据层 (Data Layer)"
         MySQL[(MySQL 8.0)]
-        Redis[(Redis 6.0)]
+        Redis[(Redis 7.2)]
     end
 
     LMA --> DMP
@@ -1356,8 +1358,6 @@ graph TB
 - 漂移检测：对比 真源Schema ↔ 实际数据库（INFORMATION_SCHEMA）生成差异（新增/修改/删除字段、索引、外键）。
 - 变更策略：默认“安全变更优先”，破坏性变更（DROP/类型收缩）需 `--force` 明确开启并生成备份。
 - 多租户约束：所有由 Schema 驱动生成的物理表结构在 `tenant_id` / `site_id` 字段形态、主键/唯一键/索引组合上必须遵守《多租户数据建模规范》（`../03-data-layer/12-multi-tenant-data-model-spec.md`），本节中的字段示例仅用于说明模型，不单独形成事实标准。
-
-
 
 #### 流程
 1) 设计/更新 Collection Schema（表单/CLI/API）

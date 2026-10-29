@@ -5,6 +5,8 @@
 > - 以 Lowcode 体系为中心，逐步让 Legacy 体系退出主调用路径；
 > - 为后续 T1 执行阶段与 T2/T3 演进提供清晰、可落地的架构蓝图与迁移策略。
 
+> ⛔ **实现状态**：**已废弃** —— 本文描述的统一方案基于 `Domain\Model\Collection`、`Infrastructure\Collection\CollectionManager`、`Infrastructure\Field\FieldTypeRegistry` 三个类型，**三者已于提交 `e166c8b` 删除**。现状见 [`t118-lowcode-legacy-migration-audit-2025-12-18.md`](../../docs/report/t118-lowcode-legacy-migration-audit-2025-12-18.md)。**仅作历史存档，勿据以开发。**
+
 ## 1. 当前格局简述（来自调研报告）
 
 > 详见：`docs/todo/t1-domain-cleanup-investigation.md`

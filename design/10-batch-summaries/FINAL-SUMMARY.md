@@ -122,7 +122,7 @@ graph TB
 
     subgraph "数据层"
         K[MySQL 8.0<br/>主从复制]
-        L[Redis 6.0<br/>集群模式]
+        L[Redis 7.2<br/>集群模式]
         M[RabbitMQ<br/>消息队列]
     end
 
@@ -273,7 +273,7 @@ graph TB
 
 | 维度 | AlkaidSYS | NIUCLOUD | 优势 |
 |------|-----------|----------|------|
-| **后端引擎** | Swoole 5.0+ | PHP-FPM | ✅ 10 倍性能 |
+| **后端引擎** | Swoole 5.1+ | PHP-FPM | ✅ 10 倍性能 |
 | **前端框架** | Vue 3 + Vben | Vue 2 | ✅ 更现代 |
 | **构建工具** | Vite 7 | Webpack | ✅ 5 倍速度 |
 | **状态管理** | Pinia 3.0 | Vuex | ✅ 更简洁 |
@@ -343,7 +343,7 @@ graph TB
 
 ### 2. 技术先进
 
-- ✅ **Swoole 5.0+**: 高性能协程引擎
+- ✅ **Swoole 5.1+**: 高性能协程引擎
 - ✅ **Vue 3**: 最新的前端框架
 - ✅ **Vite 7**: 极速构建工具
 - ✅ **TypeScript**: 类型安全

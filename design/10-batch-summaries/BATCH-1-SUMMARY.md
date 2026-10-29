@@ -28,7 +28,7 @@
 - 🌟 命名寓意：瑶光（Alkaid）象征开创、变动与冒险
 - 🌟 核心定位：强大、现代、低代码的企业级 SAAS 框架
 - 🌟 性能目标：10K+ 并发，响应时间 <500ms
-- 🌟 技术栈：ThinkPHP 8.0 + Swoole 5.0 + Vben Admin 5.x
+- 🌟 技术栈：ThinkPHP 8.0 + Swoole 5.1 + Vben Admin 5.x
 
 ### 2. [02-architecture-design.md](../01-architecture-design/02-architecture-design.md)
 **整体架构设计**

@@ -1,5 +1,9 @@
 # AlkaidSYS 监控和日志
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -13,7 +17,6 @@
 - [术语表（Glossary）](../00-core-planning/99-GLOSSARY.md)
 - [可观测性与运维设计](15-observability-and-ops-design.md)
 - [安全架构设计](11-security-design.md)
-
 
 ## 🎯 监控和日志目标
 

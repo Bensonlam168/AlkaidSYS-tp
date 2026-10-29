@@ -5,6 +5,8 @@
 > **计划目标**：提供可执行的、详细的实施开发计划  
 > **文档版本**：v2.0
 
+> ⚠️ **实现状态**：**计划文档·进度未回填** —— 本文任务清单（`[ ]` 179 项 / `[x]` 5 项）**未随实现回填**，不能据此判断项目进度。实际进度见 [`docs/PROJECT-OVERVIEW.md`](../../docs/PROJECT-OVERVIEW.md)。另：任务 1.1 要求的 `Field Type Registry` 已改为 `FieldFactory`（提交 `e166c8b`）。
+
 ---
 
 ## 📋 目录
@@ -74,6 +76,30 @@
 6. ✅ `../01-architecture-design/02-architecture-design.md` - 架构设计
 7. ✅ iframe vs micro-app 深度技术分析（原 `design/other/` 参考文档已不在仓库中保留）
 8. ✅ `../other/DOOTASK-OPTIMIZATION-REPORT-2025-01-20.md` - DooTask 优化报告
+
+---
+
+### 实际进度对照（2026-10-30 核查）
+
+> **本节由代码实测生成，取代下方任务清单作为进度判断依据。**
+> 下方各阶段的任务清单（`[ ]`）保留原样作为**初始规划记录**，不再逐项回填。
+
+| 阶段 | 计划工期 | 主要内容 | 实际状态 | 实现证据 |
+|---|---|---|---|---|
+| **阶段 1** 基础设施建设 | 11 周 | ORM 增强 / 事件系统 / DI 容器 / 验证器 | ✅ **基本完成** | `infrastructure/Schema/SchemaBuilder.php`、`infrastructure/Event/`、`infrastructure/DI/DependencyManager.php`、`infrastructure/Validator/` |
+| **阶段 2** 核心插件开发 | 16 周 | 数据建模 / 表单设计器 / 工作流引擎 / Schema 解析器 | ✅ **基本完成** | `infrastructure/Lowcode/{Collection,FormDesigner,Schema}/`；工作流在 `plugins/workflow-engine/`（276 PHP） |
+| **阶段 3** 完整功能开发 | 13 周 | CLI 工具 / 低代码管理应用 / 性能优化与文档 | 🔶 **部分完成** | CLI ✅（`app/command/lowcode/` 4 命令）；低代码管理应用 ❌（前端仅系统管理模块）；文档 73 份设计 + 39 份规格 |
+| **阶段 4** 优化和增强 | 13 周 | 路由 / 中间件 / 缓存 / 文件存储 / 队列 / 日志 | 🔶 **部分完成** | 缓存 `config/cache.php` ✅、队列 `config/queue.php` ✅、日志 `config/log.php` ✅、限流 `infrastructure/RateLimit/` ✅；**文件存储抽象层 ❌ 未实现** |
+| **阶段 5** 插件系统混合方案 | 15 周 | 钩子优化 / iframe 加载器 / 组件加载器 / 后端异构集成 | ❌ **大部分未完成** | 钩子 ✅（`infrastructure/Plugin/Hook/` 含 HookMonitor）；iframe 加载器 ❌（仅 `PluginType::IFRAME` 枚举与检测，**无加载器实现**）；组件加载器 ❌；后端异构集成 ❌ |
+
+**关键偏差说明**：
+
+1. **工期估算与实际严重不符**：计划基线 53 周（并行 33-40 周），实际从首个迁移（2025-11-19）到最后一轮功能提交（2025-12-18）约 **1 个月**，主要因 AI 辅助开发。
+2. **甘特图起始日期 2025-02-01 早于实际代码 9.5 个月**：设计文档撰写于 2025-01，代码始于 2025-11。
+3. **任务 1.1 的 "Field Type Registry" 已被推翻**：实际采用 `FieldFactory`（提交 `e166c8b` 删除 Legacy 实现）。
+4. **范围声明与实际文档资产矛盾**：§1.2 声明「不包括应用市场和插件市场开发」，但 `02-app-plugin-ecosystem/06-3`、`06-4` 共 2,374 行市场设计已存在（定位为远期参考，代码零实现）。
+
+**当前真实进度总览**：见 [`docs/PROJECT-OVERVIEW.md`](../../docs/PROJECT-OVERVIEW.md)（后端约 72%，整体约 60%）。
 
 ---
 

@@ -1,5 +1,9 @@
 # AlkaidSYS 系统集成
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -90,7 +94,6 @@ $payload = request()->method()."\n".request()->path()."\n".hash('sha256', reques
 $expected = hash_hmac('sha256', $payload, $appSecret);
 if (!hash_equals($expected, $sign)) abort(401,'invalid signature');
 ```
-
 
 ### 1. API 基础配置
 
@@ -354,7 +357,6 @@ export function batchDeleteUser(ids: number[]) {
 > 《04-security-performance/11-security-design.md》《05-deployment-testing/17-configuration-and-environment-management.md》
 > 中关于密钥管理（如证书/私钥）、回调签名、防重放及多环境配置的规范，避免在代码中硬编码敏感配置。
 
-
 ```php
 <?php
 // /app/common/service/PaymentService.php
@@ -611,7 +613,6 @@ class PaymentService
 > 实际项目落地时，应将短信服务抽象为接口 + 具体适配器，并严格遵守
 > 《04-security-performance/11-security-design.md》《05-deployment-testing/17-configuration-and-environment-management.md》
 > 等文档中的密钥管理与配置管理规范，不得在代码中直接硬编码 AccessKey、签名等敏感信息。
-
 
 ```php
 <?php

@@ -1,0 +1,46 @@
+name: Docs Check
+
+# 文档一致性门禁 | Documentation consistency gate
+#
+# 检查 design/ 与 docs/ 下的 Markdown：
+#   1. 相对链接有效性
+#   2. 代码围栏配平
+#   3. 示例代码引用不存在的类（已声明「设计阶段命名」的文档豁免）
+#
+# 详情见 scripts/check-docs.php
+
+on:
+  pull_request:
+    paths:
+      - 'design/**/*.md'
+      - 'docs/**/*.md'
+      - 'scripts/check-docs.php'
+      - '.github/workflows/docs-check.yml'
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'design/**/*.md'
+      - 'docs/**/*.md'
+      - 'scripts/check-docs.php'
+
+jobs:
+  docs-check:
+    name: Documentation Consistency
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Run docs consistency check
+        # --strict：发现问题即返回非 0，阻止合并
+        run: php scripts/check-docs.php --strict

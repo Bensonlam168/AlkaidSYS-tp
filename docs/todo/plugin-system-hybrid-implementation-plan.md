@@ -5,6 +5,10 @@
 > **目标**: 为 'docs/todo/development-backlog-2025-11-25.md' 中组 E 的插件系统混合方案 [T-048] 至 [T-055] 制定全面且可执行的实施计划  
 > **适用范围**: AlkaidSYS Phase 2 目标能力 - 插件系统混合架构
 
+> 📋 **文档性质声明**：本文为**待实施方案**（尚未实施的方案计划），其中出现的类（如 `Infrastructure\Plugin\ConfigurationManager`、
+> `Infrastructure\Plugin\PluginSandbox`、`Tests\IntegrationTestCase`）**尚未实现**，属规划目标而非现有能力。
+> 现有插件能力见 [`design/01-architecture-design/06-application-plugin-system-design.md`](../../design/01-architecture-design/06-application-plugin-system-design.md)。
+
 ---
 
 ## 1. 执行摘要
@@ -90,9 +94,9 @@
 
 #### 2.2.2 技术栈约束
 
-- **后端**: PHP 8.2+, ThinkPHP 8.0+, Swoole 5.0+
+- **后端**: PHP 8.2+, ThinkPHP 8.0+, Swoole 5.1+
 - **数据库**: MySQL 8.0+，支持多租户表结构
-- **缓存**: Redis 6.0+，支持插件缓存隔离
+- **缓存**: Redis 7.2+，支持插件缓存隔离
 - **前端**: Vue 3 + TypeScript + Vben Admin 5.x
 
 ### 2.3 改进空间识别
@@ -697,7 +701,7 @@ namespace Tests\Unit\Infrastructure\Plugin;
 
 use PHPUnit\Framework\TestCase;
 use Infrastructure\Plugin\PluginManager;
-use Infrastructure\Plugin\Contracts\PluginInterface;
+use Infrastructure\Plugin\Contract\PluginInterface;
 
 class PluginManagerTest extends TestCase
 {

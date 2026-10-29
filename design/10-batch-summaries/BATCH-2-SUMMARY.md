@@ -96,7 +96,7 @@
 **部署指南**
 
 **核心内容**：
-- ✅ 环境准备（PHP 8.2、Swoole 5.0、MySQL 8.0、Redis 6.0）
+- ✅ 环境准备（PHP 8.2、Swoole 5.1、MySQL 8.0、Redis 7.2）
 - ✅ 单机部署流程
 - ✅ Nginx + Swoole 配置
 - ✅ Docker + Docker Compose 部署

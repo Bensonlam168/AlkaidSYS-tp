@@ -86,7 +86,7 @@ graph TB
 
     subgraph "数据层"
         D1[(MySQL 8.0+)]
-        D2[(Redis 6.0+)]
+        D2[(Redis 7.2+)]
         D3[(RabbitMQ)]
     end
 
@@ -608,7 +608,7 @@ if (function_exists('go')) {
 | 特性 | AlkaidSYS | NIUCLOUD | 优势 |
 |------|-----------|----------|------|
 | **后端框架** | ThinkPHP 8.0 | ThinkPHP 6.x | ✅ 更新 |
-| **高性能引擎** | Swoole 5.0+ | 无 | ✅ 10倍性能提升 |
+| **高性能引擎** | Swoole 5.1+ | 无 | ✅ 10倍性能提升 |
 | **多租户模式** | 三种模式 | 单一模式 | ✅ 更灵活 |
 | **插件系统** | 增强版 | 基础版 | ✅ 更强大 |
 | **Admin 端** | Vben Admin 5.x | Element Plus | ✅ 更现代 |

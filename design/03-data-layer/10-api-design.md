@@ -1,5 +1,9 @@
 # AlkaidSYS API 设计规范
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -170,7 +174,7 @@ GET /api/users?include=roles,permissions
   - 默认：`code = 0`，`httpCode = 200`。
 - `paginate(array $list, int $total, int $page, int $pageSize, string $message = 'Success')`
   - 语义：统一分页响应封装；
-  - `data` 结构固定为 `{ list, total, page, pageSize }`。
+  - `data` 结构固定为 `{ list, total, page, page_size, total_pages }`（**2026-10-30 校正**：原写 `pageSize`，与实现及本文 `:308` 不一致，已统一为 snake_case 并补 `total_pages`）。
 - `error(string $message, int $code = 400, array $errors = [], int $httpCode = 400)`
   - 语义：业务失败；
   - 当传入 `$errors` 时，`data` 字段为 `{ errors: {...} }`，否则为 `null`。
@@ -745,7 +749,6 @@ class GenerateApiDoc extends Command
     }
 }
 ```
-
 
 ## 🔐 API 签名中间件（可选安全增强）
 

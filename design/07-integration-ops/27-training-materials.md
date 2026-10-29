@@ -1,5 +1,9 @@
 # AlkaidSYS 培训材料
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -18,7 +22,6 @@
 
 > 说明：本培训体系基于 `design/` 目录下的正式设计文档（如《01-architecture-design/02-architecture-design.md》《01-architecture-design/04-multi-tenant-design.md》《03-data-layer/09-database-design.md》《04-security-performance/11-security-design.md》等），
 > 具体技术细节与约束以对应设计文档为权威来源，本篇更多聚焦于培训编排与素材组织。
-
 
 ```mermaid
 graph TB
@@ -74,7 +77,7 @@ graph TB
 
 **培训内容**：
 - ThinkPHP 8.0 核心特性
-- Swoole 5.0+ 协程编程
+- Swoole 5.1+ 协程编程
 - Vue 3 Composition API
 - Vben Admin 5.x 使用
 

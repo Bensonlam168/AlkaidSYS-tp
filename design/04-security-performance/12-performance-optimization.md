@@ -416,7 +416,7 @@ class CacheWarmup extends Command
 
 - **服务器**: 4 核 8GB
 - **数据库**: MySQL 8.0
-- **缓存**: Redis 6.0
+- **缓存**: Redis 7.2
 - **测试工具**: Apache Bench (ab)
 
 ### 测试结果

@@ -583,6 +583,88 @@ class CollectionManagerTest extends ThinkPHPTestCase
 
 ---
 
+### 5.3 设计阶段命名 → 实际命名 映射表
+
+> **为什么需要这张表**：`design/` 下的 73 份设计文档撰写于实现之前，其中示例代码使用的命名空间
+> 与最终落地结构**系统性不同**。2026-10-30 的全量核查发现，48 个项目自有类引用中仅 9 个真实存在。
+> **阅读任何设计文档的示例代码时，请以本表为准，不要直接照抄。**
+
+#### 5.3.1 顶层目录约定
+
+| 设计阶段假设 | 实际约定 |
+|---|---|
+| `app\common\model\*`（ThinkPHP 6 CMS 风格） | 项目采用 DDD 分层：`app\controller\*`、`app\model\BaseModel`、`domain\*`、`infrastructure\*` |
+| `app\common\service\*` | 业务服务在 `infrastructure\<Domain>\Service\*`，控制器在 `app\controller\*` |
+| `app\common\validate\*` | 无 `app/validator/` 目录；校验在控制器内联，另有 `Infrastructure\Validator\JsonSchemaValidatorGenerator` |
+| `app\common\plugin\*` | `Infrastructure\Plugin\*` |
+| `app\common\application\*` | `Infrastructure\Application\*` |
+| `app\lowcode\*` | `Domain\Lowcode\*` + `Infrastructure\Lowcode\*` |
+| `app\service\core\addon\*` | `Infrastructure\Plugin\*` / `Infrastructure\Application\*` |
+| `alkaid\lowcode\*` | `Domain\Lowcode\*` + `Infrastructure\Lowcode\*` |
+| `alkaid\cli\command\*` | `app\command\*` |
+| `Alkaid\Workflow\Engine\*` | **存在**，但子层划分与设计不同（见 5.3.3） |
+
+#### 5.3.2 逐类映射（设计阶段 → 实际情况）
+
+| 设计阶段命名 | 实际类 / 路径 | 状态 |
+|---|---|---|
+| `app\common\controller\BaseController` | `app\BaseController` | ✅ 存在（去掉 `common`） |
+| `app\common\application\BaseApplication` | `Infrastructure\Application\BaseApplication` | ✅ 存在 |
+| `app\common\plugin\BasePlugin` | `Infrastructure\Plugin\Contract\PluginInterface` + `Infrastructure\Plugin\CorePluginBaseService` | ✅ 存在（拆分） |
+| `app\common\model\User` | 无独立模型；`Infrastructure\User\Repository\UserRepository` + `Domain\User\*` | ⚠️ 架构变更 |
+| `app\common\model\Tenant` | `Infrastructure\Tenant\Repository\TenantRepository` + `Domain\Tenant\*` | ⚠️ 架构变更 |
+| `app\common\model\Site` | 无独立模型；站点由 `sites` 表 + `app\Request::siteId()` 处理 | ⚠️ 未抽象为模型 |
+| `app\common\model\Order` / `Product` | 业务示例，未实现 | ❌ 未实现 |
+| `app\common\service\AuthService` | `app\controller\AuthController` + `Infrastructure\Auth\JwtService` | ⚠️ 职责拆分 |
+| `app\common\service\PermissionService` | `Infrastructure\Permission\Service\PermissionService` | ✅ 存在 |
+| `app\common\service\UserService` | `app\controller\admin\UserController` + `Infrastructure\User\Repository\UserRepository` | ⚠️ 职责拆分 |
+| `app\common\service\LogService` | 未实现独立服务；使用 `think\facade\Log` | ❌ 未实现 |
+| `app\common\service\AlertService` | 未实现（有 `event_alerts` 表，无对应服务类） | ❌ 未实现 |
+| `app\common\service\EncryptService` | 未实现 | ❌ 未实现 |
+| `app\common\service\TenantDatabaseService` | 未实现（仅共享库隔离模式） | ❌ 未实现 |
+| `app\common\validate\UserValidate` | 无该类；控制器内联校验 + `Infrastructure\Validator\JsonSchemaValidatorGenerator` | ❌ 未实现 |
+| `app\service\core\addon\CoreAddonBaseService` | `Infrastructure\Application\BaseApplication` | ⚠️ 重命名 |
+| `app\service\core\addon\CorePluginBaseService` | `Infrastructure\Plugin\CorePluginBaseService` | ✅ 存在 |
+| `app\service\market\AppService` | 未实现（应用市场未开发） | ❌ 未实现 |
+| `app\lowcode\datamodeling\field\FieldInterface` | `Domain\Lowcode\Collection\Interfaces\FieldInterface` | ⚠️ 命名空间变更 |
+| `app\lowcode\workflow\node\NodeInterface` | `Alkaid\Workflow\Engine\Nodes\Interfaces\*` | ⚠️ 命名空间变更 |
+| `app\lowcode\workflow\registry\NodeTypeRegistry` | `Alkaid\Workflow\Engine\Nodes\NodeRegistry` | ⚠️ 重命名 |
+| `alkaid\lowcode\datamodeling\registry\FieldTypeRegistry` | `Infrastructure\Lowcode\Collection\Field\FieldFactory` | ⚠️ 重命名 |
+| `alkaid\cli\command\LowcodeCommand` | `app\command\base\LowcodeCommand` | ✅ 存在 |
+| `alkaid\lowcode\service\SchemaBuilder` | `Infrastructure\Schema\SchemaBuilder` | ⚠️ 命名空间变更 |
+| `alkaid\lowcode\formdesigner\service\FormSchemaManager` | `Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager` | ✅ 存在 |
+| `alkaid\lowcode\generator\CrudGenerator` | `Infrastructure\Lowcode\Generator\ControllerGenerator` | ⚠️ 重命名 |
+| `alkaid\lowcode\datamodeling\service\CollectionManager` | `Infrastructure\Lowcode\Collection\Service\CollectionManager` | ✅ 存在 |
+| `alkaid\lowcode\datamodeling\model\Collection` | `Domain\Lowcode\Collection\Model\Collection` | ✅ 存在 |
+
+#### 5.3.3 工作流引擎子层映射（`47-workflow-backend-engine.md` 专用）
+
+设计文档使用的 `Execution/`、`Models/`、`Services/` 三个子层**实际不存在**，对应关系如下：
+
+| 设计文档中的命名 | 实际命名空间 / 路径 |
+|---|---|
+| `Alkaid\Workflow\Engine\Execution\ExecutionContext` | `Alkaid\Workflow\Engine\Swoole\Execution\ExecutionContext` |
+| `Alkaid\Workflow\Engine\Execution\NodeExecutionResult` | `Alkaid\Workflow\Engine\Swoole\Execution\NodeExecutionResult` |
+| `Alkaid\Workflow\Engine\Models\NodeModel` | `Alkaid\Workflow\Engine\model\NodeModel`（**小写 `model`**） |
+| `Alkaid\Workflow\Engine\Models\Workflow` | `Alkaid\Workflow\Engine\model\ProcessModel` |
+| `Alkaid\Workflow\Engine\Models\WorkflowInstance` | `Alkaid\Workflow\Engine\model\ProcessModel`（实例与定义共用） |
+| `Alkaid\Workflow\Engine\Models\HumanTask` | ❌ 未实现 |
+| `Alkaid\Workflow\Engine\Services\ExpressionEngine` | `Alkaid\Workflow\Engine\Expression\ExpressionEngine` |
+| `Alkaid\Workflow\Engine\Services\WorkflowEngine` | `Alkaid\Workflow\Engine\Core\ProcessEngines` / `Core\Execution` |
+| `Alkaid\Workflow\Engine\Triggers\TriggerInterface` | `Alkaid\Workflow\Engine\Triggers\Interfaces\TriggerInterface`（多一层 `Interfaces`） |
+| `Alkaid\Workflow\Engine\Exceptions\ExpressionEvaluationException` | ❌ 未实现（`Expression/` 下无对应异常类） |
+| `Alkaid\Framework\Http\Controller` | ❌ 未实现（框架控制器为 `app\BaseController`） |
+| `Alkaid\Plugin\HookToolRegistry` | ❌ 未实现（钩子机制见 `Infrastructure\Plugin\Hook\HookManager`） |
+| `AlkaidSYS\SDK\AlkaidSDK` | ❌ 未实现（SDK 尚在 `design/sdk-builder/` 规划阶段） |
+
+#### 5.3.4 使用建议
+
+1. **看结构，不抄命名**：设计文档的**分层思路与职责划分**仍然有效，但类名与命名空间需按本表替换。
+2. **优先信实现**：当设计文档与 `docs/technical-specs/` 冲突时，以 `technical-specs/` 为准；与代码冲突时，以代码为准。
+3. **新增设计文档时**：请使用**实际命名空间**，并在文档头部声明版本与实现状态。
+
+---
+
 ## 六、常见问题
 
 ### Q1: 如何创建自定义字段类型？

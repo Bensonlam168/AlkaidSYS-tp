@@ -57,6 +57,57 @@ Frontend:
 - Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `style`（`commitlint.config.js` 强制）。
 - PR 需包含清晰描述、关联 issue/任务、测试命令与结果；有 `frontend/` UI 变更需附截图。
 
+## Documentation Maintenance（文档维护约定）
+
+> 依据：`docs/report/doc-review-design-docs-2026-10-30.md` 的 22 项文档缺陷分析。
+
+### 1. 设计文档必须标注「实现状态」
+
+新增或修改 `design/**/*.md` 时，在文档头部（H1 与文档信息表之后）加一行状态声明：
+
+```markdown
+> 🔶 **实现状态**：**部分实现** —— 已实现：xxx。未实现：yyy。
+```
+
+状态取值：`✅ 已实现` / `🔶 部分实现` / `❌ 未实现` / `⛔ 已废弃` / `🔄 已被取代` / `⚠️ 计划文档·进度未回填`。
+
+**理由**：此前 73 份设计文档中仅 4 份有「最后更新」，读者无法判断哪些能力真实存在。
+
+### 2. 示例代码使用设计阶段命名时必须声明
+
+若设计文档示例使用非实际命名空间（如 `app\common\*`、`alkaid\lowcode\*`），必须在头部加：
+
+```markdown
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**，与最终实现结构不同。
+> **请勿直接照抄**，实际命名映射见 `lowcode-architecture-guidelines.md` §5.3。
+```
+
+**理由**：核查发现设计文档 48 个项目类引用中 39 个指向不存在的文件。
+
+### 3. 设计文档与任务的双向引用
+
+- 设计文档中实现某能力时，标注对应任务号，如 `（实现任务：T-118）`。
+- `docs/todo/plan/task-completion-report-T*.md` 中，链接对应的设计文档章节。
+
+**理由**：`design/` 中仅出现 1 个任务号，而 `docs/todo/` 有 114 个，双向不可追溯。
+
+### 4. 文档改动必须通过一致性检查
+
+```bash
+docker exec alkaid-backend php scripts/check-docs.php            # 本地自查
+docker exec alkaid-backend php scripts/check-docs.php --strict   # CI 门禁模式
+```
+
+检查项：相对链接有效性、代码围栏配平、示例代码类引用存在性。
+CI 门禁：`.github/workflows/docs-check.yml`（`design/**` 或 `docs/**` 变更时触发）。
+
+### 5. 修改代码时同步更新文档
+
+- 修改/删除类、命名空间、目录结构时，同步更新引用它的设计文档；
+- 完成一个阶段后，更新 `docs/PROJECT-OVERVIEW.md` 的「设计 vs 实现对照」；
+- 文档与代码冲突时，**以代码为准**，并修正文档。
+
 ## Configuration & Security
 - Create local config from `.env.example` (`cp .env.example .env`) and never commit secrets；env 命名以 `.env.example` 为“单一真相源”。
 - Avoid committing generated artifacts like `vendor/`, `runtime/`, and `node_modules/`.
+- **禁止提交嵌套 `vendor/`**：根 `.gitignore` 的 `/vendor/` 只对根目录生效，`plugins/**/vendor/` 需单独忽略（现存问题见质量审查报告 C-3）。

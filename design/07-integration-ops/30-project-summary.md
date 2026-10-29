@@ -54,7 +54,7 @@ graph TB
 
     subgraph "数据层"
         L[MySQL 8.0]
-        M[Redis 6.0]
+        M[Redis 7.2]
         N[RabbitMQ]
     end
 
@@ -76,7 +76,7 @@ graph TB
 | **插件层** | 功能扩展模块 | 通用插件、应用专属插件、低代码插件 |
 | **低代码基础层** | 低代码核心服务 | Schema Manager、Collection Manager |
 | **核心服务层** | 框架核心服务 | 用户、租户、权限、应用、插件服务 |
-| **数据层** | 数据存储和缓存 | MySQL 8.0+、Redis 6.0+、RabbitMQ |
+| **数据层** | 数据存储和缓存 | MySQL 8.0+、Redis 7.2+、RabbitMQ |
 
 **说明**：低代码模块采用四层架构（低代码应用层→低代码插件层→低代码基础层→核心框架层），嵌入在整体架构的第3-6层中。
 
@@ -314,7 +314,7 @@ graph TB
 
 | 维度 | AlkaidSYS | NIUCLOUD | 优势 |
 |------|-----------|----------|------|
-| **后端引擎** | Swoole 5.0+ | PHP-FPM | ✅ 10 倍性能 |
+| **后端引擎** | Swoole 5.1+ | PHP-FPM | ✅ 10 倍性能 |
 | **前端框架** | Vue 3 + Vben | Vue 2 | ✅ 更现代 |
 | **构建工具** | Vite 7 | Webpack | ✅ 5 倍速度 |
 | **状态管理** | Pinia 3.0 | Vuex | ✅ 更简洁 |

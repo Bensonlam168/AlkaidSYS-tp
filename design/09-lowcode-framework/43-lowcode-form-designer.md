@@ -5,6 +5,10 @@
 > **最后更新**：2025-01-20
 > **作者**：AlkaidSYS 架构团队
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ---
 
 ## 📋 目录
@@ -24,7 +28,6 @@
 - [低代码数据建模插件设计](42-lowcode-data-modeling.md)
 - [表单 → 数据建模 → 工作流端到端集成设计](51-form-collection-workflow-end-to-end.md)
 - [可观测性与运维设计](../04-security-performance/15-observability-and-ops-design.md)
-
 
 ---
 
@@ -1278,5 +1281,4 @@ class FormController
 ---
 
 **文档结束**
-
 

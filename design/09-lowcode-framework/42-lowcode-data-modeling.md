@@ -5,6 +5,10 @@
 > **最后更新**：2025-01-20
 > **作者**：AlkaidSYS 架构团队
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ---
 
 ## 📋 目录
@@ -24,7 +28,6 @@
 - [数据库演进与迁移策略](../03-data-layer/11-database-evolution-and-migration-strategy.md)
 - [低代码表单设计器插件设计](43-lowcode-form-designer.md)
 - [表单 → 数据建模 → 工作流端到端集成设计](51-form-collection-workflow-end-to-end.md)
-
 
 ---
 
@@ -821,9 +824,6 @@ $productCollection->addRelationship('categories', [
 ## 5. 数据迁移机制
 > **环境边界说明：** 低代码数据建模插件在 **dev/test 环境** 可以通过 `MigrationManager` 快速生成迁移文件并直接演练表结构变更；**stage/prod 环境** 必须以《数据库演进与迁移策略》（`../03-data-layer/11-database-evolution-and-migration-strategy.md`）和《数据演进蓝皮书》（`../03-data-layer/13-data-evolution-bluebook.md`）为权威，走蓝皮书审批 + 标准迁移管道，禁止在生产环境中通过运行时 DDL 直接改表。
 
-
-
-
 ### 5.1 迁移文件生成
 
 ```php
@@ -984,7 +984,6 @@ $builder->createTable('biz_product', $schema, function($table) {
 
 > 建议：MySQL 8 InnoDB 使用 `tenant_id` 作为分区键或 TiDB/PolarDB 分区策略键；所有查询必须带上 `tenant_id/site_id` 过滤条件，ORM 层通过 BaseModel 全局作用域强制注入。
 
-
 ## 7. API 接口设计
 
 ### 7.1 Collection CRUD API
@@ -1121,5 +1120,4 @@ class CollectionController
 ---
 
 **文档结束**
-
 

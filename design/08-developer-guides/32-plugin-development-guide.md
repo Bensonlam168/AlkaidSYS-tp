@@ -1,5 +1,9 @@
 # AlkaidSYS 插件开发指南
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -38,7 +42,7 @@ AlkaidSYS 支持 2 大类插件：
 # 推荐环境
 - PHP 8.2
 - MySQL 8.0
-- Redis 7.0
+- Redis 7.2
 ```
 
 ### 2. 安装 AlkaidSYS CLI 工具
@@ -233,8 +237,6 @@ tree -L 2
 | config | object | 否 | 配置项 |
 | changelog | string | 否 | 更新日志 |
 > **依赖与版本说明：** `dependencies` 字段、`app_key` 以及插件在实际实现中可能携带的 `min_framework_version` / `min_app_version` 等约束，其语义和兼容矩阵同样以 `02-app-plugin-ecosystem` 模块中的“应用与插件依赖与版本策略”设计文档为权威来源。本指南中的示例仅用于说明字段结构，具体版本要求与兼容策略请以该设计文档为准。
-
-
 
 ## 🔄 插件生命周期
 
@@ -1168,7 +1170,6 @@ alkaid publish plugin \
   --api-secret=YOUR_API_SECRET
 ```
 
-
 ### 2. 发布插件
 
 ```bash
@@ -1213,7 +1214,6 @@ curl -X POST "https://api.alkaid.com/market/plugins/publish" \
 ```
 
 > 安全注意事项：package_hash 使用 SHA-256 十六进制小写；签名头与防重放规则见 04-security-performance 与 03-data-layer/10-api-design 的“签名中间件”章节。
-
 
 ## 🆚 与 NIUCLOUD 对比
 

@@ -23,7 +23,7 @@ pecl install swoole
 
 ### 3.2 Database & Cache
 - Ensure MySQL 8.0+ is running with `utf8mb4` support.
-- Ensure Redis 6.0+ is running (password protection recommended).
+- Ensure Redis 7.2+ is running (password protection recommended).
 
 ### 3.3 Swoole Configuration
 

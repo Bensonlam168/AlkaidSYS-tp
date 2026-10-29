@@ -5,6 +5,9 @@
 > **最后更新**：2025-01-20  
 > **作者**：AlkaidSYS 架构团队
 
+> ⚠️ **命名空间声明**：本文示例使用**设计阶段的子层划分**（`Execution/`、`Models/`、`Services/`），与实际实现不同（实现为 `Swoole/Execution/`、`model/`（小写）、`Expression/`、`Core/`）。
+> **请勿直接照抄**，逐类映射见 [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3.3。
+
 ---
 
 ## 📋 目录

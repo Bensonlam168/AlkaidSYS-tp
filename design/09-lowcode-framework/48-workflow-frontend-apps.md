@@ -5,6 +5,8 @@
 > **最后更新**：2025-01-20
 > **作者**：AlkaidSYS 架构团队
 
+> ❌ **实现状态**：**未实现** —— 设计所述的工作流前端应用**未落地**：顶层 `plugins/workflow-ui/` 仅 3 个 Vue 组件且无 `package.json`；可用组件库在 `plugins/workflow-engine/packages/workflow-ui/`（39 文件 / 9,911 行），但**未被主前端引用**。
+
 ---
 
 ## 📋 目录

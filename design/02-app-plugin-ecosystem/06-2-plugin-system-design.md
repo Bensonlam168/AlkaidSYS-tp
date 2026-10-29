@@ -1,5 +1,9 @@
 # AlkaidSYS 插件系统设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -222,7 +226,6 @@ graph TB
 
 > **环境说明：** 上面的 `sql/install.sql` / `sql/uninstall.sql` 主要用于 **dev/test 环境** 快速初始化和清理插件相关数据库对象，方便本地开发与联调演练。对于 **stage/prod 等正式环境**，所有结构变更必须遵守《数据库演进与迁移策略》（`../03-data-layer/11-database-evolution-and-migration-strategy.md`）和《数据演进蓝皮书》（`../03-data-layer/13-data-evolution-bluebook.md`），通过蓝皮书审批与标准迁移管道执行，插件不得在生产环境中直接执行 DDL 作为安装/卸载的一部分。
 
-
 ### 3. 插件元数据（plugin.json）
 
 #### 3.1 官方插件配置示例（钩子模式）
@@ -378,11 +381,6 @@ graph TB
 | `iframe_config.backend_url` | string | 否 | 插件后端 API URL（支持异构后端） |
 | `iframe_config.backend_tech` | string | 否 | 后端技术栈：`php`、`python`、`go`、`nodejs`、`java` |
 | `iframe_config.auth_mode` | string | 否 | 认证模式：`jwt`（默认）、`oauth2` |
-
-
-
-
-
 
 [1m[31m警告[39m[22m: [90mRewrite[39m [90m请求失败, [39m[33m[1mfalling back[22m[39m 到 editor[39m
 [1m[36m提示[39m[22m: [90m更复杂的修改请使用 Editor[39m
@@ -557,7 +555,6 @@ class Plugin extends CorePluginBaseService
 ## 🔗 钩子机制（Hooks）
 
 > **性能与可观测性说明：** 钩子机制会直接影响请求路径的延迟与稳定性，钩子链路中的异常处理、超时策略与日志上报，应遵守《04-security-performance/10-non-functional-overview.md》和《04-security-performance/15-observability-and-ops-design.md》的统一约束，避免在插件层形成与平台不一致的“局部标准”。
-
 
 ### 1. 钩子系统架构
 
@@ -1010,7 +1007,6 @@ AlkaidSDK.emit('custom:event', { data: 'value' })
 ```
 
 > **安全说明：** 通过 iframe 与异构后端集成时，JWT Token 的签发与验证、跨域策略、回调接口暴露范围等，必须遵守《04-security-performance/11-security-design.md》和《04-security-performance/14-security-baseline-and-dependency-upgrade.md》中的统一要求；示例中的域名、鉴权逻辑仅用于说明架构形态，不建议直接复制到生产环境。
-
 
 ### 4. 后端异构集成
 

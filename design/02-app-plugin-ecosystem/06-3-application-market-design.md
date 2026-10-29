@@ -1,5 +1,16 @@
 # AlkaidSYS 应用市场设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
+> ❌ **实现状态**：**未实现** —— 全库搜索 `market` / `marketplace` **零匹配**：无控制器、无路由、无迁移、无前端页面。
+
+> 📌 **范围声明（2026-10-30 补充）**：本设计与 [`00-core-planning/01-MASTER-IMPLEMENTATION-PLAN.md`](../00-core-planning/01-MASTER-IMPLEMENTATION-PLAN.md) §1.2「计划范围」中的"不包括应用市场和插件市场开发"**存在表面矛盾**。
+> 实际情况：市场是**生态闭环的远期组成部分**，已完成**设计**但**未排入当前实施阶段**，代码层面零实现（全库 `market`/`marketplace` 零匹配）。
+> 定位：**远期设计参考**，重启开发时不应作为近期目标。
+
+
 ## 📋 文档信息
 
 | 项目 | 内容 |

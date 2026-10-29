@@ -154,7 +154,7 @@ pecl install redis
 
 **Swoole 版本兼容性**：
 - ✅ **Swoole 5.1.x**：完全支持,推荐使用
-- ✅ **Swoole 5.0.x**：完全支持
+- ✅ **Swoole 5.1.x**：完全支持
 - ⚠️ **Swoole 4.x**：不推荐(缺少部分新特性)
 
 ---
@@ -360,7 +360,7 @@ graph TB
 graph LR
     subgraph "核心框架"
         A[ThinkPHP 8.0]
-        B[Swoole 5.0+]
+        B[Swoole 5.1+]
         C[Think-ORM]
         D[Think-Queue]
     end
@@ -541,7 +541,7 @@ FLUSH PRIVILEGES;
 EXIT;
 ```
 
-**安装 Redis 6.0+**：
+**安装 Redis 7.2+**：
 ```bash
 # Ubuntu/Debian
 sudo apt-get install -y redis-server

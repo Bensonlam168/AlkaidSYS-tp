@@ -1,5 +1,7 @@
 # AlkaidSYS Admin 管理端设计
 
+> 🔶 **实现状态**：**部分实现** —— 已实现：`web-antd` 系统管理模块（89 文件 / 8,217 行，含 `api/system/*` 与 `views/system/*`）。未实现：其余 3 个 app（web-ele/web-naive/web-tdesign）均为 Vben 脚手架。**注意**：`frontend/` 当前是悬空 gitlink，源码不在版本库中（见质量审查报告 C-2）。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |

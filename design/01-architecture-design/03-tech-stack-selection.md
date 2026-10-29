@@ -91,7 +91,7 @@ class UserValidate extends Validate
 | **类型系统** | 强类型 | 弱类型 | ✅ 更安全 |
 | **属性** | 支持 | 不支持 | ✅ 代码更简洁 |
 
-### 2. 高性能引擎：Swoole 5.0+
+### 2. 高性能引擎：Swoole 5.1+
 
 #### 选型理由
 
@@ -107,7 +107,7 @@ class UserValidate extends Validate
 
 ```php
 <?php
-// Swoole 5.0+ 核心特性示例
+// Swoole 5.1+ 核心特性示例
 
 // 1. 协程 HTTP 服务器
 use Swoole\Http\Server;
@@ -241,7 +241,7 @@ CREATE TABLE users (
 );
 ```
 
-### 4. 缓存：Redis 6.0+
+### 4. 缓存：Redis 7.2+
 
 #### 选型理由
 
@@ -571,7 +571,7 @@ if (!$enforcer->enforce('bob', 'users', 'write')) {
 |------|-----------|----------|------|
 | **PHP 版本** | 8.2+ | 7.4+ | ✅ 性能提升 20% |
 | **框架版本** | ThinkPHP 8.0 | ThinkPHP 6.x | ✅ 更现代 |
-| **高性能引擎** | Swoole 5.0+ | 无 | ✅ 10 倍性能提升 |
+| **高性能引擎** | Swoole 5.1+ | 无 | ✅ 10 倍性能提升 |
 | **Admin 端** | Vben Admin 5.x | Element Plus | ✅ 功能更强大 |
 | **权限管理** | PHP-Casbin | 自研 | ✅ 更灵活 |
 | **消息队列** | RabbitMQ | Redis | ✅ 更可靠 |

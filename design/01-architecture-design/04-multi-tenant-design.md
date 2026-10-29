@@ -1,5 +1,11 @@
 # AlkaidSYS 多租户架构设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
+> 🔶 **实现状态**：**部分实现** —— 已实现：共享库 + `tenant_id`/`site_id` 列级隔离（16/8 个迁移）。未实现：模式 2「独立数据库」与模式 3「混合模式」（27 个迁移全在同一 schema，无建库/切库 DDL）。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -14,8 +20,6 @@
 - [数据库设计](../03-data-layer/09-database-design.md)
 - [数据库演进与迁移策略](../03-data-layer/11-database-evolution-and-migration-strategy.md)
 - [安全架构设计](../04-security-performance/11-security-design.md)
-
-
 
 ## 🎯 多租户设计目标
 
@@ -332,7 +336,6 @@ $rows = SomeModel::select();
 - 任何需要认证的接口必须经过 `Auth` 中间件，禁止仅依赖 `X-Tenant-ID` / `X-Site-ID` 头来识别用户租户。
 - 业务代码不应绕过 `Request` / `BaseModel` 直接根据 Header 决定租户 / 站点。
 - 使用 `withoutTenantScope()` 时必须在审计日志中记录实际的 `tenant_id/site_id` 与操作人信息。
-
 
 ### 使用示例
 

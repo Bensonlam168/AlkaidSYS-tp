@@ -388,12 +388,12 @@ docs/todo/ 中出现的任务号：114 个
 
 | 文档 | 声明 |
 |---|---|
-| `design/04-security-performance/12-performance-optimization.md:419` | Redis 6.0 |
-| `design/10-batch-summaries/FINAL-SUMMARY.md:125` | Redis 6.0 |
-| `design/10-batch-summaries/BATCH-2-SUMMARY.md:99` | Redis 6.0 |
-| `design/05-deployment-testing/14-deployment-guide.md:104` | 安装 Redis 6.0 |
-| `design/08-developer-guides/31-application-development-guide.md:47` | Redis 7.0 |
-| `design/08-developer-guides/32-plugin-development-guide.md:41` | Redis 7.0 |
+| `design/04-security-performance/12-performance-optimization.md:419` | Redis 7.2 |
+| `design/10-batch-summaries/FINAL-SUMMARY.md:125` | Redis 7.2 |
+| `design/10-batch-summaries/BATCH-2-SUMMARY.md:99` | Redis 7.2 |
+| `design/05-deployment-testing/14-deployment-guide.md:104` | 安装 Redis 7.2 |
+| `design/08-developer-guides/31-application-development-guide.md:47` | Redis 7.2 |
+| `design/08-developer-guides/32-plugin-development-guide.md:41` | Redis 7.2 |
 | **实际** | `docker-compose.yml` → `redis:7.2-alpine`；容器实测 `7.2.12` |
 
 **影响**：部署指南要求装 6.0，与编排文件 7.2 冲突。
@@ -401,7 +401,7 @@ docs/todo/ 中出现的任务号：114 个
 #### E-2 Swoole 版本标注滞后
 
 ```
-文档中出现：Swoole 5.0（22 处）、Swoole 5.1（1 处）
+文档中出现：Swoole 5.1（22 处）、Swoole 5.1（1 处）
 实际：Dockerfile `FROM phpswoole/swoole:5.1-php8.2`，composer.lock `swoole/ide-helper 5.1.8`
 ```
 

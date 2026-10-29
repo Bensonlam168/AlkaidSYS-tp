@@ -1,5 +1,11 @@
 # AlkaidSYS 应用和插件系统设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
+> 🔶 **实现状态**：**部分实现** —— 已实现：插件机制（`Infrastructure\Plugin\` 18 个类 + 2 张表）。未实现：设计承诺的六大应用（电商/OA/CRM/ERP/CMS/AI）——`addons/apps/` 仅有 `_template` 模板。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |

@@ -1,5 +1,9 @@
 # AlkaidSYS 整体架构设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -1112,7 +1116,6 @@ class MySQLPool
 - **L1 缓存** - Swoole Table（共享内存）
 - **L2 缓存** - Redis（分布式缓存）
 - **缓存更新** - 主动更新 + 被动失效
-
 
 ## 🛡️ 故障域与容错策略（补充）
 

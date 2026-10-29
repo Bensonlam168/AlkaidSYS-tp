@@ -98,12 +98,16 @@ sequenceDiagram
 
 #### 步骤 1：注册账号
 
+> ⚠️ **依赖说明（2026-10-30 核实）**：下方示例使用 `think\facade\Mail`，
+> 但项目当前**未引入** `topthink/think-mail`（`composer.json` 无此依赖，容器内该类不存在）。
+> 若实施本设计需先执行 `composer require topthink/think-mail`，或将通知渠道改为事件 + 队列异步发送。
+
 ```php
 <?php
 namespace app\service\developer;
 
 use think\facade\Db;
-use think\facade\Mail;
+use think\facade\Mail;   // ← 需先引入 topthink/think-mail
 
 /**
  * 开发者注册服务

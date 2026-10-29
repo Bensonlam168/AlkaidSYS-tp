@@ -44,8 +44,8 @@ AlkaidSYS 支持 6 大类应用：
 # 推荐环境
 - PHP 8.2
 - MySQL 8.0
-- Redis 7.0
-- Swoole 5.0+
+- Redis 7.2
+- Swoole 5.1+
 ```
 
 ### 2. 安装 AlkaidSYS 框架

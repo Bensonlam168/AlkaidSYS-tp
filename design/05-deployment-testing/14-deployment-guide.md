@@ -71,7 +71,7 @@ sudo apt install php8.2-fpm php8.2-cli php8.2-mysql php8.2-redis \
 php -v
 ```
 
-### 安装 Swoole 5.0
+### 安装 Swoole 5.1
 
 ```bash
 # 使用 PECL 安装
@@ -101,7 +101,7 @@ GRANT ALL PRIVILEGES ON alkaid.* TO 'alkaid'@'%';
 FLUSH PRIVILEGES;
 ```
 
-### 安装 Redis 6.0
+### 安装 Redis 7.2
 
 ```bash
 # Ubuntu

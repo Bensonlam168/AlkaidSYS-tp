@@ -1,5 +1,11 @@
 # AlkaidSYS 低代码平台设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
+> 🔶 **实现状态**：**部分实现** —— 已实现：代码生成器（`Lowcode/Generator`）、表单设计器（`Lowcode/FormDesigner`）、流程设计器（`workflow-engine/packages/workflow-ui`）。未实现：**页面设计器**（本文 §3，约 115 行）——无任何对应目录。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -766,7 +772,6 @@ TS;
   ]
 }
 ```
-
 
 ## ⚠️ 运行环境与 DDL 约束
 

@@ -67,11 +67,11 @@ CentOS 7.9+ / Ubuntu 20.04+
 
 # PHP
 PHP 8.2+
-Swoole 5.0+
+Swoole 5.1+
 
 # 数据库
 MySQL 8.0+
-Redis 6.0+
+Redis 7.2+
 
 # Web 服务器
 Nginx 1.20+

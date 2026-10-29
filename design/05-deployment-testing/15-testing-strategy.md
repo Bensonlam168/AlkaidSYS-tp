@@ -1,5 +1,9 @@
 # AlkaidSYS 测试策略
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -529,8 +533,6 @@ class SignatureMiddlewareTest extends TestCase
 ```
 
 > 注意：服务端需在 300s 窗内缓存 nonce（如 Redis：SETNX nonce:{appKey}:{nonce} ttl=300），并校验 `abs(now - X-Timestamp) <= 300`；签名字段与校验逻辑需与《04-security-performance/11-security-design.md》中 API 签名与防重放策略保持一致。
-
-
 
 ## 🏷️ 多租户/多站点测试
 

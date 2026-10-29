@@ -1,5 +1,9 @@
 # AlkaidSYS 安全架构设计
 
+> ⚠️ **命名空间声明**：本文示例代码使用**设计阶段的命名**（如 `app\common\*`、`alkaid\lowcode\*`），
+> 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
+> [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
+
 ## 📋 文档信息
 
 | 项目 | 内容 |
@@ -14,7 +18,6 @@
 - [安全基线与依赖升级策略](14-security-baseline-and-dependency-upgrade.md)
 - [可观测性与运维设计](15-observability-and-ops-design.md)
 - [配置与多环境管理设计](../05-deployment-testing/17-configuration-and-environment-management.md)
-
 
 ## 🎯 安全设计目标
 
@@ -182,9 +185,6 @@ class AuthService extends BaseService
 - **黑名单 TTL 策略**：
   - 黑名单记录默认 TTL 与 Refresh Token 生命周期一致（7 天），通过 `JwtService::revokeToken()` 维护；
   - 如需更长的审计期，可以在后续阶段引入独立的黑名单 TTL 配置（例如 30 天）。
-
-
-
 
     /**
      * 刷新 Token
@@ -527,8 +527,6 @@ class Auth
 }
 ```
 
-
-
 - 服务器内部错误：返回 HTTP 500 + 业务 `code = 5000`。
 
 ### Trace 中间件与 trace_id 机制
@@ -555,7 +553,6 @@ Trace 中间件负责在整个请求生命周期中维护统一的 `trace_id`，
 > - 在 `app/middleware.php` 中注册为全局中间件，并放置在中间件数组首位，以确保尽早为后续中间件和控制器提供 trace_id；
 > - `AuthController::refresh()` 在记录 Refresh Token 撤销相关的安全审计日志时，会从 `$request->traceId()` 读取当前请求的 trace_id 并写入日志。
 
-
 ### 认证与授权错误码矩阵
 
 下表汇总了认证与授权相关的所有业务错误码，以及对应的 HTTP 状态码、触发场景与 message 示例，便于前后端与运维统一理解：
@@ -570,7 +567,6 @@ Trace 中间件负责在整个请求生命周期中维护统一的 `trace_id`，
 | 2006 | 401 Unauthorized | 使用 Access Token 调用 Refresh 接口（type ≠ refresh） | `/v1/auth/refresh`（token 类型校验失败） | `"Expected refresh token, got access token"` |
 | 2007 | 401 Unauthorized | Refresh Token 已被撤销或重放（黑名单/白名单命中） | `/v1/auth/refresh`（撤销/重放检测，记录安全审计日志） | `"Refresh token has been revoked or invalidated"` |
 | 5000 | 500 Internal Server Error | 服务器内部错误（未捕获异常 / 意外错误） | 全局异常处理 / 统一错误处理器 | `"Internal Server Error"` |
-
 
 ## 🔒 授权机制（PHP-Casbin）
 
@@ -1016,10 +1012,6 @@ protected function auditOk(array $audit): void
 ```
 
 > 审计字段模板：request_id、channel、path、ip、timestamp、nonce、algorithm、body_sha256、reason、status、created_at、responded_at。与 03-data-layer/10-api-design 的响应头建议保持一致。
-
-
-
-
 
 ## 🔐 数据加密
 
