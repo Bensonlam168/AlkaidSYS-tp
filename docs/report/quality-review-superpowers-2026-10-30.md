@@ -7,7 +7,7 @@
 | 审查方法 | superpowers `requesting-code-review` / `code-reviewer.md` 五维清单 |
 | 审查范围 | 后端 335 个 PHP / 57,376 行；`plugins/` 4,630 个跟踪文件；`frontend/`（见 C-2）；`design/` 73 份；`docs/` 111 份（不含归档） |
 | 核查方式 | 四路独立只读审计 + 主审对**每一条结论**逐项复核（复核记录见第十章） |
-| 最终结论 | **No（不建议合并）** —— 原始 4 Critical / 9 Important / 17 Minor；**截至 2026-10-30 已修复 1 个 Critical（C-2）**，剩余 3 Critical |
+| 最终结论 | **No（不建议合并）** —— 原始 4 Critical / 9 Important / 17 Minor；**截至 2026-10-30 已修复 2 个 Critical（C-2、C-4）**，剩余 2 Critical（C-1、C-3） |
 
 > **计数口径说明**：所有依赖 git 状态的数字以审查基线 `f119d98` 为准。本报告自身的提交会使"从 develop 可达提交数"与"跟踪文件数"小幅递增，属正常增量，不影响结论。
 
@@ -311,7 +311,25 @@ plugins/workflow-engine/vendor  →  4,270 文件 / 39.28 MB（占全仓跟踪�
 
 ---
 
-#### C-4 未认证注册接口用客户端 `X-Tenant-ID` 决定落库租户（跨租户账号注入）
+#### C-4 未认证注册接口用客户端 `X-Tenant-ID` 决定落库租户（跨租户账号注入） ✅ **已修复（2026-10-30）**
+
+> **修复结果**：注册目标租户改为「域名绑定 → 服务端配置」两级解析，**不再读取 `X-Tenant-ID`**；
+> 并校验租户状态（active / 未过期 / 未超 `max_users`），无法解析时返回 **HTTP 403 + code 2008**。
+>
+> **实测证据**（真实 HTTP，Swoole 重启后）：
+> ```
+> POST /v1/auth/register  X-Tenant-ID: 2
+> → HTTP 403  {"code":2008,"message":"当前部署未开放自助注册","trace_id":"19e629b4…"}
+> ```
+>
+> **新增测试**：`tests/Unit/Tenant/TenantRegistrationResolverTest.php`（8 个用例，全部通过）
+> 覆盖：忽略客户端头 / 域名优先 / 无租户可解析时拒绝 / 配置租户不存在 / 停用 / inactive / 过期 / 正常通过。
+>
+> **回归验证**：全量测试 432 用例，Errors 22 + Failures 20（与修复前基线 **42 完全一致**，零新增失败）。
+>
+> 原始问题描述保留如下，供追溯。
+
+**原始状态**：
 
 ```php
 // route/auth.php:10-18  —— register 组内无 Auth 中间件

@@ -7,6 +7,7 @@ namespace app\controller;
 use Infrastructure\Auth\JwtService;
 use Infrastructure\User\Repository\UserRepository;
 use Infrastructure\Permission\Service\PermissionService;
+use Infrastructure\Tenant\Service\TenantRegistrationResolver;
 use Domain\User\Model\User;
 use think\Response;
 use think\facade\Log;
@@ -25,6 +26,14 @@ class AuthController extends ApiController
     protected JwtService $jwtService;
     protected UserRepository $userRepository;
     protected PermissionService $permissionService;
+
+    /**
+     * Tenant resolver for registration | 注册目标租户解析器
+     *
+     * 安全说明（C-4）：注册的目标租户**不得**取自客户端可控制的请求头，
+     * 只能由「租户域名绑定」或「服务端配置 REGISTRATION_TENANT_ID」解析得出。
+     */
+    protected TenantRegistrationResolver $tenantRegistrationResolver;
 
     /**
      * Constructor with dependency injection | 构造函数（依赖注入）
@@ -48,6 +57,7 @@ class AuthController extends ApiController
         $this->jwtService = $jwtService;
         $this->userRepository = $userRepository;
         $this->permissionService = $permissionService;
+        $this->tenantRegistrationResolver = new TenantRegistrationResolver();
     }
 
     /**
@@ -134,7 +144,18 @@ class AuthController extends ApiController
             return $this->error('Username, email and password are required');
         }
 
-        $tenantId = $request->tenantId();
+        // 安全（C-4）：注册目标租户由域名绑定或服务端配置解析，**不采用** X-Tenant-ID 请求头。
+        // 无法解析或租户不可用时抛 ForbiddenException(code=2008)，由全局异常处理器统一响应。
+        $tenant = $this->tenantRegistrationResolver->resolve($request);
+        $tenantId = (int) $tenant->getId();
+
+        Log::info('[AUTH_REGISTER] Registration accepted', [
+            'tenant_id' => $tenantId,
+            'tenant_slug' => $tenant->getSlug(),
+            'email' => $data['email'],
+            'ip' => $request->ip(),
+            'trace_id' => $this->getTraceId(),
+        ]);
 
         try {
             // 确保当前租户有默认 user 角色，避免跨租户复用 tenant=1 的系统角色

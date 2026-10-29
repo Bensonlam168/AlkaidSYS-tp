@@ -26,6 +26,8 @@ class ExceptionHandle extends Handle
         ModelNotFoundException::class,
         DataNotFoundException::class,
         ValidateException::class,
+        // 业务层拒绝（如 C-4 注册租户不可用）已在业务侧记录 warning，避免重复记 error 日志
+        \app\exception\ForbiddenException::class,
     ];
 
     /**
@@ -78,6 +80,21 @@ class ExceptionHandle extends Handle
                 404,
                 'Resource not found | 资源不存在',
                 4004,
+                null,
+                $traceId,
+                $isDebug ? $e : null
+            );
+        }
+
+        // 2.5 Domain-level forbidden exception | 业务层拒绝访问异常
+        //
+        // 例如注册目标租户无法解析或不可用（C-4 安全修复），
+        // 统一映射为 HTTP 403 + 业务码（默认 2002，注册场景为 2008）。
+        if ($e instanceof \app\exception\ForbiddenException) {
+            return $this->buildJsonResponse(
+                403,
+                $e->getMessage() ?: 'Forbidden | 禁止访问',
+                (int) $e->getCode() ?: 2002,
                 null,
                 $traceId,
                 $isDebug ? $e : null

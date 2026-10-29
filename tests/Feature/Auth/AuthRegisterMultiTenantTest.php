@@ -6,6 +6,7 @@ namespace Tests\Feature\Auth;
 
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
+use think\facade\Env;
 
 /**
  * 多租户注册默认角色创建与绑定测试
@@ -20,6 +21,18 @@ class AuthRegisterMultiTenantTest extends ThinkPHPTestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // 清除容器中可能被上一个用例污染的 Request 实例
+        //
+        // 背景：`tests/ThinkPHPTestCase` 复用同一个 App 实例，think-container 的 make()
+        // 会缓存实例且 bind() 后不解绑，导致本用例拿到上一个用例的 Request（携带其
+        // tenantId/siteId/userId/pathinfo），从而出现与本用例无关的 401/403。
+        // 这是已知的测试隔离缺陷，此处做局部规避。
+        try {
+            $this->app()->delete(\think\Request::class);
+        } catch (\Throwable $e) {
+            // 容器未注册时忽略
+        }
 
         // 绑定自定义 Request，确保 tenantId 行为一致
         $this->app()->bind(\think\Request::class, \app\Request::class);
@@ -36,6 +49,8 @@ class AuthRegisterMultiTenantTest extends ThinkPHPTestCase
 
     protected function tearDown(): void
     {
+        // 清理注册租户配置，避免污染其他用例
+        Env::set('REGISTRATION_TENANT_ID', '');
         $this->cleanupData();
         parent::tearDown();
     }
@@ -45,7 +60,12 @@ class AuthRegisterMultiTenantTest extends ThinkPHPTestCase
      */
     protected function request(string $method, string $uri, array $data = [], array $headers = [])
     {
-        $request = $this->app()->make(\think\Request::class);
+        // 直接构造全新的 app\Request，而非从容器 make()。
+        //
+        // 原因：容器中的 Request 实例会残留上一个用例的路由规则（rule），
+        // 导致本请求被套用错误的路由中间件（例如误触发 Auth → 401）。
+        // 这是已知的测试隔离缺陷；此处以「每次新建实例」方式规避。
+        $request = new \app\Request();
         $request->setMethod($method);
         $request->setPathinfo($uri);
 
@@ -65,6 +85,10 @@ class AuthRegisterMultiTenantTest extends ThinkPHPTestCase
     {
         $email = 'mt-user-' . uniqid() . '@test.com';
 
+        // 安全（C-4）：注册目标租户不再取自 X-Tenant-ID，
+        // 改由服务端配置 REGISTRATION_TENANT_ID 指定。
+        Env::set('REGISTRATION_TENANT_ID', (string) $this->tenantId);
+
         $response = $this->request(
             'POST',
             'v1/auth/register',
@@ -73,9 +97,7 @@ class AuthRegisterMultiTenantTest extends ThinkPHPTestCase
                 'email' => $email,
                 'password' => 'secret123',
             ],
-            [
-                'X-Tenant-ID' => (string) $this->tenantId,
-            ]
+            []
         );
 
         $this->assertSame(200, $response->getCode());
