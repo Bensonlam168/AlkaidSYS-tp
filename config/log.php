@@ -39,6 +39,21 @@ return [
             // 是否实时写入
             'realtime_write' => false,
         ],
+        // 事件告警专用通道：用于订阅 event.alert.*（T-049）
+        'event_alert' => [
+            'type'           => 'File',
+            'path'           => '',
+            // 独立写入单文件，便于 Promtail/ELK 采集
+            'single'         => true,
+            'file_size'      => 0,
+            'apart_level'    => [],
+            'max_files'      => 0,
+            'json'           => true,
+            'processor'      => null,
+            'close'          => false,
+            'format'         => '[%s][%s] %s',
+            'realtime_write' => true,
+        ],
         // 其它日志通道配置
     ],
 
