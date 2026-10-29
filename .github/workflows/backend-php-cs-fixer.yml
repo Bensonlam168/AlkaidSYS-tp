@@ -170,6 +170,11 @@ jobs:
           DB_PASS: root
           REDIS_HOST: 127.0.0.1
 
+      - name: Run Legacy guard
+        run: php think test --filter=LegacyCollectionUsageGuardTest
+        env:
+          APP_ENV: testing
+
       - name: Verify route documentation (T-060)
         run: php think route:verify
         env:
