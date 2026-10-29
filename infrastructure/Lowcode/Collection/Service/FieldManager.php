@@ -69,7 +69,7 @@ class FieldManager
 
         // 2. Save field metadata | 保存字段元数据
         $collection->addField($field);
-        $this->fieldRepo->save($field, $collection->getId());
+        $this->fieldRepo->save($field, $collection->getId(), $effectiveTenantId);
 
         // 3. Clear cache (tenant scoped) | 清除租户范围缓存
         $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
@@ -123,7 +123,7 @@ class FieldManager
         // TODO: Implement ALTER TABLE column modification | 实现ALTER TABLE列修改
 
         // Update field metadata | 更新字段元数据
-        $this->fieldRepo->save($field, $collection->getId());
+        $this->fieldRepo->save($field, $collection->getId(), $effectiveTenantId);
 
         // Clear cache (tenant scoped) | 清除租户范围缓存
         $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
@@ -163,7 +163,7 @@ class FieldManager
 
         // 2. Delete field metadata | 删除字段元数据
         $collection->removeField($fieldName);
-        $this->fieldRepo->delete($collection->getId(), $fieldName);
+        $this->fieldRepo->delete($collection->getId(), $fieldName, $effectiveTenantId);
 
         // 3. Clear cache (tenant scoped) | 清除租户范围缓存
         $this->collectionManager->clearCache($collectionName, $effectiveTenantId);

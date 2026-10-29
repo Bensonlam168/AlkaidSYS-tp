@@ -57,6 +57,9 @@ class CollectionManager
     {
         Db::startTrans();
         try {
+            $effectiveTenantId = $collection->getTenantId() ?? 0;
+            $effectiveSiteId = $collection->getSiteId() ?? 0;
+
             // 1. Create physical table if it does not exist yet | 若物理表不存在则创建
             //
             // NOTE(MT-01/T-069): 动态业务表目前采用单库多租户行级隔离策略，所有租户共享同一张
@@ -66,11 +69,17 @@ class CollectionManager
             // 这里通过 SchemaBuilder::hasTable() 进行显式存在性检查，仅在表尚未存在时执行
             // createTable()，以避免 MySQL 抛出 "Table already exists" 异常。
             // 表名策略：支持租户前缀（Phase 2 评估中）或共享表
-            $tableName = $this->tableNameGenerator->generate(
+            $generatedTableName = $this->tableNameGenerator->generate(
                 $collection->getName(),
                 $collection->getTenantId() ?? 0,
                 $collection->getSiteId() ?? 0
             );
+            // 若 Domain Collection 已显式设置自定义 table_name，则优先使用，不覆盖
+            // 通过对比“默认生成表名”判断是否为自定义表名。
+            $tableName = $collection->getTableName();
+            if ($tableName === '' || $tableName === $generatedTableName) {
+                $tableName = $generatedTableName;
+            }
             $collection->setTableName($tableName);
             if (!$this->schemaBuilder->hasTable($tableName)) {
                 $columns = $this->buildColumns($collection->getFields());
@@ -84,19 +93,19 @@ class CollectionManager
 
             // 3. Save field metadata | 保存字段元数据
             foreach ($collection->getFields() as $field) {
-                $this->fieldRepo->save($field, $collectionId);
+                $this->fieldRepo->save($field, $collectionId, $effectiveTenantId);
             }
 
             // 4. Save relationship metadata | 保存关系元数据
             foreach ($collection->getRelationships() as $relationship) {
-                $this->relationshipRepo->save($relationship, $collectionId);
+                $this->relationshipRepo->save($relationship, $collectionId, $effectiveTenantId);
             }
 
             // 5. 记录 Schema 版本与哈希
             $this->schemaVersionService->recordCollection($collection);
 
             // 5. Cache the collection | 缓存Collection
-            $this->cache($collection);
+            $this->cache($collection, $effectiveTenantId);
 
             // 6. Trigger event | 触发事件
             Event::trigger('lowcode.collection.created', [
@@ -137,13 +146,13 @@ class CollectionManager
         }
 
         // Load fields | 加载字段
-        $fields = $this->fieldRepo->findByCollectionId($collection->getId());
+        $fields = $this->fieldRepo->findByCollectionId($collection->getId(), $effectiveTenantId);
         foreach ($fields as $field) {
             $collection->addField($field);
         }
 
         // Load relationships | 加载关系
-        $relationships = $this->relationshipRepo->findByCollectionId($collection->getId());
+        $relationships = $this->relationshipRepo->findByCollectionId($collection->getId(), $effectiveTenantId);
         foreach ($relationships as $relName => $relationship) {
             $collection->addRelationship($relName, $relationship);
         }
@@ -167,28 +176,30 @@ class CollectionManager
             throw new \InvalidArgumentException('Collection ID is required for update');
         }
 
+        $effectiveTenantId = $collection->getTenantId() ?? 0;
+
         Db::startTrans();
         try {
             // 1. Update collection metadata | 更新Collection元数据
             $this->collectionRepo->save($collection);
 
             // 2. Update fields (simplified: delete and recreate) | 更新字段（简化：删除后重建）
-            $this->fieldRepo->deleteByCollectionId($collection->getId());
+            $this->fieldRepo->deleteByCollectionId($collection->getId(), $effectiveTenantId);
             foreach ($collection->getFields() as $field) {
-                $this->fieldRepo->save($field, $collection->getId());
+                $this->fieldRepo->save($field, $collection->getId(), $effectiveTenantId);
             }
 
             // 3. Update relationships | 更新关系
-            $this->relationshipRepo->deleteByCollectionId($collection->getId());
+            $this->relationshipRepo->deleteByCollectionId($collection->getId(), $effectiveTenantId);
             foreach ($collection->getRelationships() as $relationship) {
-                $this->relationshipRepo->save($relationship, $collection->getId());
+                $this->relationshipRepo->save($relationship, $collection->getId(), $effectiveTenantId);
             }
 
             // 4. 记录 Schema 版本与哈希
             $this->schemaVersionService->recordCollection($collection);
 
             // 4. Clear cache | 清除缓存
-            $this->clearCache($collection->getName());
+            $this->clearCache($collection->getName(), $effectiveTenantId);
 
             // 5. Trigger event | 触发事件
             Event::trigger('lowcode.collection.updated', [
@@ -218,6 +229,7 @@ class CollectionManager
     public function delete(string $name, bool $dropTable = true, ?int $tenantId = null): void
     {
         $collection = $this->get($name, $tenantId);
+        $effectiveTenantId = $tenantId ?? 0;
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$name}");
@@ -228,10 +240,10 @@ class CollectionManager
             $collectionId = $collection->getId();
 
             // 1. Delete relationships | 删除关系
-            $this->relationshipRepo->deleteByCollectionId($collectionId);
+            $this->relationshipRepo->deleteByCollectionId($collectionId, $effectiveTenantId);
 
             // 2. Delete fields | 删除字段
-            $this->fieldRepo->deleteByCollectionId($collectionId);
+            $this->fieldRepo->deleteByCollectionId($collectionId, $effectiveTenantId);
 
             // 3. Delete collection | 删除Collection
             $this->collectionRepo->delete($collectionId);
@@ -242,7 +254,7 @@ class CollectionManager
             }
 
             // 5. Clear cache | 清除缓存
-            $this->clearCache($name, $tenantId);
+            $this->clearCache($name, $effectiveTenantId);
 
             // 6. Trigger event | 触发事件
             Event::trigger('lowcode.collection.deleted', [

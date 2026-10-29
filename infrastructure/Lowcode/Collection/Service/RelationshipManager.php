@@ -77,7 +77,7 @@ class RelationshipManager
 
         // Save relationship metadata | 保存关系元数据
         $collection->addRelationship($relationship->getName(), $relationship);
-        $this->relationshipRepo->save($relationship, $collection->getId());
+        $this->relationshipRepo->save($relationship, $collection->getId(), $effectiveTenantId);
 
         // Clear cache (tenant scoped) | 清除租户范围缓存
         $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
@@ -132,7 +132,7 @@ class RelationshipManager
         }
 
         // Delete relationship metadata | 删除关系元数据
-        $this->relationshipRepo->delete($collection->getId(), $relationshipName);
+        $this->relationshipRepo->delete($collection->getId(), $relationshipName, $effectiveTenantId);
 
         // Clear cache (tenant scoped) | 清除租户范围缓存
         $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
@@ -212,6 +212,21 @@ class RelationshipManager
                 'auto_increment' => true,
                 'unsigned' => true,
             ],
+            // 多租户隔离字段
+            'tenant_id' => [
+                'type' => 'INT',
+                'length' => 11,
+                'nullable' => false,
+                'default' => '0',
+                'comment' => 'Tenant ID',
+            ],
+            'site_id' => [
+                'type' => 'INT',
+                'length' => 11,
+                'nullable' => false,
+                'default' => '0',
+                'comment' => 'Site ID',
+            ],
             $localKey => [
                 'type' => 'INT',
                 'unsigned' => true,
@@ -230,6 +245,10 @@ class RelationshipManager
 
         // Indexes for many-to-many lookups | 为多对多查询添加索引
         $indexes = [
+            'idx_tenant_site' => [
+                'columns' => ['tenant_id', 'site_id'],
+                'unique' => false,
+            ],
             'idx_pivot_local' => [
                 'columns' => [$localKey],
                 'unique' => false,
@@ -239,8 +258,13 @@ class RelationshipManager
                 'unique' => false,
             ],
             'idx_pivot_local_foreign' => [
-                'columns' => [$localKey, $foreignKey],
+                'columns' => ['tenant_id', 'site_id', $localKey, $foreignKey],
                 'unique' => false,
+            ],
+            // 避免重复绑定：同一租户/站点的 local/foreign 组合唯一
+            'uk_pivot_local_foreign_tenant' => [
+                'columns' => ['tenant_id', 'site_id', $localKey, $foreignKey],
+                'unique' => true,
             ],
         ];
 

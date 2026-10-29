@@ -22,6 +22,14 @@ abstract class AbstractField implements FieldInterface
     protected string $title;
     protected bool $nullable = true;
     protected $default = null;
+    /**
+     * 是否显式设置了默认值（用于区分“未设置”与“默认值为 null”）。
+     *
+     * 说明：
+     * - MySQL 对 NOT NULL 列不允许 DEFAULT NULL；
+     * - 因此仅当用户显式传入 default 时才输出 DEFAULT 子句。
+     */
+    protected bool $hasDefault = false;
     protected array $options = [];
 
     /**
@@ -35,6 +43,7 @@ abstract class AbstractField implements FieldInterface
         $this->name = $name;
         $this->title = $options['title'] ?? $name;
         $this->nullable = $options['nullable'] ?? true;
+        $this->hasDefault = array_key_exists('default', $options);
         $this->default = $options['default'] ?? null;
         $this->options = $options;
 
@@ -82,13 +91,18 @@ abstract class AbstractField implements FieldInterface
      */
     public function getDbColumn(): array
     {
-        return [
+        $column = [
             'name' => $this->name,
             'type' => $this->dbType,
             'nullable' => $this->nullable,
-            'default' => $this->default,
             'comment' => $this->title,
         ];
+
+        if ($this->hasDefault) {
+            $column['default'] = $this->default;
+        }
+
+        return $column;
     }
 
     /**

@@ -53,7 +53,7 @@ if (!function_exists('colorize')) {
  *
  * @return array<int, array{file:string,line:int,pattern:string,code:string}>
  */
-function scanRawSqlUsage(string $rootDir, array $dirsToScan, array $patterns, array $allowList): array
+function scanRawSqlUsage(string $rootDir, array $dirsToScan, array $patterns, array $allowList = []): array
 {
     $results = [];
 
@@ -126,11 +126,16 @@ if (PHP_SAPI === 'cli' && isset($_SERVER['SCRIPT_FILENAME']) && realpath($_SERVE
         $dirsToScan[] = 'scripts';
     }
 
-    // 允许列表：系统级 DDL/元数据场景（非业务数据访问）
+    // 允许列表：系统级 DDL/元数据场景（非业务数据访问），或模板/生成器内的字符串片段
     $allowList = [
         'infrastructure/Schema/SchemaBuilder.php',
         'app/command/lowcode/MigrationDiffCommand.php',
         'infrastructure/Application/BaseApplication.php',
+        // 低代码生成器：包含 Db::* 模板片段，实际写入文件时会再按租户过滤生成
+        'infrastructure/Lowcode/Generator/ControllerGenerator.php',
+        'infrastructure/Lowcode/Generator/CrudGenerator.php',
+        'infrastructure/Lowcode/Generator/RouteGenerator.php',
+        'infrastructure/Lowcode/Generator/TestGenerator.php',
     ];
 
     echo colorize("=== AlkaidSYS Raw SQL Tenant Safety Scan ===\n", 'blue');

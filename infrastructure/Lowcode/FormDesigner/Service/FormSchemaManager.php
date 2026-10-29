@@ -361,6 +361,8 @@ class FormSchemaManager
     {
         $cacheKey = $this->getCacheKey($name, $tenantId, $siteId);
         Cache::delete($cacheKey);
+        // 清理 SchemaParser 派生缓存，保持解析结果一致
+        Cache::delete('lowcode:schema_parser:' . "{$name}:t{$tenantId}:s" . ($siteId ?? 0));
     }
 
     /**

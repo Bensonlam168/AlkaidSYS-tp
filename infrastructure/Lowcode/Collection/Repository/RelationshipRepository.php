@@ -37,8 +37,13 @@ class RelationshipRepository
      */
     public function save(RelationshipInterface $relationship, int $collectionId, ?int $tenantId = null): int
     {
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when saving relationship metadata');
+        }
+
         $data = [
             'collection_id' => $collectionId,
+            'tenant_id' => $tenantId,
             'name' => $relationship->getName(),
             'type' => $relationship->getType(),
             'target_collection' => $relationship->getTargetCollection(),
@@ -56,13 +61,15 @@ class RelationshipRepository
 
         if ($exists) {
             // Update existing | 更新已存在的
+            // lowcode_relationships 未包含租户列，租户隔离通过 lowcode_collections 校验
             Db::name($this->table)
                 ->where('id', $exists['id'])
+                ->where('tenant_id', $tenantId)
                 ->update($data);
             return (int)$exists['id'];
         } else {
             // Insert new | 插入新的
-            return (int)Db::name($this->table)->insertGetId($data);
+            return (int) Db::name($this->table)->insertGetId($data);
         }
     }
 
@@ -75,6 +82,10 @@ class RelationshipRepository
      */
     public function findByCollectionId(int $collectionId, ?int $tenantId = null): array
     {
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when reading relationships');
+        }
+
         $rows = $this->scopedQuery($collectionId, $tenantId)
             ->order('r.id', 'asc')
             ->select()
@@ -101,8 +112,13 @@ class RelationshipRepository
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
 
-        return (bool)Db::name($this->table)
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when deleting relationship metadata');
+        }
+
+        return (bool) Db::name($this->table)
             ->where('collection_id', $collectionId)
+            ->where('tenant_id', $tenantId)
             ->where('name', $relationshipName)
             ->delete();
     }
@@ -118,8 +134,13 @@ class RelationshipRepository
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
 
-        return (bool)Db::name($this->table)
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when deleting relationships');
+        }
+
+        return (bool) Db::name($this->table)
             ->where('collection_id', $collectionId)
+            ->where('tenant_id', $tenantId)
             ->delete();
     }
 
@@ -159,8 +180,7 @@ class RelationshipRepository
             ->where('r.collection_id', $collectionId);
 
         if ($tenantId !== null) {
-            $query->join('lowcode_collections c', 'c.id = r.collection_id')
-                ->where('c.tenant_id', $tenantId);
+            $query->where('r.tenant_id', $tenantId);
         }
 
         return $query;

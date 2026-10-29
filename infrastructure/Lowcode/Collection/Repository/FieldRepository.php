@@ -37,8 +37,13 @@ class FieldRepository
      */
     public function save(FieldInterface $field, int $collectionId, ?int $tenantId = null): int
     {
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when saving field metadata');
+        }
+
         $data = [
             'collection_id' => $collectionId,
+            'tenant_id' => $tenantId,
             'name' => $field->getName(),
             'type' => $field->getType(),
             'db_type' => $field->getDbType(),
@@ -57,13 +62,15 @@ class FieldRepository
 
         if ($exists) {
             // Update existing | 更新已存在的
+            // lowcode_fields 表未包含 tenant_id 字段，通过 collection_id → lowcode_collections 实现租户隔离
             Db::name($this->table)
                 ->where('id', $exists['id'])
+                ->where('tenant_id', $tenantId)
                 ->update($data);
             return (int)$exists['id'];
         } else {
             // Insert new | 插入新的
-            return (int)Db::name($this->table)->insertGetId($data);
+            return (int) Db::name($this->table)->insertGetId($data);
         }
     }
 
@@ -76,6 +83,10 @@ class FieldRepository
      */
     public function findByCollectionId(int $collectionId, ?int $tenantId = null): array
     {
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when reading field metadata');
+        }
+
         $rows = $this->scopedQuery($collectionId, $tenantId)
             ->order('f.sort', 'asc')
             ->order('f.id', 'asc')
@@ -103,8 +114,14 @@ class FieldRepository
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
 
-        return (bool)Db::name($this->table)
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when deleting field metadata');
+        }
+
+        // 通过 assertCollectionTenant 已保证 collectionId 属于 tenantId
+        return (bool) Db::name($this->table)
             ->where('collection_id', $collectionId)
+            ->where('tenant_id', $tenantId)
             ->where('name', $fieldName)
             ->delete();
     }
@@ -120,8 +137,14 @@ class FieldRepository
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
 
-        return (bool)Db::name($this->table)
+        if ($tenantId === null) {
+            throw new \InvalidArgumentException('tenant_id is required when deleting fields');
+        }
+
+        // 通过 assertCollectionTenant 已保证 collectionId 属于 tenantId
+        return (bool) Db::name($this->table)
             ->where('collection_id', $collectionId)
+            ->where('tenant_id', $tenantId)
             ->delete();
     }
 
@@ -155,9 +178,7 @@ class FieldRepository
             ->where('f.collection_id', $collectionId);
 
         if ($tenantId !== null) {
-            // 通过关联元数据表确保租户隔离
-            $query->join('lowcode_collections c', 'c.id = f.collection_id')
-                ->where('c.tenant_id', $tenantId);
+            $query->where('f.tenant_id', $tenantId);
         }
 
         return $query;

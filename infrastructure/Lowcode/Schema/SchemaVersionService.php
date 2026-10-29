@@ -50,42 +50,55 @@ class SchemaVersionService
     {
         $hash = $this->computeHash($schema);
 
-        // 查找最新版本
-        $latest = Db::name('lowcode_schema_versions')
-            ->where([
+        try {
+            // 查找最新版本
+            $latest = Db::name('lowcode_schema_versions')
+                ->where([
+                    'tenant_id' => $tenantId,
+                    'site_id' => $siteId,
+                    'object_type' => $objectType,
+                    'object_name' => $objectName,
+                ])
+                ->order('version', 'desc')
+                ->find();
+
+            $nextVersion = $latest ? ((int)$latest['version'] + 1) : 1;
+            $latestHash = $latest['schema_hash'] ?? null;
+
+            // 如果哈希未变化则复用现有版本
+            if ($latestHash === $hash) {
+                $this->syncCurrentVersion($objectType, $objectName, $tenantId, $siteId, (int)($latest['version'] ?? 1), $hash, $currentId);
+                return ['version' => (int)($latest['version'] ?? 1), 'hash' => $hash];
+            }
+
+            // 写入版本快照
+            Db::name('lowcode_schema_versions')->insert([
                 'tenant_id' => $tenantId,
                 'site_id' => $siteId,
                 'object_type' => $objectType,
                 'object_name' => $objectName,
-            ])
-            ->order('version', 'desc')
-            ->find();
+                'version' => $nextVersion,
+                'schema_hash' => $hash,
+                'schema' => json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
 
-        $nextVersion = $latest ? ((int)$latest['version'] + 1) : 1;
-        $latestHash = $latest['schema_hash'] ?? null;
+            $this->syncCurrentVersion($objectType, $objectName, $tenantId, $siteId, $nextVersion, $hash, $currentId);
 
-        // 如果哈希未变化则复用现有版本
-        if ($latestHash === $hash) {
-            $this->syncCurrentVersion($objectType, $objectName, $tenantId, $siteId, (int)($latest['version'] ?? 1), $hash, $currentId);
-            return ['version' => (int)($latest['version'] ?? 1), 'hash' => $hash];
+            return ['version' => $nextVersion, 'hash' => $hash];
+        } catch (\Throwable $e) {
+            // 表缺失或离线环境时允许跳过版本记录，避免阻断主流程
+            Log::warning('SchemaVersionService skipped recording schema version', [
+                'object_type' => $objectType,
+                'object_name' => $objectName,
+                'tenant_id' => $tenantId,
+                'site_id' => $siteId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['version' => 0, 'hash' => $hash];
         }
-
-        // 写入版本快照
-        Db::name('lowcode_schema_versions')->insert([
-            'tenant_id' => $tenantId,
-            'site_id' => $siteId,
-            'object_type' => $objectType,
-            'object_name' => $objectName,
-            'version' => $nextVersion,
-            'schema_hash' => $hash,
-            'schema' => json_encode($schema, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
-        ]);
-
-        $this->syncCurrentVersion($objectType, $objectName, $tenantId, $siteId, $nextVersion, $hash, $currentId);
-
-        return ['version' => $nextVersion, 'hash' => $hash];
     }
 
     /**

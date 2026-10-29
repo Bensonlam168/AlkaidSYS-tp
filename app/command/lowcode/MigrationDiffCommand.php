@@ -332,11 +332,25 @@ class MigrationDiffCommand extends LowcodeCommand
      */
     protected function getStoredSchemaInfo(string $collectionName, int $tenantId): ?array
     {
-        return Db::name('lowcode_collections')
-            ->where('name', $collectionName)
-            ->where('tenant_id', $tenantId)
-            ->field(['schema_version', 'schema_hash'])
-            ->find() ?: null;
+        // 兼容：部分测试/环境可能尚未执行新增列迁移（schema_version/schema_hash），此时跳过对比
+        try {
+            $columns = Db::query("SHOW COLUMNS FROM `lowcode_collections` LIKE 'schema_version'");
+            $hasVersion = !empty($columns);
+            $columns = Db::query("SHOW COLUMNS FROM `lowcode_collections` LIKE 'schema_hash'");
+            $hasHash = !empty($columns);
+
+            if (!$hasVersion || !$hasHash) {
+                return null;
+            }
+
+            return Db::name('lowcode_collections')
+                ->where('name', $collectionName)
+                ->where('tenant_id', $tenantId)
+                ->field(['schema_version', 'schema_hash'])
+                ->find() ?: null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -384,7 +398,8 @@ class MigrationDiffCommand extends LowcodeCommand
      */
     protected function generateSqlFile(array $diffs, string $outFile): void
     {
-        $sql = '-- Migration Diff Generated at ' . date('Y-m-d H:i:s') . "\n\n";
+        $sql = '-- Migration Diff Generated at ' . date('Y-m-d H:i:s') . "\n";
+        $sql .= "-- 注意：以下 SQL 为幂等模板（IF EXISTS/IF NOT EXISTS），请审查后再执行，并准备回滚脚本。\n\n";
 
         foreach ($diffs as $diff) {
             if (empty($diff['changes'])) {
@@ -518,14 +533,14 @@ class MigrationDiffCommand extends LowcodeCommand
         switch ($type) {
             case 'create_table':
                 $sql .= sprintf(
-                    "CREATE TABLE `%s` (\n  `id` bigint unsigned NOT NULL AUTO_INCREMENT,\n  `tenant_id` int unsigned NOT NULL DEFAULT 0 COMMENT '租户ID',\n  `site_id` int unsigned NOT NULL DEFAULT 0 COMMENT '站点ID',\n  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `idx_tenant_id_id` (`tenant_id`,`id`),\n  KEY `idx_tenant_site` (`tenant_id`,`site_id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n",
+                    "CREATE TABLE IF NOT EXISTS `%s` (\n  `id` bigint unsigned NOT NULL AUTO_INCREMENT,\n  `tenant_id` int unsigned NOT NULL DEFAULT 0 COMMENT '租户ID',\n  `site_id` int unsigned NOT NULL DEFAULT 0 COMMENT '站点ID',\n  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `idx_tenant_id_id` (`tenant_id`,`id`),\n  KEY `idx_tenant_site` (`tenant_id`,`site_id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;\n\n",
                     $table
                 );
                 break;
             case 'add_column':
                 $expectedType = $change['field_type'] ?? ($change['expected_type'] ?? 'string');
                 $sql .= sprintf(
-                    "ALTER TABLE `%s` ADD COLUMN `%s` %s;\n\n",
+                    "ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `%s` %s;\n\n",
                     $table,
                     $change['column'] ?? '',
                     strtoupper($expectedType)
@@ -559,7 +574,7 @@ class MigrationDiffCommand extends LowcodeCommand
             case 'modify_index':
                 $expectedCols = isset($change['expected']) ? implode('`,`', (array)$change['expected']) : '';
                 $sql .= sprintf(
-                    "ALTER TABLE `%s` DROP INDEX `%s`, ADD INDEX `%s` (`%s`);\n\n",
+                    "ALTER TABLE `%s` DROP INDEX IF EXISTS `%s`, ADD INDEX `%s` (`%s`);\n\n",
                     $table,
                     $change['index'] ?? '',
                     $change['index'] ?? '',

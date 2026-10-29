@@ -12,6 +12,8 @@ use Domain\Lowcode\Collection\Interfaces\FieldInterface;
  * Factory class for creating field instances by type.
  * 用于按类型创建字段实例的工厂类。
  *
+ * 注意：本注册表是低代码字段类型的单一入口，新增高级字段时需在此处注册并保持与 SchemaBuilder 兼容的物理列定义。
+ *
  * @package Infrastructure\Lowcode\Collection\Field
  */
 class FieldFactory
@@ -39,6 +41,7 @@ class FieldFactory
         'select' => SelectField::class,
         'radio' => RadioField::class,
         'checkbox' => CheckboxField::class,
+        'enum' => EnumField::class,
 
         // P2 Advanced types | P2高级类型（Phase 2）
         'cascader' => CascaderField::class,

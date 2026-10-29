@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use app\constant\ErrorCode;
+use app\exception\ForbiddenException;
 use think\App;
 use think\Request;
 use Infrastructure\Lowcode\FormDesigner\Service\FormDataManager;
@@ -114,6 +116,8 @@ class FormDataController extends ApiController
         try {
             $id = $this->manager->save($name, $params, $tenantId, $siteId);
             return $this->success(['id' => $id], 'Data saved successfully');
+        } catch (ForbiddenException $e) {
+            return $this->error($e->getMessage(), ErrorCode::FORBIDDEN, [], 403);
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }

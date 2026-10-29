@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use Infrastructure\Lowcode\Schema\SchemaParser;
 use think\App;
 use think\Request;
 use Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager;
+use Infrastructure\Lowcode\FormDesigner\Service\FormValidatorManager;
 use think\Response;
 
 /**
@@ -21,11 +23,20 @@ use think\Response;
 class FormSchemaController extends ApiController
 {
     protected FormSchemaManager $manager;
+    protected FormValidatorManager $validatorManager;
+    protected SchemaParser $schemaParser;
 
-    public function __construct(App $app, FormSchemaManager $manager)
+    public function __construct(
+        App $app,
+        FormSchemaManager $manager,
+        FormValidatorManager $validatorManager,
+        SchemaParser $schemaParser
+    )
     {
         parent::__construct($app);
         $this->manager = $manager;
+        $this->validatorManager = $validatorManager;
+        $this->schemaParser = $schemaParser;
     }
 
     /**
@@ -79,6 +90,30 @@ class FormSchemaController extends ApiController
 
         if (!$form) {
             return $this->notFound('Form not found');
+        }
+
+        $withValidator = filter_var((string)$request->get('with_validator', '0'), FILTER_VALIDATE_BOOLEAN);
+        $withParsed = filter_var((string)$request->get('with_parsed', '0'), FILTER_VALIDATE_BOOLEAN);
+        if ($withValidator && isset($form['schema']) && is_array($form['schema'])) {
+            $definition = $this->validatorManager->getDefinition(
+                $form['schema'],
+                [
+                    'tenant_id' => $tenantId,
+                    'site_id' => $siteId,
+                ],
+                $form['name'] ?? null
+            );
+            $form['validator'] = $definition;
+        }
+        if ($withParsed && isset($form['schema']) && is_array($form['schema'])) {
+            $form['parsed'] = $this->schemaParser->parse(
+                $form['schema'],
+                [
+                    'tenant_id' => $tenantId,
+                    'site_id' => $siteId,
+                ],
+                $form['name'] ?? null
+            );
         }
 
         return $this->success($form);

@@ -22,7 +22,8 @@ class DecimalField extends AbstractField
         $this->type = 'decimal';
         $precision = $this->options['precision'] ?? 10;
         $scale = $this->options['scale'] ?? 2;
-        $this->dbType = "DECIMAL({$precision},{$scale})";
+        $unsigned = $this->options['unsigned'] ?? false;
+        $this->dbType = "DECIMAL({$precision},{$scale})" . ($unsigned ? ' UNSIGNED' : '');
     }
 
     /**
