@@ -129,7 +129,7 @@ class CasbinService
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 检查缓存是否启用
@@ -313,7 +313,7 @@ class CasbinService
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 检查是否需要重新加载策略
@@ -390,7 +390,7 @@ class CasbinService
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 重新加载策略
@@ -562,7 +562,7 @@ class CasbinService
     {
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 保存重要的缓存值
@@ -612,7 +612,7 @@ class CasbinService
     {
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 保存重要的缓存值

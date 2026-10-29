@@ -7,6 +7,8 @@ namespace Infrastructure\Permission\Service;
 use Infrastructure\User\Repository\UserRepository;
 use think\facade\Db;
 use think\facade\Config;
+use think\facade\Log;
+use think\Request;
 
 /**
  * Permission Service | 权限服务
@@ -18,6 +20,11 @@ use think\facade\Config;
  * - DB_ONLY: 仅使用数据库查询（默认，向后兼容）| Only use database queries (default, backward compatible)
  * - CASBIN_ONLY: 仅使用 Casbin 检查 | Only use Casbin checking
  * - DUAL_MODE: 同时使用两种方式，结果取并集 | Use both methods, merge results
+ *
+ * 缓存支持 | Cache Support:
+ * - Multi-level caching (L1: Memory, L2: Redis) | 多级缓存（L1：内存，L2：Redis）
+ * - Tenant-isolated cache keys | 租户隔离的缓存键
+ * - Performance monitoring (QPS, latency, hit rate) | 性能监控（QPS、延迟、命中率）
  *
  * @package Infrastructure\Permission\Service
  */
@@ -42,6 +49,11 @@ class PermissionService
     protected string $casbinMode = 'DB_ONLY';
 
     /**
+     * Permission Cache Service | 权限缓存服务
+     */
+    protected ?PermissionCacheService $cacheService = null;
+
+    /**
      * 构造函数
      * Constructor
      *
@@ -57,6 +69,12 @@ class PermissionService
         // If Casbin is enabled but service not injected, create instance
         if ($this->casbinEnabled && $this->casbinService === null) {
             $this->casbinService = new CasbinService();
+        }
+
+        // Initialize cache service if enabled | 如果启用则初始化缓存服务
+        $cacheEnabled = Config::get('permission.cache.enabled', true);
+        if ($cacheEnabled) {
+            $this->cacheService = new PermissionCacheService();
         }
     }
     /**
@@ -83,6 +101,66 @@ class PermissionService
      * @return array Array of permission codes in `resource:action` format | `resource:action` 格式的权限码数组
      */
     public function getUserPermissions(int $userId): array
+    {
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('perm_', true);
+
+        try {
+            // Get tenant ID | 获取租户ID
+            $tenantId = $this->getTenantId($userId);
+            if ($tenantId === null) {
+                Log::warning('Permission check: user not found or no tenant', [
+                    'trace_id' => $traceId,
+                    'user_id' => $userId,
+                ]);
+                return [];
+            }
+
+            // If cache is enabled, use cached approach | 如果启用缓存，使用缓存方式
+            if ($this->cacheService !== null) {
+                Log::debug('Permission check: using cache', [
+                    'trace_id' => $traceId,
+                    'user_id' => $userId,
+                    'tenant_id' => $tenantId,
+                ]);
+
+                return $this->cacheService->getUserPermissions(
+                    $userId,
+                    $tenantId,
+                    function () use ($userId, $tenantId) {
+                        return $this->fetchUserPermissions($userId, $tenantId);
+                    }
+                );
+            }
+
+            // Fallback to direct fetch if cache is disabled | 如果缓存禁用，回退到直接获取
+            Log::debug('Permission check: cache disabled, fetching directly', [
+                'trace_id' => $traceId,
+                'user_id' => $userId,
+                'tenant_id' => $tenantId,
+            ]);
+
+            return $this->fetchUserPermissions($userId, $tenantId);
+
+        } catch (\Exception $e) {
+            Log::error('Permission check failed', [
+                'trace_id' => $traceId,
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+            ]);
+
+            // Return empty array on error | 出错时返回空数组
+            return [];
+        }
+    }
+
+    /**
+     * Fetch user permissions (internal method) | 获取用户权限（内部方法）
+     *
+     * @param int $userId User ID | 用户ID
+     * @param int $tenantId Tenant ID | 租户ID
+     * @return array User permissions | 用户权限
+     */
+    protected function fetchUserPermissions(int $userId, int $tenantId): array
     {
         // 如果 Casbin 未启用，使用数据库查询
         // If Casbin is not enabled, use database query
@@ -281,5 +359,70 @@ class PermissionService
             }
         }
         return true;
+    }
+
+    /**
+     * Clear user permission cache | 清除用户权限缓存
+     *
+     * @param int $userId User ID | 用户ID
+     * @return void
+     */
+    public function clearUserCache(int $userId): void
+    {
+        if ($this->cacheService !== null) {
+            $tenantId = $this->getTenantId($userId);
+            if ($tenantId !== null) {
+                $this->cacheService->clearUserCache($userId, $tenantId);
+            }
+        }
+    }
+
+    /**
+     * Clear all permission caches | 清除所有权限缓存
+     *
+     * @return void
+     */
+    public function clearAllCache(): void
+    {
+        if ($this->cacheService !== null) {
+            $this->cacheService->clearAllCache();
+        }
+    }
+
+    /**
+     * Get cache statistics | 获取缓存统计信息
+     *
+     * @return array Cache statistics | 缓存统计信息
+     */
+    public function getCacheStats(): array
+    {
+        if ($this->cacheService !== null) {
+            return $this->cacheService->getCacheStats();
+        }
+
+        return [
+            'cache_disabled' => true,
+            'message' => 'Permission cache is disabled',
+        ];
+    }
+
+    /**
+     * Check if cache is enabled | 检查缓存是否启用
+     *
+     * @return bool Whether cache is enabled | 缓存是否启用
+     */
+    public function isCacheEnabled(): bool
+    {
+        return $this->cacheService !== null;
+    }
+
+    /**
+     * Get cache service instance | 获取缓存服务实例
+     *
+     * @return PermissionCacheService|null Cache service instance | 缓存服务实例
+     */
+    public function getCacheService(): ?PermissionCacheService
+    {
+        return $this->cacheService;
     }
 }

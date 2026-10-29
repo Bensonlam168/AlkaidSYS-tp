@@ -16,6 +16,7 @@ class Permission
     protected string $slug;
     protected ?string $resource = null;
     protected ?string $action = null;
+    protected ?string $description = null;
 
     public function __construct(string $name, string $slug)
     {
@@ -48,6 +49,15 @@ class Permission
     {
         return $this->action;
     }
+    public function getDescription(): ?string
+    {
+        return $this->description;
+    }
+    public function setDescription(?string $description): self
+    {
+        $this->description = $description;
+        return $this;
+    }
 
     public function toArray(): array
     {
@@ -57,6 +67,7 @@ class Permission
             'slug' => $this->slug,
             'resource' => $this->resource,
             'action' => $this->action,
+            'description' => $this->description,
         ];
     }
 
@@ -70,6 +81,9 @@ class Permission
         }
         if (isset($data['action'])) {
             $this->action = $data['action'];
+        }
+        if (isset($data['description'])) {
+            $this->description = $data['description'];
         }
         return $this;
     }

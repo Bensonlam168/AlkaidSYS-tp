@@ -67,7 +67,7 @@ class DatabaseAdapter implements Adapter
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 检查是否启用策略缓存
