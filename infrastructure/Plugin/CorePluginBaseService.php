@@ -50,6 +50,14 @@ abstract class CorePluginBaseService
     }
 
     /**
+     * 获取插件唯一标识（兼容 getIdentifier 用法）
+     */
+    public function getIdentifier(): string
+    {
+        return $this->key;
+    }
+
+    /**
      * 获取插件清单信息
      *
      * @return array<string, mixed>

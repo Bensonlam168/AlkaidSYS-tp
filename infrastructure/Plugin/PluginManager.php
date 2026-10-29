@@ -1,94 +1,130 @@
 <?php
-
 declare(strict_types=1);
 
 namespace Infrastructure\Plugin;
 
 use Infrastructure\DI\DependencyManager;
+use Infrastructure\Plugin\Enum\PluginStatus;
 use Infrastructure\Plugin\Hook\HookManager;
 use Infrastructure\Plugin\Repository\PluginInstallationRepository;
 use Infrastructure\Plugin\Repository\PluginPackageRepository;
+use Psr\Log\LoggerInterface;
 use think\App;
 use think\facade\Config;
 use think\facade\Log;
 
 /**
- * PluginManager | 插件管理器（T-035 基础版）
+ * 插件管理器（T-035 基础能力）
+ *
+ * 职责：
+ * - 从配置/数据库注册插件，并维护运行时状态
+ * - 负责启用、禁用、卸载生命周期控制（含 Hook 与 ServiceProvider 注册）
+ * - 提供钩子委派入口（applyFilter/doAction），与全局函数保持一致
  *
  * 说明：
- * - 本版本以“最小可用”为目标：支持注册/加载、启用/禁用、生命周期调用
- * - 插件状态持久化（DB 表）与插件包签名/下载等能力不在本任务范围内
+ * - 持久化表缺失时应降级不阻断启动（与设计文档一致）
+ * - 默认多租户维度使用 tenant_id/site_id，命令行参数可覆盖
  */
 class PluginManager
 {
+    private App $app;
+    private HookManager $hookManager;
+    private DependencyManager $dependencyManager;
+    private PluginInstallationRepository $installationRepository;
+
     /**
-     * @var array<string, CorePluginBaseService>
+     * @var array<string, CorePluginBaseService> 已注册插件实例
      */
-    protected array $plugins = [];
+    private array $plugins = [];
 
-    protected App $app;
-    protected HookManager $hookManager;
-    protected DependencyManager $dependencyManager;
-    protected PluginPackageRepository $packageRepo;
-    protected PluginInstallationRepository $installationRepo;
+    /**
+     * @var array<string, PluginStatus> 运行时状态映射
+     */
+    private array $pluginStatus = [];
 
-    public function __construct(App $app)
-    {
+    private ?LoggerInterface $logger;
+
+    public function __construct(
+        App $app,
+        ?HookManager $hookManager = null,
+        ?DependencyManager $dependencyManager = null,
+        ?PluginInstallationRepository $installationRepository = null,
+        ?LoggerInterface $logger = null
+    ) {
         $this->app = $app;
-        $this->hookManager = HookManager::instance();
-        $this->dependencyManager = new DependencyManager($app);
-        $this->packageRepo = new PluginPackageRepository();
-        $this->installationRepo = new PluginInstallationRepository();
+        $this->hookManager = $hookManager ?? HookManager::instance();
+        $this->dependencyManager = $dependencyManager ?? new DependencyManager($app);
+        $this->installationRepository = $installationRepository ?? new PluginInstallationRepository();
+        $this->logger = $logger;
     }
 
     /**
-     * 从配置加载插件（config/plugin.php）
+     * 从配置与插件包表加载插件，并按 enabled 列表默认启用
      */
     public function loadFromConfig(): void
     {
-        // 1) 先从 config 注册（显式声明）
-        $this->registerFromConfig();
+        $config = Config::get('plugin', []);
+        $plugins = $config['plugins'] ?? [];
+        $enabled = $config['enabled'] ?? [];
 
-        // 2) 尝试从 DB 注册（扫描结果）
-        $this->registerFromPackages();
+        // 1) 显式配置注册
+        foreach ($plugins as $item) {
+            $key = (string)($item['key'] ?? '');
+            $class = (string)($item['class'] ?? '');
+            $manifest = (array)($item['manifest'] ?? []);
+            if ($key === '' || $class === '') {
+                continue;
+            }
+
+            $this->safeRegister($key, $class, $manifest);
+        }
+
+        // 2) 插件包表注册（如已执行扫描落库）
+        try {
+            $packageRepo = new PluginPackageRepository();
+            $packages = $packageRepo->all();
+            foreach ($packages as $package) {
+                $key = (string)$package['plugin_key'];
+                $class = (string)$package['main_class'];
+                $manifest = (array)($package['manifest'] ?? []);
+                $this->safeRegister($key, $class, $manifest);
+            }
+        } catch (\Throwable $e) {
+            Log::info('插件包表不可用，跳过包表注册', ['error' => $e->getMessage()]);
+        }
 
         // 3) 默认启用列表
-        $this->enableFromConfig();
+        foreach ($enabled as $key) {
+            try {
+                $this->enable((string)$key);
+            } catch (\Throwable $e) {
+                Log::warning('默认启用插件失败', [
+                    'plugin_key' => $key,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     /**
-     * 手动注册插件（用于测试/明确声明的插件）
-     *
-     * @param class-string<CorePluginBaseService> $pluginClass
-     * @param array<string, mixed> $manifest
+     * 注册插件（显式调用）
      */
-    public function register(string $key, string $pluginClass, array $manifest = []): void
+    public function register(string $key, string $class, array $manifest = []): void
     {
-        if (!class_exists($pluginClass)) {
-            throw new \InvalidArgumentException("Plugin class not found: {$pluginClass}");
+        if (!class_exists($class)) {
+            throw new \InvalidArgumentException("插件类不存在：{$class}");
         }
 
-        $plugin = $this->app->invokeClass($pluginClass, [$key, $manifest]);
+        $plugin = new $class($key, $manifest);
         if (!$plugin instanceof CorePluginBaseService) {
-            throw new \InvalidArgumentException('Plugin must extend CorePluginBaseService');
+            throw new \InvalidArgumentException("插件必须继承 CorePluginBaseService：{$class}");
         }
 
         $this->plugins[$key] = $plugin;
-        // 补充状态：若安装表存在记录则同步（表未迁移时需允许启动降级）
-        try {
-            $install = $this->installationRepo->find(0, 0, $key);
-            if ($install) {
-                $plugin->hydrateState(
-                    $install['status'] !== 'uninstalled',
-                    $install['status'] === 'enabled'
-                );
-            }
-        } catch (\Throwable $e) {
-            Log::warning('Hydrate plugin state failed (table may not exist)', [
-                'plugin_key' => $key,
-                'error' => $e->getMessage(),
-            ]);
-        }
+
+        // 同步持久化状态（如表不可用则保持默认未安装）
+        $status = $this->syncInstallationState($key, 0, 0, $plugin);
+        $this->pluginStatus[$key] = $status;
     }
 
     /**
@@ -100,62 +136,8 @@ class PluginManager
     }
 
     /**
-     * 启用插件
-     */
-    public function enable(string $key, int $tenantId = 0, int $siteId = 0): void
-    {
-        $plugin = $this->requirePlugin($key);
-        $plugin->enable($this->hookManager, $this->dependencyManager);
-        $this->installationRepo->enable($tenantId, $siteId, $key, $plugin->getManifest()['version'] ?? '0.0.0');
-    }
-
-    /**
-     * 禁用插件
-     */
-    public function disable(string $key, int $tenantId = 0, int $siteId = 0): void
-    {
-        $plugin = $this->requirePlugin($key);
-        $plugin->disable();
-        $this->installationRepo->disable($tenantId, $siteId, $key);
-    }
-
-    /**
-     * 安装插件
-     */
-    public function install(string $key, int $tenantId = 0, int $siteId = 0): void
-    {
-        $plugin = $this->requirePlugin($key);
-        $plugin->install();
-        $this->installationRepo->install($tenantId, $siteId, $key, $plugin->getManifest()['version'] ?? '0.0.0');
-    }
-
-    /**
-     * 卸载插件
-     */
-    public function uninstall(string $key, bool $keepData = false, int $tenantId = 0, int $siteId = 0): void
-    {
-        $plugin = $this->requirePlugin($key);
-        $plugin->uninstall($keepData);
-        $this->installationRepo->uninstall($tenantId, $siteId, $key);
-    }
-
-    /**
-     * 对外暴露 Action Hook 触发入口（业务代码可选择直接调用 do_action() helper）
-     */
-    public function doAction(string $tag, mixed ...$args): void
-    {
-        $this->hookManager->doAction($tag, ...$args);
-    }
-
-    /**
-     * 对外暴露 Filter Hook 入口
-     */
-    public function applyFilter(string $tag, mixed $value, mixed ...$args): mixed
-    {
-        return $this->hookManager->applyFilter($tag, $value, ...$args);
-    }
-
-    /**
+     * 获取全部已注册插件
+     *
      * @return array<string, CorePluginBaseService>
      */
     public function all(): array
@@ -163,98 +145,207 @@ class PluginManager
         return $this->plugins;
     }
 
-    protected function requirePlugin(string $key): CorePluginBaseService
+    /**
+     * 启用插件：安装（如必要）+ 注册 Hook/Provider + 状态落库
+     */
+    public function enable(string $key, int $tenantId = 0, int $siteId = 0): void
     {
-        $plugin = $this->get($key);
-        if ($plugin === null) {
-            throw new \InvalidArgumentException("Plugin not registered: {$key}");
-        }
-        return $plugin;
+        $plugin = $this->requirePlugin($key);
+
+        // 持久化状态同步
+        $this->syncInstallationState($key, $tenantId, $siteId, $plugin);
+
+        $plugin->enable($this->hookManager, $this->dependencyManager);
+        $this->pluginStatus[$key] = PluginStatus::ENABLED;
+        $this->persistEnable($key, $tenantId, $siteId, $plugin);
     }
 
     /**
-     * 从 config 声明注册插件
+     * 禁用插件：标记停用并尝试卸载相关 Hook
      */
-    protected function registerFromConfig(): void
+    public function disable(string $key, int $tenantId = 0, int $siteId = 0): void
     {
-        $items = Config::get('plugin.plugins', []);
-        foreach ($items as $item) {
-            $key = (string)($item['key'] ?? '');
-            $class = $item['class'] ?? null;
-            $manifest = is_array($item['manifest'] ?? null) ? $item['manifest'] : [];
-            if ($key === '' || !is_string($class) || $class === '') {
-                continue;
-            }
+        $plugin = $this->requirePlugin($key);
 
-            try {
-                $this->register($key, $class, $manifest);
-            } catch (\Throwable $e) {
-                Log::warning('Register plugin from config failed', [
-                    'key' => $key,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+        $plugin->disable();
+        $this->pluginStatus[$key] = PluginStatus::DISABLED;
+
+        if (method_exists($this->hookManager, 'removePluginHooks')) {
+            $this->hookManager->removePluginHooks($key);
         }
+
+        $this->persistDisable($key, $tenantId, $siteId);
     }
 
     /**
-     * 根据 DB 插件包表注册插件
+     * 卸载插件：标记卸载并尝试清理 Hook
      */
-    protected function registerFromPackages(): void
+    public function uninstall(string $key, bool $keepData = false, int $tenantId = 0, int $siteId = 0): void
     {
-        $packages = [];
+        $plugin = $this->requirePlugin($key);
+
+        $plugin->uninstall($keepData);
+        $plugin->hydrateState(false, false);
+        $this->pluginStatus[$key] = PluginStatus::UNINSTALLED;
+
+        if (method_exists($this->hookManager, 'removePluginHooks')) {
+            $this->hookManager->removePluginHooks($key);
+        }
+
+        $this->persistUninstall($key, $tenantId, $siteId);
+    }
+
+    /**
+     * 调用 Action 钩子
+     */
+    public function doAction(string $tag, mixed ...$args): void
+    {
+        $this->hookManager->doAction($tag, ...$args);
+    }
+
+    /**
+     * 应用 Filter 钩子
+     */
+    public function applyFilter(string $tag, mixed $value, mixed ...$args): mixed
+    {
+        return $this->hookManager->applyFilter($tag, $value, ...$args);
+    }
+
+    /**
+     * 获取插件当前状态
+     */
+    public function getStatus(string $key): PluginStatus
+    {
+        return $this->pluginStatus[$key] ?? PluginStatus::UNINSTALLED;
+    }
+
+    /**
+     * 安全注册：捕获异常并记录
+     */
+    private function safeRegister(string $key, string $class, array $manifest): void
+    {
         try {
-            $packages = $this->packageRepo->all();
+            if (!isset($this->plugins[$key])) {
+                $this->register($key, $class, $manifest);
+            }
         } catch (\Throwable $e) {
-            Log::warning('Load plugin packages failed (table may not exist)', [
+            Log::warning('注册插件失败，已跳过', [
+                'plugin_key' => $key,
+                'class' => $class,
                 'error' => $e->getMessage(),
             ]);
         }
+    }
 
-        foreach ($packages as $pkg) {
-            $class = $pkg['main_class'] ?? null;
-            if (!is_string($class) || $class === '') {
-                continue;
+    /**
+     * 从安装表同步状态；表不可用时返回未安装
+     */
+    private function syncInstallationState(string $key, int $tenantId, int $siteId, CorePluginBaseService $plugin): PluginStatus
+    {
+        try {
+            $row = $this->installationRepository->find($tenantId, $siteId, $key);
+            if ($row === null) {
+                return PluginStatus::UNINSTALLED;
             }
 
-            // 仅当未被 config 注册时再注册，避免覆盖
-            if (isset($this->plugins[$pkg['plugin_key']])) {
-                continue;
-            }
+            $statusString = (string)($row['status'] ?? 'uninstalled');
+            $status = match ($statusString) {
+                'enabled' => PluginStatus::ENABLED,
+                'disabled' => PluginStatus::DISABLED,
+                'installed' => PluginStatus::INSTALLED,
+                default => PluginStatus::UNINSTALLED,
+            };
 
-            try {
-                $this->register($pkg['plugin_key'], $class, $pkg['manifest'] ?? []);
-            } catch (\Throwable $e) {
-                Log::warning('Register plugin from package failed', [
-                    'key' => $pkg['plugin_key'],
-                    'error' => $e->getMessage(),
-                ]);
+            $plugin->hydrateState(
+                $status !== PluginStatus::UNINSTALLED,
+                $status === PluginStatus::ENABLED
+            );
+
+            return $status;
+        } catch (\Throwable $e) {
+            Log::info('插件安装状态表不可用，保持内存状态', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            // 表不可用时，返回当前运行时状态（避免误报为未安装）
+            if ($plugin->isEnabled()) {
+                return PluginStatus::ENABLED;
             }
+            if ($plugin->isInstalled()) {
+                return PluginStatus::INSTALLED;
+            }
+            return PluginStatus::UNINSTALLED;
         }
     }
 
     /**
-     * 根据 config enabled 列表启用插件
+     * 持久化启用状态（表缺失时忽略）
      */
-    protected function enableFromConfig(): void
+    private function persistEnable(string $key, int $tenantId, int $siteId, CorePluginBaseService $plugin): void
     {
-        $enabled = Config::get('plugin.enabled', []);
-        foreach ($enabled as $key) {
-            $key = (string)$key;
-            if ($key === '') {
-                continue;
-            }
-            if (!isset($this->plugins[$key])) {
-                continue;
-            }
-            try {
-                $this->enable($key);
-            } catch (\Throwable $e) {
-                Log::warning('Auto enable plugin failed', [
-                    'plugin_key' => $key,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+        try {
+            $version = (string)($plugin->getManifest()['version'] ?? '0.0.0');
+            $this->installationRepository->enable($tenantId, $siteId, $key, $version);
+        } catch (\Throwable $e) {
+            Log::info('插件启用状态未能落库（将继续运行）', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            $this->logger?->warning('插件启用状态未能落库（将继续运行）', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
         }
+    }
+
+    /**
+     * 持久化禁用状态
+     */
+    private function persistDisable(string $key, int $tenantId, int $siteId): void
+    {
+        try {
+            $this->installationRepository->disable($tenantId, $siteId, $key);
+        } catch (\Throwable $e) {
+            Log::info('插件禁用状态未能落库（将继续运行）', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            $this->logger?->warning('插件禁用状态未能落库（将继续运行）', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 持久化卸载状态
+     */
+    private function persistUninstall(string $key, int $tenantId, int $siteId): void
+    {
+        try {
+            $this->installationRepository->uninstall($tenantId, $siteId, $key);
+        } catch (\Throwable $e) {
+            Log::info('插件卸载状态未能落库（将继续运行）', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+            $this->logger?->warning('插件卸载状态未能落库（将继续运行）', [
+                'plugin_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * 保证插件存在并返回
+     */
+    private function requirePlugin(string $key): CorePluginBaseService
+    {
+        $plugin = $this->get($key);
+        if ($plugin === null) {
+            throw new \InvalidArgumentException("插件未注册：{$key}");
+        }
+
+        return $plugin;
     }
 }

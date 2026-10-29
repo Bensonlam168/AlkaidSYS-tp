@@ -6,7 +6,7 @@ use think\migration\Migrator;
  * 创建插件包表与插件安装状态表（T-035 扩展）
  *
  * 目标：
- * - alkaid_plugin_packages：记录本地可用插件包（来自 addons/plugins/**/plugin.json 扫描）
+ * - alkaid_plugin_packages：记录本地可用插件包（来自 addons/plugins/{plugin_key}/plugin.json 扫描）
  * - alkaid_plugin_installations：记录租户/站点维度的安装与启用状态
  *
  * 说明：
@@ -176,4 +176,3 @@ class CreatePluginPackagesAndInstallationsTables extends Migrator
         }
     }
 }
-
