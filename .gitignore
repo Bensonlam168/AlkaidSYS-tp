@@ -80,3 +80,6 @@ README.local-merge-backup.md
 
 # 本地容器端口冲突 override（不入库）
 docker-compose.override.local.yml
+
+# SDD 工作区（superpowers subagent-driven-development 的临时产物）
+.superpowers/
