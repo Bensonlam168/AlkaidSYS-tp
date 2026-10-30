@@ -18,6 +18,7 @@
 |----------|------|------|------|
 | `quality-review-superpowers-2026-10-30.md` | 2026-10-30 | 🟢 **最新** | **代码质量审查报告**（4 Critical / 9 Important / 17 Minor）。四路独立审计 + 主审逐项复核。结论：不建议合并 |
 | `doc-review-design-docs-2026-10-30.md` | 2026-10-30 | 🟢 **最新** | **design/ 与 docs/ 文档质量分析**（184 份 / 83,674 行）。22 项问题：5 阻断 / 7 严重 / 7 中等 / 3 轻微（P0 五项已修复） |
+| `design-implementation-reconstruction-2026-10-30.md` | 2026-10-30 | 🟢 **最新·基线** | **设计意图还原与实现差距全景**（8 包并行精读 184 份文档 + 主审 10 项实测）。新增 3 个已验证 Critical：JWT 公开密钥可伪造身份 / refresh 当 access 用 / 租户上下文属性访问失效 |
 | `comprehensive-project-audit-report-2025-12-16.md` | 2025-12-16 | 🔴 活跃 | 综合项目审计报告，定义 P0/P1 任务 |
 | `design-compliance-audit-2025-12-14.md` | 2025-12-14 | 🔴 活跃 | 设计合规性审计报告 |
 | `t118-lowcode-legacy-migration-audit-2025-12-18.md` | 2025-12-18 | 🔴 活跃 | T-118 低代码 Legacy 迁移审查报告 |
@@ -158,6 +159,7 @@
 
 - [代码质量审查报告](quality-review-superpowers-2026-10-30.md) - 2026-10-30 ← 最新
 - [文档质量分析报告](doc-review-design-docs-2026-10-30.md) - 2026-10-30 ← 最新
+- [设计意图还原与实现差距全景](design-implementation-reconstruction-2026-10-30.md) - 2026-10-30 ← **规划基线**
 - [综合项目审计报告](comprehensive-project-audit-report-2025-12-16.md) - 2025-12-16
 - [设计合规审计](design-compliance-audit-2025-12-14.md) - 2025-12-14
 
