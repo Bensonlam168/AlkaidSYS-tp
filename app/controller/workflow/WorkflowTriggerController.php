@@ -875,11 +875,11 @@ class WorkflowTriggerController extends ApiController
      *
      * @param string $triggerId
      * @param string $event
-     * @param string $userId
+     * @param int|string $userId 操作用户ID（来自 JWT 时为 int，系统/未认证操作时为 'system'）
      * @param array $data
      * @return void
      */
-    protected function addTriggerLog(string $triggerId, string $event, string $userId, array $data): void
+    protected function addTriggerLog(string $triggerId, string $event, int|string $userId, array $data): void
     {
         if (!isset(self::$triggerLogs[$triggerId])) {
             self::$triggerLogs[$triggerId] = [];
