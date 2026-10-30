@@ -5,10 +5,10 @@
 | 报告日期 | 2026-10-30 |
 | 审查基线 | `develop` 分支（含 C-2 前端入库、C-4 注册安全修复） |
 | 审查范围 | **184 份文档**：`design/` 73 份（50,390 行）+ `docs/technical-specs/` 39 份 + `docs/todo/` 25 份 + `docs/report/` 26 份 |
-| 对照源码 | 后端 335 PHP / 57,376 行；插件 213 PHP（src）+ 51 测试；前端 1,678 文件；**31 迁移**（阶段 A 后，原 27） |
+| 对照源码 | 后端 335 PHP / 57,376 行；插件 213 PHP（src）+ 51 测试；前端 1,678 文件；**32 迁移**（阶段 A 后，原 27） |
 | 方法 | 8 个并行只读审计包逐份精读 + 主审对 10 项关键结论独立实测 |
 | 能力项总数 | **320 项**（仅 00/01 架构、02/03 生态数据、04-07 安全运维三包；低代码与工作流另计） |
-| 阶段 A 复验基线 | `Tests: 476, Errors: 22, Failures: 19, Risky: 4`（失败集去重后 41 项 < 42 基线，零新增；剩余均为既有跨测试污染） |
+| 阶段 A 复验基线 | `Tests: 479, Errors: 22, Failures: 19, Risky: 4`（失败集去重后 41 项 < 42 基线，零新增；剩余均为既有跨测试污染） |
 | 用途 | 为项目重新规划提供事实基线 |
 
 > **阅读提示**：本报告正文记录的是 2026-10-30 首次审查的**原始快照**。凡阶段 A 已修复的条目，均以
@@ -53,7 +53,7 @@
    `protected static array`（源码注释自认 `In-memory storage for demo`）。
    ⚠️ **阶段 A 变化**：5 张表已由 `f3de7b0` 建出（`migrate:status` 31 up / 0 MISSING，回滚闭环已验证），
    但**代码层仍走内存态**（`ProcessDefineRepository` 全 TODO），"表建好了没人用" 成为新的落差形态。
-   另：外键仅成功 2/10（见 R5）。
+   另：外键后续已由 `c137f12` 补到 13 条（R5 已修）；但 5 张表的 `tenant_id` 仍与 `tenants.id` 类型不符，租户外键一条未建（见 R10）。
 
 3. **文档体系存在系统性失真**：85 个标记 ✅ 的任务中仅 14 个（25%）有完成报告；工作流 TODO 的 14 项验收指标全绿而 17 个任务未开始；同一文档内并存「后端 100% 完成」与「后端 0% 缺失」。
 
@@ -352,7 +352,7 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | 1 | ~~**JWT 公开密钥 + 无 fail-fast**（C-5）~~ ✅ **已修复** `a7cf49b` | 生产 11/11 拒绝矩阵；dev 空密钥回退；实测伪造 token 不再生效 | — |
 | 2 | ~~**Refresh 当 Access 用**（C-6）~~ ✅ **已修复** `a7cf49b` | 实测 refresh→`/v1/auth/me` 从 200 变 **401** | — |
 | 3 | ~~**租户上下文属性访问失效**（C-7）~~ ✅ **已修复** `7860fab` | 54 处改方法调用，残留 0；跨租户读取用例通过 | — |
-| 4 | ~~**工作流 5 张表从未创建**~~ ✅ **已修复** `f3de7b0` | 5 张表建成；`migrate:status` 31 条 up / 0 MISSING；回滚闭环（run→rollback→run）通过。**外键仅成功 2/10**，其余 8 条因 `varchar(50)`/`bigint` vs `int unsigned` 类型不匹配被跳过，见 R5 | — |
+| 4 | ~~**工作流 5 张表从未创建**~~ ✅ **已修复** `f3de7b0` | 5 张表建成；`migrate:status` 31 条 up / 0 MISSING；回滚闭环（run→rollback→run）通过。当时外键仅成功 2/10（8 条因类型不匹配被跳过）；后续由 `c137f12` 补齐至 13 条，见 R5 | — |
 | 5 | **插件 41% 源码加载即 Fatal** | `class_exists(model\NodeModel)` → Trait not found；88/213 文件依赖 `madong\ingenious` | 🔴 高（补依赖或删半边） |
 | 6 | **工作流 API 全内存态** | 7 处 `protected static array`；`ProcessDefineRepository` 全 TODO（表已建，但代码仍走内存态） | 🔴 高（需实现编排器+持久化） |
 | 7 | **DDL guard 有两处旁路** | `hasTable`/`hasColumn` 无 guard；`BaseApplication::executeSqlFile()` 直连 `Db::execute` | 🟢 低-中 |
@@ -367,7 +367,7 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | A1 | C-5 JWT 密钥强度校验 | `a7cf49b` | 生产 11/11 拒绝矩阵；反向用例放行；dev 空密钥签发→校验闭环 |
 | A2 | C-6 令牌类型校验 | `a7cf49b` | refresh→`/v1/auth/me` 401/2001；access→200；refresh 接口本身未受影响 |
 | A3 | C-7 租户上下文 54 处修正 | `7860fab` | 属性式残留 0；跨租户隔离用例 2/2 通过；四个工作流控制器均可加载 |
-| A4 | 工作流 5 表纳入主迁移链 + 回滚能力 | `f3de7b0` | 5 表建成；31 up / 0 MISSING；run→rollback→run 闭环；冒烟测试 5/20；外键 2/10（见 R5） |
+| A4 | 工作流 5 表纳入主迁移链 + 回滚能力 | `f3de7b0` | 5 表建成；31 up / 0 MISSING；run→rollback→run 闭环；冒烟测试 5/20；当时外键 2/10，后由 `c137f12` 补齐至 13 条（见 R5） |
 | A5 | 插件 autoload + 应用服务提供者接线 | `4392b0f` | `make(ApplicationManager)` 可解析；`PluginAutoloadTest` 4 + `ServiceProviderWiringTest` 4 |
 | A6 | 文档围栏回归修正 | `0549910` | `check-docs.php --strict` 通过 |
 | A7 | 前端权限路由按角色 slug 生效 | `1b01842` | `/v1/auth/me` 返回 `role_slugs:["admin","test_admin"]` 且保留 `roles:[1,3]`；`AuthMeRoleSlugsTest` 2/2 |
@@ -394,11 +394,12 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | R2 | 生产密钥校验发生在 `JwtService` 惰性构造，非启动期 | 生产表现为「进程正常启动、鉴权请求失败」，运维易误判 | 把校验前移到 `app/provider.php` 或 `AppService::boot()` |
 | R3 | `.env.example` 注释中的 ASCII `)` 会让 `parse_ini_file` 整份返回 false | 已在本轮修正；建议写入文档维护约定 | 在 `AGENTS.md` 文档维护节加一条 |
 | R4 | `admin` 4 控制器与 workflow 其余 3 控制器的租户行为无测试覆盖 | 改动无回归保护 | 补 admin 端点测试 |
-| R5 | **工作流外键仅 2/10**：`workflow_tasks.instance_id`、`workflow_event_logs.instance_id/task_id` 为 `varchar(50)`；`created_by`/`assignee`/`user_id` 为 `bigint`(signed)，与 `int unsigned` 主键不匹配 | 8 条外键被跳过 → 无 DB 级引用完整性，可能产生孤儿行 | 先判定 `instance_id` 语义（若设计上存引擎侧字符串实例号，应**去掉该外键**而非改类型），其余改 `int unsigned` |
-| R6 | `migrations` 表**无 `batch` 列**，无参 `migrate:rollback` 只回滚「版本号最大的一个」 | 后续开发执行无参 rollback 会先回滚 `20251220000005`（本轮实测已发生一次误回滚，已恢复并核验：列/索引/数据一致性均完好） | 补 `batch` 列，或把本组迁移重编号到当前最大版本之后 |
+| ~~R5~~ | ~~**工作流外键仅 2/10**~~ ✅ **已修复** `c137f12` | 11 列改 `int unsigned`（8 列 bigint + 3 列 varchar(50)），补齐 11 条外键 → **实测外键 13 条**；运行时验证：插入不存在的 `instance_id` 被 1452 拒绝。**同类问题仍在**：5 张表 `tenant_id` 仍为 `bigint` vs `tenants.id` `int unsigned`，租户外键一条未建 → 见 R10 | — |
+| ~~R6~~ | ~~`migrations` 表无 `batch` 列，无参 rollback 只回滚「版本号最大的一个」~~ ✅ **已修复** `6548db9` | `batch` 列已加并按 `start_time` 聚类回填 17 个历史批次；新增行按批次标记（带 `start_time` 双重约束防误判）；无参 rollback 改为整批逆序回滚；`20251221000001` 设为受保护迁移防自毁；`scripts/check-migrations.php` 拦住「新迁移版本倒挂」这一事故成因 | — |
 | R7 | `AppService::boot()` 每请求 `scandir(addons/apps)` | 本机 bind-mount 3~5ms/请求，原生 Linux 预计微秒级 | 按进程缓存 discovered 结果 |
 | R8 | `addon\` 命名空间**仍无** PSR-4 映射（A5 只加了 `plugin\`） | `addons/apps/_template/Application.php` 声明 `namespace addon\template` 但目录是 `_template` → `class_exists` 恒 false | 单独立项修正命名空间与目录约定 |
 | R9 | `workflow_definitions` **无独立 `edges` 列**，连线由 `nodes_config` JSON 承载 | 与设计文档若假定独立 edges 表/列则不符 | 核对设计后统一口径 |
+| R10 | **5 张工作流表的 `tenant_id` 仍为 `bigint`，而 `tenants.id` 是 `int unsigned`** | `tenant_id → tenants.id` 的多租户外键**一条都建不了** → 租户级引用完整性缺失；全库其余 12 张表都是 `int unsigned` 且有 5 条租户外键，工作流是唯一例外 | 与 R5 同类解法：改 `int unsigned` + 补 5 条租户外键。R5 修复时已发现但未纳入范围（用户授权的范围是外键列，不含 `tenant_id`） |
 
 ---
 

@@ -9,7 +9,7 @@
 | 核查方式 | 四路独立只读审计 + 主审对**每一条结论**逐项复核（复核记录见第十章） |
 | 最终结论 | **With fixes（修复后可合并）** —— Critical 共 **7 个**，**已修复 5 个（C-2/C-4/C-5/C-6/C-7，均经独立复验）**，**剩余 2 个（C-1 注入、C-3 vendor 入库）** |
 | 阶段 A 追加修复 | `4b5f0cc` R1 工作流任务授权 fail-open（含 2 个新发现缺陷 N4/N5 + 类型缺陷 N6）、`4392b0f` A5 插件 autoload 与 Provider 接线、`1b01842` A7 前端权限路由、`f3de7b0` A4 工作流 5 表纳入主链 |
-| 阶段 A 测试基线 | `Tests: 476, Errors: 22, Failures: 19, Risky: 4`（失败集去重 **41 项 < 42 基线**，零新增；详见 I-3 补记） |
+| 阶段 A 测试基线 | `Tests: 479, Errors: 22, Failures: 19, Risky: 4`（失败集去重 **41 项 < 42 基线**，零新增；详见 I-3 补记） |
 
 > **计数口径说明**：所有依赖 git 状态的数字以审查基线 `f119d98` 为准。本报告自身的提交会使"从 develop 可达提交数"与"跟踪文件数"小幅递增，属正常增量，不影响结论。
 
@@ -692,7 +692,9 @@ if (isset($data['tenant_id']) && (int)$data['tenant_id'] !== $tenantId) {
    SHOW TABLES LIKE '%workflow%' → 0 行
    ✅ **阶段 A 已修**（`f3de7b0`）：4 个迁移纳入主链、5 张表建成、
       `migrate:status` 31 up / 0 MISSING、run→rollback→run 闭环通过。
-      **外键仅成功 2/10**（其余 8 条类型不匹配被跳过，见遗留 R5）。
+      **当时外键仅成功 2/10**（其余 8 条类型不匹配被跳过）。
+      后续由 `c137f12` 把 11 列改 `int unsigned` 并补齐 11 条外键，**实测外键 13 条**，
+      且插入不存在的 `instance_id` 已被 1452 拒绝（R5 已修）。
 
 5. 4 个 Repository（ProcessDefine/ProcessInstance/ProcessTask/WorkflowEvent）
    全部为 `// TODO: 实现数据访问逻辑; return null;`
