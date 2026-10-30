@@ -163,7 +163,10 @@ class WorkflowTaskController extends ApiController
         // Get current user and tenant
         $userId = $request->userId();
         $tenantId = $request->tenantId();
-        $userGroups = $request->userGroups ?? [];
+        // 说明（缺陷 R1）：历史代码用属性方式读取 userGroups，会落到 think\Request::__get()
+        // → middleware('userGroups')，恒为 null；必须调用 app\Request::userGroups()，
+        // 才能拿到当前用户在当前租户下的角色 slug 列表。
+        $userGroups = $request->userGroups();
 
         if ($userId === null) {
             return $this->unauthorized();
@@ -465,14 +468,19 @@ class WorkflowTaskController extends ApiController
         }
 
         // Check if user is eligible to claim (in candidate users/groups)
-        $userGroups = $request->userGroups ?? [];
+        // 说明（缺陷 R1）：必须调用 app\Request::userGroups()，属性访问恒为 null
+        $userGroups = $request->userGroups();
         $candidateUsers = $task['candidate_users'] ?? [];
         $candidateGroups = $task['candidate_groups'] ?? [];
 
         $canClaim = in_array($userId, $candidateUsers, true) ||
                     !empty(array_intersect($userGroups, $candidateGroups));
 
-        if (!$canClaim && !empty($candidateUsers) && !empty($candidateGroups)) {
+        // 安全（缺陷 R1）：只要任务设置了**任一**候选约束（候选用户 或 候选组），
+        // 当前用户不满足就必须拒绝。原实现要求「候选用户与候选组同时非空」才拦截，
+        // 导致只设其一时守卫被跳过、任何登录用户都能认领（fail-open）。
+        $hasCandidacy = !empty($candidateUsers) || !empty($candidateGroups);
+        if (!$canClaim && $hasCandidacy) {
             return $this->forbidden($this->langService->trans('workflow.not_eligible_to_claim'));
         }
 
@@ -779,16 +787,31 @@ class WorkflowTaskController extends ApiController
         $delegatedTo = $task['delegated_to'] ?? null;
         $candidateUsers = $task['candidate_users'] ?? [];
         $candidateGroups = $task['candidate_groups'] ?? [];
-        $userGroups = $request->userGroups ?? [];
+        // 说明（缺陷 R1）：必须调用 app\Request::userGroups()，属性访问恒为 null
+        $userGroups = $request->userGroups();
 
-        $canAccess = $assignee === $userId ||
-                     $delegatedTo === $userId ||
-                     in_array($userId, $candidateUsers, true) ||
-                     !empty(array_intersect($userGroups, $candidateGroups));
+        // 授权语义（缺陷 R1）：
+        // 1. 任务已有受理人 → 仅受理人 / 被委托人可操作；
+        // 2. 任务未认领但设置了候选约束（候选用户 或 候选组）→ 仅命中候选的用户可操作；
+        // 3. 任务未认领且无任何候选约束（开放任务）→ 允许。
+        // 原实现算出的 $canAccess 从未被使用，且把「候选用户非空」当作前提条件，
+        // 使仅设候选组的未认领任务对任何人开放（fail-open）。
+        if ($assignee !== null) {
+            // 有受理人：候选身份不能越过受理人，只有受理人 / 被委托人可操作
+            if ($assignee !== $userId && $delegatedTo !== $userId) {
+                return $this->forbidden($this->langService->trans('workflow.not_task_assignee'));
+            }
 
-        // If task has specific assignee, only assignee/delegate can operate
-        if ($assignee !== null && $assignee !== $userId && $delegatedTo !== $userId) {
-            return $this->forbidden($this->langService->trans('workflow.not_task_assignee'));
+            return null;
+        }
+
+        // 未认领：命中候选用户或候选组才放行
+        $hasCandidacy = !empty($candidateUsers) || !empty($candidateGroups);
+        $isCandidate = in_array($userId, $candidateUsers, true) ||
+                       !empty(array_intersect($userGroups, $candidateGroups));
+
+        if ($hasCandidacy && !$isCandidate) {
+            return $this->forbidden($this->langService->trans('workflow.not_eligible_to_claim'));
         }
 
         return null;
@@ -797,13 +820,13 @@ class WorkflowTaskController extends ApiController
     /**
      * Add task history entry | 添加任务历史记录
      *
-     * @param string $taskId
-     * @param string $action
-     * @param string $userId
-     * @param array $data
+     * @param string     $taskId
+     * @param string     $action
+     * @param int|string $userId 操作用户ID（来自 JWT 时为 int，系统操作时为 'system'）
+     * @param array      $data
      * @return void
      */
-    protected function addTaskHistory(string $taskId, string $action, string $userId, array $data): void
+    protected function addTaskHistory(string $taskId, string $action, int|string $userId, array $data): void
     {
         if (!isset(self::$taskHistory[$taskId])) {
             self::$taskHistory[$taskId] = [];
