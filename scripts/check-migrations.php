@@ -505,6 +505,74 @@ function checkTenantIdDeclaration(array $migrations, ?array $applied): array
     return $issues;
 }
 
+/**
+ * 检查 E 用的已知例外基线
+ *
+ * `lowcode_forms` 是当前唯一违反「tenant_id 无默认值就必须有租户外键」的表：
+ * 它的列定义是 bigint unsigned NOT NULL 且无默认值（按规则应带外键），
+ * 但低代码 CLI（`CreateFormCommand`）默认写入 tenant_id=0（系统模板），
+ * 而 tenants 表没有 id=0，因此物理上加不上外键。
+ *
+ * 归属待决（见实施计划第三节 D1）：
+ *   (a) 给它加 DEFAULT 0，归入「系统模板空间」组；或
+ *   (b) 去掉 CLI 的 0 默认，按真实租户引用处理并加外键。
+ * 决策前先以告警形式放行，避免门禁长期红灯；定案后应从此基线删除。
+ *
+ * @var string[]
+ */
+const KNOWN_TENANT_FK_EXCEPTIONS = ['lowcode_forms'];
+
+/**
+ * 检查 E：无默认值的 tenant_id 必须有 tenant_id → tenants.id 外键
+ *
+ * 依据：审计实测 224 张含 tenant_id 的表，无默认值的 11 张里 10 张有外键，
+ * 有默认值的 213 张零外键 —— 二分法零例外。本条检查守住「无默认值」这一侧。
+ *
+ * @return array<int, string>|null 违规表名列表；无法连库时返回 null
+ */
+function loadTenantFkViolations(): ?array
+{
+    try {
+        $autoload = REPO_ROOT . '/vendor/autoload.php';
+        if (!is_file($autoload)) {
+            return null;
+        }
+        require_once $autoload;
+
+        $app = new \think\App();
+        $app->initialize();
+
+        $pdo = $app->db->connect()->getPdo();
+
+        $schema = $pdo->query('SELECT DATABASE()')->fetchColumn();
+        if (!$schema) {
+            return null;
+        }
+
+        $sql = <<<'SQL'
+            SELECT c.table_name
+            FROM information_schema.columns c
+            LEFT JOIN information_schema.key_column_usage k
+                   ON k.table_schema = c.table_schema
+                  AND k.table_name   = c.table_name
+                  AND k.column_name  = 'tenant_id'
+                  AND k.referenced_table_name = 'tenants'
+            WHERE c.table_schema = ?
+              AND c.column_name  = 'tenant_id'
+              AND c.column_default IS NULL
+              AND k.constraint_name IS NULL
+            ORDER BY c.table_name
+        SQL;
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$schema]);
+
+        return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    } catch (\Throwable $e) {
+        return null;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -560,6 +628,40 @@ foreach ($tenantIssues as $issue) {
     echo '   ' . colorize('[TENANT]', 'red') . " {$issue['base']}：{$issue['problem']}" . PHP_EOL;
 }
 $errorCount += count($tenantIssues);
+
+// --- 检查 E：无默认值的 tenant_id 必须有租户外键 ---
+$fkViolations = loadTenantFkViolations();
+if (null === $fkViolations) {
+    printf("检查 E  租户外键一致性          %s\n", formatResult(0, 1));
+    echo '   ' . colorize('[WARN]', 'yellow') . ' 无法连接数据库读取表结构，已跳过租户外键检查' . PHP_EOL;
+    $warningCount++;
+} else {
+    $fkErrors = [];
+    $fkWarnings = [];
+    foreach ($fkViolations as $tableName) {
+        if (in_array($tableName, KNOWN_TENANT_FK_EXCEPTIONS, true)) {
+            $fkWarnings[$tableName] = true;
+        } else {
+            $fkErrors[] = $tableName;
+        }
+    }
+
+    printf("检查 E  租户外键一致性          %s\n", formatResult(count($fkErrors), 0));
+    foreach ($fkErrors as $tableName) {
+        echo '   ' . colorize('[FK]', 'red')
+            . " {$tableName}.tenant_id 无默认值却没有 tenant_id → tenants.id 外键"
+            . '（按「无默认值 = 真实租户引用」规则应当有）' . PHP_EOL;
+    }
+    // 已知例外只做灰色提示，不计入告警：
+    // 否则 --strict 会因这条待决项永久变红，门禁失去意义
+    // （与检查 C 对 LEGACY_CHANGE_ONLY 的处理保持一致）。
+    foreach (array_keys($fkWarnings) as $tableName) {
+        echo '   ' . colorize('[INFO]', 'gray')
+            . " {$tableName}.tenant_id 属已知例外（归属待决，见 KNOWN_TENANT_FK_EXCEPTIONS）" . PHP_EOL;
+    }
+
+    $errorCount += count($fkErrors);
+}
 
 echo str_repeat('-', 64) . PHP_EOL;
 
