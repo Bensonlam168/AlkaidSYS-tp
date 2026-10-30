@@ -93,7 +93,15 @@ function setupAccessGuard(router: Router) {
     // 生成路由表
     // 当前登录用户拥有的角色标识列表
     const userInfo = userStore.userInfo || (await authStore.fetchUserInfo());
-    const userRoles = userInfo.roles ?? [];
+    // 缺陷 A7 修复：路由 `meta.authority` 比对的是「角色 slug」字符串（如 `admin`）。
+    // `getUserInfoApi()` 已把后端 `/v1/auth/me` 的 `role_slugs` 透传出来，并同步把
+    // `roles` 归一为同一份 slug 列表（旧版本后端缺失 `role_slugs` 时回退角色 ID）。
+    // 因此这里优先取 `role_slugs`（非空时），为空则回退 `roles`（此时 roles 已是 slug）；
+    // 若后端两者都缺失，userRoles 退化为角色 ID 字符串 → 与 `admin` 永不匹配 → 菜单被
+    // 过滤（失败关闭，刻意行为，见 `routes/modules/admin.ts` 顶部说明）。
+    const userRoles: string[] = userInfo.role_slugs?.length
+      ? userInfo.role_slugs
+      : (userInfo.roles ?? []);
 
     // 生成菜单和路由
     const { accessibleMenus, accessibleRoutes } = await generateAccess({

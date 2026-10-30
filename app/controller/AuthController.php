@@ -342,14 +342,34 @@ class AuthController extends ApiController
             }
 
             // Get user roles | 获取用户角色
+            // 说明：getRoleIds() 已内置租户隔离（仅返回与用户同租户的角色），此处无需再过滤
             $roleIds = $this->userRepository->getRoleIds($userId);
+
+            // Resolve role slugs for frontend authority matching (defect A7) | 解析角色 slug（缺陷 A7）
+            //
+            // 前端路由守卫使用 `route.meta.authority`（角色 **slug**，如 `admin`）做菜单过滤，
+            // 而原响应只提供角色 ID，导致「整数 ID vs 字符串 slug」永不匹配、系统管理菜单整体消失。
+            // 因此新增 `role_slugs`；原有 `roles`（角色 ID）保留以兼容既有消费者。
+            $roleSlugs = [];
+            if (!empty($roleIds)) {
+                // $roleIds 已按租户过滤，这里直接取 slug 即可，无需重复过滤租户
+                $slugs = Db::name('roles')
+                    ->whereIn('id', $roleIds)
+                    ->column('slug');
+                // 统一转为字符串并剔除空值，保证返回的是纯 slug 数组
+                $roleSlugs = array_values(array_filter(
+                    array_map('strval', $slugs),
+                    static fn (string $slug): bool => $slug !== ''
+                ));
+            }
 
             // Get user permissions in resource:action format | 获取用户权限（resource:action 格式）
             $permissions = $this->permissionService->getUserPermissions($userId);
 
             return $this->success([
                 'user' => $user->toArray(),
-                'roles' => $roleIds,
+                'roles' => $roleIds,              // 兼容字段：角色 ID 数组 | Legacy: role IDs
+                'role_slugs' => $roleSlugs,       // 新增字段：角色 slug 数组 | New: role slugs
                 'permissions' => $permissions,  // New field | 新增字段
             ]);
         } catch (\Exception $e) {
