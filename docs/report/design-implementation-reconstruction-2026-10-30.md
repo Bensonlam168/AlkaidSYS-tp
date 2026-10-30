@@ -5,10 +5,14 @@
 | 报告日期 | 2026-10-30 |
 | 审查基线 | `develop` 分支（含 C-2 前端入库、C-4 注册安全修复） |
 | 审查范围 | **184 份文档**：`design/` 73 份（50,390 行）+ `docs/technical-specs/` 39 份 + `docs/todo/` 25 份 + `docs/report/` 26 份 |
-| 对照源码 | 后端 335 PHP / 57,376 行；插件 213 PHP（src）+ 51 测试；前端 1,678 文件；27 迁移 |
+| 对照源码 | 后端 335 PHP / 57,376 行；插件 213 PHP（src）+ 51 测试；前端 1,678 文件；**31 迁移**（阶段 A 后，原 27） |
 | 方法 | 8 个并行只读审计包逐份精读 + 主审对 10 项关键结论独立实测 |
 | 能力项总数 | **320 项**（仅 00/01 架构、02/03 生态数据、04-07 安全运维三包；低代码与工作流另计） |
+| 阶段 A 复验基线 | `Tests: 476, Errors: 22, Failures: 19, Risky: 4`（失败集去重后 41 项 < 42 基线，零新增；剩余均为既有跨测试污染） |
 | 用途 | 为项目重新规划提供事实基线 |
+
+> **阅读提示**：本报告正文记录的是 2026-10-30 首次审查的**原始快照**。凡阶段 A 已修复的条目，均以
+> ~~删除线~~ + ✅ 标注并附提交号与独立复验证据；未标注者即为**仍然成立**的结论。
 
 > **本报告不是又一份审计清单，而是一次「设计意图 vs 代码现实」的系统性重建设。**
 > 它回答三个问题：这个项目原本想做什么？现在实际做到了什么？差距的性质是什么？
@@ -32,19 +36,24 @@
 | 支柱 | 设计承诺 | 实际可用度 | 一句话判词 |
 |---|---|---|---|
 | 1. 低代码 | 4 设计器 + 8 产物 + 9 命令 | **后端 85%/60%/44%，前端 0%** | 建模与表单后端扎实；设计器与前端全缺 |
-| 2. 应用+插件生态 | 6 应用 + 2 市场 + 分成 | **插件 55% / 应用 38% / 市场 0%** | 部件齐全但**未通电**（autoload 断链 + Provider 未注册） |
-| 3. 多租户+多站点 | 3 模式 + 站点管理面 | **多租户 54% / 多站点 44%** | 只有共享库；站点无管理面且租户上下文取值为 null |
-| 4. 工作流 | 引擎 + API + 3 应用 | **引擎库部分可用 / API 0% / 表 0%** | 界面能跑、数据在内存、引擎 41% 文件加载即 Fatal |
+| 2. 应用+插件生态 | 6 应用 + 2 市场 + 分成 | **插件 55% / 应用 38% / 市场 0%**（原值，未重新计分） | 部件齐全但**未通电**（~~autoload 断链 + Provider 未注册~~ → 阶段 A 已接通；`install()` 仍缺表） |
+| 3. 多租户+多站点 | 3 模式 + 站点管理面 | **多租户 54% / 多站点 44%**（原值，未重新计分） | 只有共享库；站点无管理面（~~租户上下文取值为 null~~ → C-7 已修） |
+| 4. 工作流 | 引擎 + API + 3 应用 | **引擎库部分可用 / API 0% / 表 0%→表已建** | 界面能跑、数据仍为内存态、引擎 41% 文件加载即 Fatal |
 | 5. 多端 | 5 端统一 | **Admin 1/5** | 只有 Admin 端验证过 API 契约 |
 
 ### 三个最要紧的事实
 
-1. **存在 3 个已验证的 Critical 安全缺陷**（不止此前报告的 C-1/C-3）：
-   - JWT 密钥是仓库内公开字符串，**已实测可伪造任意用户身份并成功冒充**
-   - Refresh Token 可当 Access Token 用，**已实测通过受保护接口**
-   - `$request->tenantId` 属性访问恒为 null，**工作流 50 处租户过滤静默失效**
+1. **存在 3 个已验证的 Critical 安全缺陷**（不止此前报告的 C-1/C-3），**均已于阶段 A 修复**：
+   - JWT 密钥是仓库内公开字符串，已实测可伪造任意用户身份并成功冒充 → ✅ `a7cf49b`（生产 11/11 拒绝矩阵）
+   - Refresh Token 可当 Access Token 用，已实测通过受保护接口 → ✅ `a7cf49b`（refresh→`/me` 由 200 变 401）
+   - `$request->tenantId` 属性访问恒为 null，工作流 54 处租户过滤静默失效 → ✅ `7860fab`（残留 0）
+   - **仍开放的 Critical 为 C-1（低代码标识符注入）与 C-3（插件 vendor 入库）**，不在阶段 A 范围
 
-2. **工作流是「空转」的**：42 条路由 + 2,874 行控制器 + 5 个迁移 + 9,911 行前端组件，全部指向不存在的数据表；控制器把数据存在 `protected static array`（源码注释自认 `In-memory storage for demo`）。
+2. **工作流是「空转」的**：42 条路由 + 2,874 行控制器 + 9,911 行前端组件曾全部指向不存在的数据表；控制器把数据存在
+   `protected static array`（源码注释自认 `In-memory storage for demo`）。
+   ⚠️ **阶段 A 变化**：5 张表已由 `f3de7b0` 建出（`migrate:status` 31 up / 0 MISSING，回滚闭环已验证），
+   但**代码层仍走内存态**（`ProcessDefineRepository` 全 TODO），"表建好了没人用" 成为新的落差形态。
+   另：外键仅成功 2/10（见 R5）。
 
 3. **文档体系存在系统性失真**：85 个标记 ✅ 的任务中仅 14 个（25%）有完成报告；工作流 TODO 的 14 项验收指标全绿而 17 个任务未开始；同一文档内并存「后端 100% 完成」与「后端 0% 缺失」。
 
@@ -230,9 +239,19 @@ v2.0（47 号文档）设计的完整链路：
 | **低代码-CLI** | 45 | **44%** | — | 4/9 命令 |
 | **低代码-管理应用** | 46 | **0%** | — | 无任何低代码前端页面 |
 | **工作流-引擎库** | 47 | **61%** | — | 213 文件中 88 个因 madong 不可用 |
-| **工作流-API** | 47/48 | **0%（可用）** | — | 路由/控制器齐但内存态 + 无表 |
+| **工作流-API** | 47/48 | **0%（可用）** | — | 路由/控制器齐但**仍为内存态**；表已于 `f3de7b0` 建出但代码未接 |
 | **工作流-前端** | 48 | **40% 实体 / 0% 接入** | — | 组件库 9,911 行但零引用 |
 | **工作流-E2E** | 51 | **4/9 跳** | — | 第 5 跳（事件发布）断裂 |
+
+> **阶段 A 对上述矩阵的影响（分数未重算，仅标注事实变化）**
+>
+> | 行 | 变化 |
+> |---|---|
+> | 插件系统 06-2 | `plugin\` PSR-4 已补（`4392b0f`），"autoload 断链"一条消失；钩子/异步/监控结论不变 |
+> | 应用系统 06-1 | Provider 已接线、`ApplicationManager` 可从容器解析；`applications`/`app_configs` 表**仍缺** → 38% 不变 |
+> | 多租户 04-multi-tenant | 54 处 `$request->tenantId` 属性访问改为方法调用（`7860fab`），"识别"链路可用；三种隔离模式仍缺 |
+> | 迁移策略 11-migration | 新增 4 个迁移均带 `up()`+`down()` 且回滚闭环已验证；**既有 27 个迁移仍无 `down()`** |
+> | 工作流-API | 5 表已建、`migrate:status` 31 up；但 `ProcessDefineRepository` 全 TODO，**可用度仍为 0** |
 
 ### 3.2 三包加权总计
 
@@ -333,12 +352,12 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | 1 | ~~**JWT 公开密钥 + 无 fail-fast**（C-5）~~ ✅ **已修复** `a7cf49b` | 生产 11/11 拒绝矩阵；dev 空密钥回退；实测伪造 token 不再生效 | — |
 | 2 | ~~**Refresh 当 Access 用**（C-6）~~ ✅ **已修复** `a7cf49b` | 实测 refresh→`/v1/auth/me` 从 200 变 **401** | — |
 | 3 | ~~**租户上下文属性访问失效**（C-7）~~ ✅ **已修复** `7860fab` | 54 处改方法调用，残留 0；跨租户读取用例通过 | — |
-| 4 | **工作流 5 张表从未创建** | `SHOW TABLES LIKE '%workflow%'` = 0；迁移在插件目录，`migrate:run` 不扫 | 🟢 低（复制迁移+修 FK 类型） |
+| 4 | ~~**工作流 5 张表从未创建**~~ ✅ **已修复** `f3de7b0` | 5 张表建成；`migrate:status` 31 条 up / 0 MISSING；回滚闭环（run→rollback→run）通过。**外键仅成功 2/10**，其余 8 条因 `varchar(50)`/`bigint` vs `int unsigned` 类型不匹配被跳过，见 R5 | — |
 | 5 | **插件 41% 源码加载即 Fatal** | `class_exists(model\NodeModel)` → Trait not found；88/213 文件依赖 `madong\ingenious` | 🔴 高（补依赖或删半边） |
-| 6 | **工作流 API 全内存态** | 7 处 `protected static array`；`ProcessDefineRepository` 全 TODO | 🔴 高（需实现编排器+持久化） |
+| 6 | **工作流 API 全内存态** | 7 处 `protected static array`；`ProcessDefineRepository` 全 TODO（表已建，但代码仍走内存态） | 🔴 高（需实现编排器+持久化） |
 | 7 | **DDL guard 有两处旁路** | `hasTable`/`hasColumn` 无 guard；`BaseApplication::executeSqlFile()` 直连 `Db::execute` | 🟢 低-中 |
-| 8 | **应用系统未接线** | `ApplicationServiceProvider` 全库零引用；`applications`/`app_configs` 表缺；`menus.app_key` 列缺 | 🟡 中 |
-| 9 | **插件 autoload 断链** | `plugin\` 无 PSR-4 映射 → 任何插件都无法 `class_exists` | 🟢 低（1 行 composer 配置） |
+| 8 | **应用系统接线**部分修复 `4392b0f` | Provider 已接线并可解析 `ApplicationManager`；但 `applications`/`app_configs` 表仍缺 → `install()/uninstall()` 不可用；`menus.app_key` 列仍缺 | 🟡 中（剩余为建表+列） |
+| 9 | ~~**插件 autoload 断链**~~ ✅ **已修复** `4392b0f` | `plugin\` → `addons/plugins/` 已入 PSR-4；测试夹具 `addons/plugins/_fixture/` 作为活体证明 | — |
 | 10 | **钩子零触发点** | `do_action(`=0、`apply_filter(`=0；`app/event.php` 监听全空 | 🟡 中 |
 
 ### 阶段 A 已完成（2026-10-30）
@@ -348,7 +367,10 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | A1 | C-5 JWT 密钥强度校验 | `a7cf49b` | 生产 11/11 拒绝矩阵；反向用例放行；dev 空密钥签发→校验闭环 |
 | A2 | C-6 令牌类型校验 | `a7cf49b` | refresh→`/v1/auth/me` 401/2001；access→200；refresh 接口本身未受影响 |
 | A3 | C-7 租户上下文 54 处修正 | `7860fab` | 属性式残留 0；跨租户隔离用例 2/2 通过；四个工作流控制器均可加载 |
+| A4 | 工作流 5 表纳入主迁移链 + 回滚能力 | `f3de7b0` | 5 表建成；31 up / 0 MISSING；run→rollback→run 闭环；冒烟测试 5/20；外键 2/10（见 R5） |
+| A5 | 插件 autoload + 应用服务提供者接线 | `4392b0f` | `make(ApplicationManager)` 可解析；`PluginAutoloadTest` 4 + `ServiceProviderWiringTest` 4 |
 | A6 | 文档围栏回归修正 | `0549910` | `check-docs.php --strict` 通过 |
+| A7 | 前端权限路由按角色 slug 生效 | `1b01842` | `/v1/auth/me` 返回 `role_slugs:["admin","test_admin"]` 且保留 `roles:[1,3]`；`AuthMeRoleSlugsTest` 2/2 |
 
 **过程中新发现并修复的既有缺陷**（不在原 32 项缺口清单内，因被认证层 401 掩盖）：
 
@@ -357,15 +379,26 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | N1 | `WorkflowDefinitionController::validate()` 与父类 `BaseController::validate(array $data, ...)` 签名不兼容 | PHP 声明期 **Fatal** → definitions 全部接口不可用（一旦通过鉴权） | `7860fab` |
 | N2 | `ValidationResult::getInfo()` 不存在（正确为 `getInfos()`） | `/validate` 端点 500 | `7860fab` |
 | N3 | `transformDefinitionToArray()` 对 string 日期调用 `format('c')` | 所有 definitions 响应 500 | `7860fab` |
+| N4 | **`claim()` 授权 fail-open**：守卫 `!empty(users) && !empty(groups)` 要求两类候选**都**非空才拦截 | 仅有候选用户或仅有候选组时守卫被跳过 → 同租户任意登录用户可**认领/审批**该任务（RED 阶段实测越权返回 200 并真实改写 `assignee`） | `4b5f0cc` |
+| N5 | `checkTaskAccess()` 算出的 `$canAccess` 是**死代码**，从未被使用 | 未认领且仅设候选组的任务任何人可访问 | `4b5f0cc` |
+| N6 | `addTaskHistory(string $userId)` 与 `userId()` 返回 `int` 冲突 | 所有**成功**的任务变更动作原为 500（失败路径反而正常） | `4b5f0cc` |
+| N7 | `AbstractServiceProvider::singleton()` 绑定闭包形参无类型 | `make()` 抛 `InvalidArgumentException: method param miss:app` → 所有走该基类的 provider 都不可用 | `4392b0f` |
+| N8 | 迁移 5 调用 `optimizeWorkflowEventLogsIndexes()`，实际方法名多一个 `s` | 原样执行报 undefined method；且 `createPartialIndexes()` 用的 `CREATE INDEX ... WHERE` MySQL 8 不支持 | `f3de7b0` |
+| N9 | 迁移 3 给 3 张表硬写字符串主键，而主键是 `int unsigned` 自增 | `STRICT_TRANS_TABLES` 下必然 1366 失败 | `f3de7b0` |
 
 **评审发现但未修（明确遗留）**：
 
 | # | 缺陷 | 风险 | 建议 |
 |---|---|---|---|
-| R1 | `WorkflowTaskController:166/468/782` 三处 `$request->userGroups` 属性访问未改；`app/Request` 无该方法 | `claim()` 守卫条件 `!empty(users) && !empty(groups)` 在仅有候选组时被跳过 → **本租户内任意登录用户可认领组限定任务**（fail-open） | 新增 `Request::userGroups()` 数据源后改方法调用；守卫改为「候选用户与候选组都为空才放行」 |
+| ~~R1~~ | ~~`$request->userGroups` 属性访问 + `claim()` fail-open~~ ✅ **已修复** `4b5f0cc` | 新增 `Request::userGroups()`（租户隔离取角色 slug，实例级缓存，异常失败安全）+ 守卫改 `\|\|` + `checkTaskAccess()` 按三条语义重写 + `addTaskHistory` 放宽为 `int\|string` | — |
 | R2 | 生产密钥校验发生在 `JwtService` 惰性构造，非启动期 | 生产表现为「进程正常启动、鉴权请求失败」，运维易误判 | 把校验前移到 `app/provider.php` 或 `AppService::boot()` |
 | R3 | `.env.example` 注释中的 ASCII `)` 会让 `parse_ini_file` 整份返回 false | 已在本轮修正；建议写入文档维护约定 | 在 `AGENTS.md` 文档维护节加一条 |
 | R4 | `admin` 4 控制器与 workflow 其余 3 控制器的租户行为无测试覆盖 | 改动无回归保护 | 补 admin 端点测试 |
+| R5 | **工作流外键仅 2/10**：`workflow_tasks.instance_id`、`workflow_event_logs.instance_id/task_id` 为 `varchar(50)`；`created_by`/`assignee`/`user_id` 为 `bigint`(signed)，与 `int unsigned` 主键不匹配 | 8 条外键被跳过 → 无 DB 级引用完整性，可能产生孤儿行 | 先判定 `instance_id` 语义（若设计上存引擎侧字符串实例号，应**去掉该外键**而非改类型），其余改 `int unsigned` |
+| R6 | `migrations` 表**无 `batch` 列**，无参 `migrate:rollback` 只回滚「版本号最大的一个」 | 后续开发执行无参 rollback 会先回滚 `20251220000005`（本轮实测已发生一次误回滚，已恢复并核验：列/索引/数据一致性均完好） | 补 `batch` 列，或把本组迁移重编号到当前最大版本之后 |
+| R7 | `AppService::boot()` 每请求 `scandir(addons/apps)` | 本机 bind-mount 3~5ms/请求，原生 Linux 预计微秒级 | 按进程缓存 discovered 结果 |
+| R8 | `addon\` 命名空间**仍无** PSR-4 映射（A5 只加了 `plugin\`） | `addons/apps/_template/Application.php` 声明 `namespace addon\template` 但目录是 `_template` → `class_exists` 恒 false | 单独立项修正命名空间与目录约定 |
+| R9 | `workflow_definitions` **无独立 `edges` 列**，连线由 `nodes_config` JSON 承载 | 与设计文档若假定独立 edges 表/列则不符 | 核对设计后统一口径 |
 
 ---
 

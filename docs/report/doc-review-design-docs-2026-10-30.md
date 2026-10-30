@@ -176,6 +176,7 @@ $tenantId = $request->tenantId();
 | **隔离模式** | 3 种 | 1 种 | ✅ 更灵活 |
 
 实际实现：27 个迁移全部操作同一 schema，无任何按租户建库/切库 DDL 或配置。
+（阶段 A 后迁移总数为 **31**，新增的 4 个为工作流表，同样全部操作同一 schema —— 结论不变。）
 
 `[证据: grep -rl 'tenant_id' database/migrations | wc -l → 16，全部为同库列级隔离；find database/migrations -name '*.php' | wc -l → 27，无建库语句]`
 

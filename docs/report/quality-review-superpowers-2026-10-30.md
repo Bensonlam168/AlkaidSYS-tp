@@ -8,6 +8,8 @@
 | 审查范围 | 后端 335 个 PHP / 57,376 行；`plugins/` 4,630 个跟踪文件；`frontend/`（见 C-2）；`design/` 73 份；`docs/` 111 份（不含归档） |
 | 核查方式 | 四路独立只读审计 + 主审对**每一条结论**逐项复核（复核记录见第十章） |
 | 最终结论 | **With fixes（修复后可合并）** —— Critical 共 **7 个**，**已修复 5 个（C-2/C-4/C-5/C-6/C-7，均经独立复验）**，**剩余 2 个（C-1 注入、C-3 vendor 入库）** |
+| 阶段 A 追加修复 | `4b5f0cc` R1 工作流任务授权 fail-open（含 2 个新发现缺陷 N4/N5 + 类型缺陷 N6）、`4392b0f` A5 插件 autoload 与 Provider 接线、`1b01842` A7 前端权限路由、`f3de7b0` A4 工作流 5 表纳入主链 |
+| 阶段 A 测试基线 | `Tests: 476, Errors: 22, Failures: 19, Risky: 4`（失败集去重 **41 项 < 42 基线**，零新增；详见 I-3 补记） |
 
 > **计数口径说明**：所有依赖 git 状态的数字以审查基线 `f119d98` 为准。本报告自身的提交会使"从 develop 可达提交数"与"跟踪文件数"小幅递增，属正常增量，不影响结论。
 
@@ -637,6 +639,24 @@ if (isset($data['tenant_id']) && (int)$data['tenant_id'] !== $tenantId) {
 
 **修复方向**：每个测试类 `tearDown()` 清理 `bind`（`FormApiTest::setUp` 已有此 hack，应抽到基类）；`ThinkPHPTestCase` 改为每用例新建 App 或启用 `processIsolation`；`Request` 上下文改为容器注入而非属性缓存。
 
+> **阶段 A 补记（2026-10-30，测试基线已推进，但本节结论未失效）**
+>
+> | 指标 | 报告原值 | 阶段 A 后 |
+> |---|---|---|
+> | 用例总数 | 424 | **476**（+52，新增全部与本次修复配套） |
+> | Errors / Failures | 22 / 20~21（合计 42~43） | **22 / 19**（去重失败集 **41 项 < 42**） |
+> | Risky | 4 | 4（不变） |
+>
+> 新增用例：C-5/C-6/C-7 22 个、R1 7 个、A5 8 个、A7 2 个、A4 5 个，共 44 个；
+> 另有 A7 顺带补的 2 个。**新增用例无一落入失败清单**，且全量为干净跑（无并发代理）。
+>
+> 三条根因**仍然成立**：失败集与报告所列完全一致，污染机制未修（T-064 测试隔离仍在待办）。
+> 唯一变化：`AuthRegisterMultiTenantTest::testRegisterCreatesTenantScopedUserRoleAndPermissions`
+> 这一项 flaky 在本轮转为通过，故失败集从 42 降到 41。
+>
+> 结论更新为：**测试套件的「红灯」仍不可信，「绿灯」的可信度已因 44 个针对性新用例而在
+> 高危路径上有所改善，但隔离机制本身未修，跨测试污染仍是系统性风险。**
+
 #### I-4 工作流存在两套实现，且插件侧 41% 文件加载即 Fatal ⚠️ **本节已于 2026-10-30 修正（原结论不准确）**
 
 > **修正说明**：本节原写「主应用未加载插件」。经复核，准确表述是：
@@ -670,9 +690,19 @@ if (isset($data['tenant_id']) && (int)$data['tenant_id'] !== $tenantId) {
 4. 5 个迁移位于 plugins/workflow-engine/migrations/，
    而 `php think migrate:run` 只扫 database/migrations/ → 表从未创建
    SHOW TABLES LIKE '%workflow%' → 0 行
+   ✅ **阶段 A 已修**（`f3de7b0`）：4 个迁移纳入主链、5 张表建成、
+      `migrate:status` 31 up / 0 MISSING、run→rollback→run 闭环通过。
+      **外键仅成功 2/10**（其余 8 条类型不匹配被跳过，见遗留 R5）。
 
 5. 4 个 Repository（ProcessDefine/ProcessInstance/ProcessTask/WorkflowEvent）
    全部为 `// TODO: 实现数据访问逻辑; return null;`
+   ⚠️ **表建好后此条更刺眼**：数据落地能力仍是 0，形成「表建好了没人用」。
+
+6. **工作流任务授权曾有两个 fail-open 缺陷**（阶段 A 新发现并修复，`4b5f0cc`）：
+   - `claim()` 守卫 `!empty(users) && !empty(groups)` 要求两类候选**都**非空，
+     仅有候选用户/候选组时守卫被跳过 → 同租户任意登录用户可认领或审批
+   - `checkTaskAccess()` 算出的 `$canAccess` 是**死代码**，从未被引用
+   两者均已修复并补 7 个测试（`WorkflowTaskClaimAuthorizationTest`）。
 ```
 
 `[证据: 见 design-implementation-reconstruction-2026-10-30.md §零/C-5 与 §五 P0-4/P0-5/P0-6]`
