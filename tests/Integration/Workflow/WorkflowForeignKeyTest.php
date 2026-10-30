@@ -110,10 +110,16 @@ class WorkflowForeignKeyTest extends ThinkPHPTestCase
         }
 
         $this->assertSame([], $missing, '缺少外键（请执行 `php think migrate:run`）：' . implode(', ', $missing));
-        $this->assertCount(
-            13,
-            $existing,
-            'workflow% 表上的外键总数应为 13 条（原有 2 条 + R5 补建 11 条），实际：'
+
+        // 刻意用「不少于」而不是「等于」：
+        // 本用例的契约是「R5 这 13 条外键必须存在」，而不是「全表外键总数恰好 13」。
+        // 曾经写成 assertCount(13) 是错的 —— R10 合法地补了 5 条 tenant_id 外键后，
+        // 这个正确的改动反而让测试失败，把「表级集合快照」当成了「本次迁移的产物」。
+        // 精确性由上面逐条 EXPECTED_FOREIGN_KEYS 的存在性断言保证。
+        $this->assertGreaterThanOrEqual(
+            count(self::EXPECTED_FOREIGN_KEYS),
+            count($existing),
+            'workflow% 表上的外键数不应少于 ' . count(self::EXPECTED_FOREIGN_KEYS) . ' 条，实际：'
             . implode(', ', array_keys($existing))
         );
     }
