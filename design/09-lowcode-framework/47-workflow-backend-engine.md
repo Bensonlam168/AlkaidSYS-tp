@@ -1175,8 +1175,13 @@ class ExpressionEngine
   （`instance_id`/`task_id`）而被 MySQL 拒绝。类型对齐分两次迁移完成：
   `20251222000001`（11 个外键列）与 `20251223000001`（5 个 `tenant_id`）。
   在此之前，18 条外键中只有 2 条存在。
-- ⚠️ **仍未对齐的长尾**：`alkaid_plugin_installations.tenant_id`、`lowcode_forms.tenant_id`
-  仍是 `bigint unsigned`，与 `tenants.id` 不匹配，仍无租户外键（不属工作流域）。
+- ⚠️ **相邻域的两张表**（不属工作流域，但同为 `tenant_id`，易被一起误判）：
+  - `alkaid_plugin_installations.tenant_id`：`bigint unsigned` + `DEFAULT 0`，注释写明「0 = 系统模板」，
+    `PluginManager::enable/disable/uninstall` 的 `$tenantId` 默认值也是 0 ——
+    **属「系统模板空间」，本就不该有租户外键**；全库「有默认值的 213 张表零外键」是零例外的实测结论。
+  - `lowcode_forms.tenant_id`：`bigint unsigned NOT NULL` 无默认值，按「无默认值 = 真实租户引用」
+    规则本应带外键，但低代码 CLI 默认写 0，归属待决。详见
+    [`04-multi-tenant-design.md` §0](../../design/01-architecture-design/04-multi-tenant-design.md) 的两条语义。
 
 ### 7.2 核心表设计（SQL 设计稿）
 

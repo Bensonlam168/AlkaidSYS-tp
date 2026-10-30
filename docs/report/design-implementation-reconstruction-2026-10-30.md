@@ -399,8 +399,8 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | R7 | `AppService::boot()` 每请求 `scandir(addons/apps)` | 本机 bind-mount 3~5ms/请求，原生 Linux 预计微秒级 | 按进程缓存 discovered 结果 |
 | R8 | `addon\` 命名空间**仍无** PSR-4 映射（A5 只加了 `plugin\`） | `addons/apps/_template/Application.php` 声明 `namespace addon\template` 但目录是 `_template` → `class_exists` 恒 false | 单独立项修正命名空间与目录约定 |
 | R9 | `workflow_definitions` **无独立 `edges` 列**，连线由 `nodes_config` JSON 承载 | 与设计文档若假定独立 edges 表/列则不符 | 核对设计后统一口径 |
-| ~~R10~~ | ~~**5 张工作流表的 `tenant_id` 仍为 `bigint`**~~ ✅ **已修复** `c7b8cee` | 5 列改 `int unsigned`，补 5 条 `fk_{表}_tenant_id`（CASCADE/CASCADE）；指向 `tenants` 的外键 5 → **10 条**，workflow 外键总数 18。运行时验证：插入 `tenant_id=999999` 被 1452 拒绝。**同类长尾未清**：`alkaid_plugin_installations`、`lowcode_forms` 的 `tenant_id` 仍是 `bigint unsigned`，仍无租户外键 → 见 R11 | — |
-| R11 | **租户外键长尾**：`alkaid_plugin_installations.tenant_id`、`lowcode_forms.tenant_id` 为 `bigint unsigned`，与 `tenants.id`(`int unsigned`) 不匹配 | 这 2 张表仍无 `tenant_id → tenants.id` 外键；逐表打补丁（R5 改 11 列、R10 改 5 列、再改 2 列）成本高且易漏 | 做一次「全库 tenant_id 审计 + 一次性收敛」，并把类型约束写进 `check-migrations.php` |
+| ~~R10~~ | ~~**5 张工作流表的 `tenant_id` 仍为 `bigint`**~~ ✅ **已修复** `c7b8cee` | 5 列改 `int unsigned`，补 5 条 `fk_{表}_tenant_id`（CASCADE/CASCADE）；指向 `tenants` 的外键 5 → **10 条**，workflow 外键总数 18。运行时验证：插入 `tenant_id=999999` 被 1452 拒绝。残留在 `alkaid_plugin_installations`/`lowcode_forms` 的部分见 R11（原判断有误，已更正） | — |
+| ~~R11~~ | ~~**租户外键长尾**~~ ⚠️ **原判断有误，已更正**（2026-10-31） | **`alkaid_plugin_installations` 本就不该有租户外键**：它的 `tenant_id` 是 `DEFAULT 0`，迁移注释写明「0 = 系统模板」，`PluginManager::enable/disable/uninstall` 的 `$tenantId` 默认值也是 0。全库审计实测「有默认值的 213 张表零外键」——它属于系统模板空间组，加外键会拒绝 0 值写入。<br>**`lowcode_forms` 才是唯一真正的异常**：`int unsigned NOT NULL` 无默认值（按规则应带外键），但 CLI `CreateFormCommand` 默认写 0，归属待决 | 已把两条语义写进 `design/01-architecture-design/04-multi-tenant-design.md` §0，并在 `check-migrations.php` 落成检查 D（类型声明）与检查 E（库内一致性）。`lowcode_forms` 以 `KNOWN_TENANT_FK_EXCEPTIONS` 基线放行，待决后移除 |
 
 ---
 
