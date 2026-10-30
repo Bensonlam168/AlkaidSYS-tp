@@ -4,7 +4,33 @@
 > 与最终实现结构不同。**请勿直接照抄**，实际命名映射见
 > [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3。
 
-> 🔶 **实现状态**：**部分实现** —— 已实现：共享库 + `tenant_id`/`site_id` 列级隔离（16/8 个迁移）。未实现：模式 2「独立数据库」与模式 3「混合模式」（27 个迁移全在同一 schema，无建库/切库 DDL）。
+> 🔶 **实现状态**：**部分实现** —— 已实现：共享库 + `tenant_id`/`site_id` 列级隔离。未实现：模式 2「独立数据库」与模式 3「混合模式」（全部迁移在同一 schema，无建库/切库 DDL）。
+
+## 0. tenant_id 的两条语义（落地规则，编码前必读）
+
+> 本节由全库审计（224 张含 `tenant_id` 的表）反推得出，**不是设计愿景，是当前实现的事实标准**。
+> 检查脚本 `scripts/check-migrations.php` 的检查 D / E 即按本节规则守卫。
+
+| 语义 | 列定义 | 默认值 | 租户外键 | 典型表 |
+|---|---|---|---|---|
+| **真实租户引用** | `int unsigned NOT NULL` | **无默认值** | **必须有** `fk_{表}_tenant_id → tenants.id` | `users`、`roles`、`depts`、`menus`、`sites`、`workflow_*` 5 张 |
+| **系统模板空间** | `int unsigned` | `DEFAULT 0` | **不得有**（`tenants` 表没有 `id=0`，加了会拒绝 0 值写入） | `lowcode_collections`/`fields`/`relationships`/`schema_versions`、`alkaid_plugin_installations`、`event_*`、`hook_*`、动态业务表 |
+
+实测依据（可复现）：
+
+```
+tenant_id 无默认值 → 11 张，其中 10 张有租户外键
+tenant_id 有默认值 → 213 张，其中 0 张有租户外键
+```
+
+判断口诀：**这张表的某一行能不能"不属于任何租户"？** 能（平台级/模板）→ 走第二行；不能 → 走第一行。
+
+容易混淆的几点：
+
+- **`tenant_id = 0` 不是一个租户**。`tenants` 表 id 从 1 开始，0 永远不可能满足外键。
+- **`site_id = 0` 与 `tenant_id = 0` 不同构**。`site_id = 0` 是"默认站点"这个真实分区值，会被正常用于过滤（`where('site_id', 0)`）；`tenant_id = 0` 则一半是模板空间、一半是"关闭租户过滤"的开关（`$tenantId > 0` 时才拼 `where`）。
+- **HTTP 请求链路上的 `tenantId()` 恒 ≥ 1**（`Request::tenantId()` 默认回退 1，且 `TenantIdentify` 对 `X-Tenant-ID ≤ 0` 直接 403）。0 只可能来自 CLI 与内部调用。
+- **当前唯一违反规则一的表是 `lowcode_forms`**（无默认值却无外键）。它的归属待决：加 `DEFAULT 0` 归入模板组，还是去掉 CLI 的 0 默认为真实租户引用。检查 E 暂时以 INFO 放行。
 
 ## 📋 文档信息
 
@@ -13,7 +39,7 @@
 | **文档名称** | AlkaidSYS 多租户架构设计 |
 | **文档版本** | v1.0 |
 | **创建日期** | 2025-01-19 |
-| **最后更新** | 2025-01-19 |
+| **最后更新** | 2026-10-31（新增 §0「tenant_id 的两条语义」；修正表名 `alkaid_tenants`→`tenants`、中间件启用状态） |
 ## 🔗 关联设计文档
 
 - [术语表（Glossary）](../00-core-planning/99-GLOSSARY.md)
@@ -107,7 +133,7 @@ graph TD
 
 ```sql
 -- 租户表
-CREATE TABLE `alkaid_tenants` (
+CREATE TABLE `tenants` (
     `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY COMMENT '租户ID',
     `name` VARCHAR(100) NOT NULL COMMENT '租户名称',
     `code` VARCHAR(50) UNIQUE NOT NULL COMMENT '租户代码',
@@ -140,7 +166,7 @@ CREATE TABLE `alkaid_users` (
     INDEX `idx_tenant_id` (`tenant_id`, `id`),
     INDEX `idx_tenant_email` (`tenant_id`, `email`),
     UNIQUE KEY `uk_tenant_username` (`tenant_id`, `username`),
-    FOREIGN KEY (`tenant_id`) REFERENCES `alkaid_tenants`(`id`) ON DELETE CASCADE
+    FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
 -- 订单表（带 tenant_id，满足分区要求：主键包含分区列）
@@ -157,7 +183,7 @@ CREATE TABLE `alkaid_orders` (
     INDEX `idx_tenant_id` (`tenant_id`, `id`),
     INDEX `idx_tenant_user` (`tenant_id`, `user_id`),
     UNIQUE KEY `uk_tenant_order_no` (`tenant_id`, `order_no`),
-    FOREIGN KEY (`tenant_id`) REFERENCES `alkaid_tenants`(`id`) ON DELETE CASCADE
+    FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='订单表';
 ```
 
@@ -736,7 +762,7 @@ class Request extends BaseRequest
 ### 1. 字段定义（Field definitions）
 
 - `tenant_id` BIGINT UNSIGNED
-  - 语义：租户 ID，> 0 表示有效租户；
+  - 语义：租户 ID，> 0 表示有效租户；**但低代码/插件/遥测域把 0 用作「系统模板空间」，这类表不建租户外键**（详见本文 §0「tenant_id 的两条语义」）。
   - 用途：所有需要按租户隔离的数据表必须包含该字段，详见《多租户 / 多站点数据建模规范》。
 - `site_id` BIGINT UNSIGNED
   - 语义：站点 ID，>= 0；`0` 表示“无站点 / 默认站点”，> 0 表示具体站点；
@@ -787,7 +813,7 @@ AlkaidSYS-tp 中多租户上下文的唯一权威来源是 **HTTP 请求 + 中�
 4. `Auth`：验证 JWT，设置最终的 `user_id` / `tenant_id` / `site_id`；
 5. `Permission`：基于用户与多租户上下文进行权限判断。
 
-> 说明：当前代码中 `TenantIdentify` / `SiteIdentify` 在 `app/middleware.php` 中暂时注释掉，仅 `Trace` 与 `Auth`/`Permission` 实际生效。T1-MW-ENABLE 任务会按本节约定重新启用并调整顺序。
+> 说明：截至最后更新，`TenantIdentify` / `SiteIdentify` 已在 `app/middleware.php` 的全局中间件列表中**启用**（审计实测），不再处于注释状态。
 
 各中间件的职责边界如下：
 
