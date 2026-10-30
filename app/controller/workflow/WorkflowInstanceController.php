@@ -161,7 +161,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }
@@ -252,7 +252,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }
@@ -302,7 +302,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }
@@ -348,7 +348,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }
@@ -394,7 +394,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }
@@ -427,7 +427,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }
@@ -466,7 +466,7 @@ class WorkflowInstanceController extends ApiController
 
         // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
         if ($tenantError !== null) {
             return $tenantError;
         }

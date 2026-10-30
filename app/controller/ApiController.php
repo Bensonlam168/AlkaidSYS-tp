@@ -199,17 +199,22 @@ class ApiController extends BaseController
      *
      * @param mixed $recordTenantId 记录的租户ID（可空，缺失时按 0 处理）| Record tenant ID
      * @param int $currentTenantId 当前请求租户ID（正常情况下恒 >= 1）| Current tenant ID
-     * @param string|null $message 错误消息（null = 使用默认中英双语文案）| Error message
+     * @param string|null $message 错误消息（null = 拒绝分支内惰性翻译 `workflow.*` 默认文案）| Error message
      * @return Response|null null = 归属正确；否则为 403 响应 | null = owned, otherwise 403
      */
     protected function assertTenantOwnership(mixed $recordTenantId, int $currentTenantId, ?string $message = null): ?Response
     {
         // 前置守卫（缺陷 R13 边界）：当前租户为 0 / 负数时「归属」这一概念不成立。
-        // 触发路径：应用密钥签发的 tenant_id = 0 的 token（TenantIdentify 的 <= 0 拒绝只作用于
-        // 请求头，token 侧不拦）→ Request::tenantId() 返回 0 → 下面的相等比较会把
-        // `(int) null === 0` 误判为「归属正确」，使缺失归属的记录继续 fail-open。
+        // 触发路径：`Request::tenantId()` 返回 0（例如将来某条新链路上游漏判，又把 0 号上下文
+        // 注入进请求）→ 下面的相等比较会把 `(int) null === 0` 误判为「归属正确」，
+        // 使缺失归属的记录继续 fail-open。
+        // 注意（缺陷 R19）：`tenant_id <= 0` / `user_id <= 0` 的令牌**已在校验侧**
+        // （`JwtService::validateAccessToken()`）被拒，由 Auth 中间件统一返回 401，
+        // 请求根本到不了控制器。因此本守卫不是主防线，而是**纵深防御**（第二道闸），
+        // 用来兜住「将来有别的路径把非正数租户上下文注入 Request」的情况。
         if ($currentTenantId <= 0) {
-            return $this->forbidden($message ?? '租户上下文无效 | invalid tenant context');
+            // 惰性求值（R22）：只有真正进入拒绝分支时才调用 trans()，归属校验通过不产生翻译开销
+            return $this->forbidden($message ?? $this->langService->trans('workflow.invalid_tenant_context'));
         }
 
         // 严格整数比较：null / 空字符串 / 缺失键统一折算为 0，故缺失归属必然越权
@@ -217,14 +222,15 @@ class ApiController extends BaseController
             return null;
         }
 
-        // 默认中英双语文案**仅在调用方不传 $message 时**才生效，不能理解为「已经兜底」：
-        // 现有 24 个调用点传入的都是 $this->langService->trans('workflow.access_denied')，
-        // 而该 key 目前并没有落在语言包里（只有 error.access_denied），
-        // LanguageService::trans() 查不到时会**回落为原始 key 字符串**，
-        // 即响应 message 可能就是 'workflow.access_denied' 本身。
-        // 唯一不传 $message 的调用点是 WorkflowTaskController::pending() 的 array_filter
-        // （那里只用返回值判断归属、丢弃 Response），才会用到下面这句默认文案。
-        return $this->forbidden($message ?? '资源不属于当前租户 | resource does not belong to current tenant');
+        // 默认文案（语言包已补齐，R22）：默认文案走 `workflow.*`，且**只在进入拒绝分支时才翻译**
+        // （惰性求值）。历史实现里调用点传入的都是提前求值的
+        // $this->langService->trans('workflow.access_denied')，即便归属校验通过也会白跑一次翻译
+        // （含一次语言包文件 include）。R22 起调用点统一省略该实参，由本方法按当前语言解析；
+        // 'workflow.access_denied' 现由 app/lang/{zh-cn,en-us}/workflow.php 提供，不再回落为原始 key。
+        //
+        // 调用点数量（评审 M2 核对）：共 **25** 处 ——
+        // 定义 7 / 实例 7 / 任务 5 / 触发器 6（原注释写的 24 是漏数）。
+        return $this->forbidden($message ?? $this->langService->trans('workflow.access_denied'));
     }
 
     /**

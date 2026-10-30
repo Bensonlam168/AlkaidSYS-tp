@@ -9,11 +9,13 @@ app/lang/
 ├── zh-cn/          # 中文（基准语言）
 │   ├── auth.php    # 认证相关
 │   ├── common.php  # 通用文本
-│   └── error.php   # 错误消息
+│   ├── error.php   # 错误消息
+│   └── workflow.php # 工作流模块消息（R22 起，工作流控制器 workflow.* 文案）
 ├── en-us/          # 英文
 │   ├── auth.php
 │   ├── common.php
-│   └── error.php
+│   ├── error.php
+│   └── workflow.php
 └── {locale}/       # 其他语言
 ```
 
