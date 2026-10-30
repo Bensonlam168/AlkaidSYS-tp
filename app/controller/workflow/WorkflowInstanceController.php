@@ -506,7 +506,7 @@ class WorkflowInstanceController extends ApiController
      * @param string $eventType
      * @param string|null $nodeId
      * @param string $description
-     * @param string $userId
+     * @param int|string $userId 操作用户ID（来自 JWT 时为 int，系统/未认证操作时为 'system'）
      * @return void
      */
     protected function addHistoryEntry(
@@ -514,7 +514,7 @@ class WorkflowInstanceController extends ApiController
         string $eventType,
         ?string $nodeId,
         string $description,
-        string $userId
+        int|string $userId
     ): void {
         if (!isset(self::$history[$instanceId])) {
             self::$history[$instanceId] = [];
