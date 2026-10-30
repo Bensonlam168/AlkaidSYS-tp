@@ -7,6 +7,9 @@
 /frontend/.cache/
 .env
 .env.*
+# 例外：以下 env 模板文件必须入库（不含真实密钥，仅占位符）
+!.env.example
+!.env.production.example
 /.idea/
 /.vscode/
 *.log
