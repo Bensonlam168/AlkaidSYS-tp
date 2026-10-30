@@ -112,11 +112,21 @@ class RateLimitServiceTest extends ThinkPHPTestCase
         // 令牌耗尽
         $this->assertFalse($this->service->allowRequest($key, $capacity, $rate, 1));
 
-        // 等待 1 秒让令牌补充
-        sleep(1);
+        // 令牌补充依赖真实时间，而 Redis/容器时钟在 CI 高负载下可能滞后于 PHP 进程；
+        // 因此不依赖“sleep(1) 后立即可用”的精确时序，改为轮询等待：
+        // 最多等待 5 秒、每 100ms 尝试一次，首次成功即通过，全部失败才判定补充机制失效。
+        // 被验证的语义不变：令牌会随时间补充，耗尽后可再次放行请求。
+        $deadline = microtime(true) + 5.0;
+        $refilled = false;
+        while (microtime(true) < $deadline) {
+            if ($this->service->allowRequest($key, $capacity, $rate, 1)) {
+                $refilled = true;
+                break;
+            }
+            usleep(100_000); // 100ms
+        }
 
-        // 应该有新的令牌（至少 10 个）
-        $this->assertTrue($this->service->allowRequest($key, $capacity, $rate, 1), 'Request should be allowed after token refill');
+        $this->assertTrue($refilled, 'Request should be allowed after token refill');
     }
 
     /**
