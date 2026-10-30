@@ -99,7 +99,9 @@ abstract class AbstractServiceProvider implements ServiceProviderInterface
     protected function singleton(App $app, string $abstract, mixed $concrete): void
     {
         if ($concrete instanceof \Closure) {
-            $app->bind($abstract, function ($app) use ($concrete) {
+            // 闭包形参必须声明 App 类型：ThinkPHP 的 Container::bindParams() 依赖类型
+            // 反射补参，无类型形参在 make() 时会抛 InvalidArgumentException: method param miss:app
+            $app->bind($abstract, function (App $app) use ($concrete) {
                 static $instance = null;
                 if ($instance === null) {
                     $instance = $concrete($app);

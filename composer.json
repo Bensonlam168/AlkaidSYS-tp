@@ -53,7 +53,8 @@
             "app\\": "app",
             "Domain\\": "domain",
             "Infrastructure\\": "infrastructure",
-            "Alkaid\\Workflow\\Engine\\": "plugins/workflow-engine/src/"
+            "Alkaid\\Workflow\\Engine\\": "plugins/workflow-engine/src/",
+            "plugin\\": "addons/plugins/"
         },
         "psr-0": {
             "": "extend/"
