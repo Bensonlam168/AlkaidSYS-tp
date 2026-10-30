@@ -5,14 +5,19 @@ declare(strict_types=1);
 namespace Tests\Feature\Workflow;
 
 use Alkaid\Workflow\Engine\Definition\WorkflowBuilder;
+use app\constant\ErrorCode;
+use app\controller\ApiController;
 use app\controller\workflow\WorkflowDefinitionController;
 use app\controller\workflow\WorkflowInstanceController;
 use app\controller\workflow\WorkflowTaskController;
 use app\controller\workflow\WorkflowTriggerController;
+use Firebase\JWT\JWT;
+use Infrastructure\Auth\JwtService;
 use Infrastructure\Permission\Service\PermissionService;
 use Tests\Helpers\AuthHelper;
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
+use think\Response;
 
 /**
  * 工作流「租户归属缺失即放行」收敛测试（缺陷 R13）
@@ -29,8 +34,11 @@ use think\facade\Db;
  *   1. tenant_id 为 null 的记录，对**任何**租户的详情/动作端点都必须拒绝（403/404，绝不能 200）；
  *   2. 同租户记录仍然 200（防止把校验改死）；
  *   3. 越权调用不得产生副作用（定义未被删/归档、任务未被认领、实例未被取消、触发器未被禁用）；
- *   4. 当前租户上下文为非正数（伪造 tenant_id = 0 的 token）时，**任何**记录都不可访问
+ *   4. 当前租户上下文为非正数（`tenant_id = 0` 的存量 token）时，**任何**记录都不可访问
  *      （否则 `(int) null === 0` 会把「缺失归属」误判为「归属正确」，见用例 14）。
+ *      注意（缺陷 R19 之后）：这类 token 已在校验侧（`JwtService::validateAccessToken()`）被拒，
+ *      由 Auth 中间件返回 401/2001，根本到不了控制器；用例 14 因此断言「鉴权层拒绝」，
+ *      控制器内的 `<= 0` 守卫保留为纵深防御，其覆盖率由**用例 15**（反射直接调用 helper）提供。
  *
  * 注意：
  *   - 工作流数据存放在控制器进程内 `protected static array`（demo 实现），本测试用反射播种，
@@ -516,17 +524,26 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     // =====================================================================
 
     /**
-     * 用例 14（RED）：当前租户上下文为 0 时，任何工作流记录都不得可访问
+     * 用例 14：当前租户上下文为 0 的令牌必须被拒绝，任何工作流记录都不可访问
      *
-     * 触发路径（真实可复现）：用应用密钥签发一个 `tenant_id = 0` 的 access token，且不带
-     * `X-Tenant-ID` 头 —— `TenantIdentify` 的 `<= 0` 拒绝只作用于**请求头**，token 侧不拦，
-     * `Auth` 中间件会把 0 写进 Request，于是 `Request::tenantId()` 返回 0。
+     * 攻击/故障前提（真实可复现）：客户端持有一个 `tenant_id = 0` 的 access token，且不带
+     * `X-Tenant-ID` 头。此时若鉴权层放行，0 会被写进 Request，`Request::tenantId()` 返回 0，
+     * 控制器里 `(int) null === 0` 就会把「缺失租户归属」的记录误判为「归属正确」→ fail-open。
      *
-     * 此时若归属判断只写「`(int) $recordTenantId === $currentTenantId`」，则
-     * `(int) null === 0` 会让「缺失租户归属」的记录被误判为「归属正确」→ 仍然 fail-open。
-     * 因此当前租户为非正数时必须一律拒绝：
-     *   - tenant_id = null 的记录 → 403（不能因 `(int) null === 0` 而放行）；
-     *   - tenant_id = 1 的记录 → 同样 403（不允许「只挡 null 记录」的半吊子修法）。
+     * **为什么改成手工签名令牌**（缺陷 R19）：
+     *   R19 修复后 `JwtService::generateAccessToken()` 在**签发侧**就会拒绝 `tenant_id <= 0`
+     *   （抛 INVALID_TENANT_SCOPE），测试里已**无法**用 `AuthHelper::generateTestToken(..., 0)`
+     *   造出这种令牌。而真实威胁恰恰是「**改造之前签发的存量令牌**（仍在有效期内）」以及
+     *   「持有同一密钥的伪造者」——它们都不经过签发侧。
+     *   因此这里用 `JWT::encode()` 直接签名（密钥反射取自 JwtService，见
+     *   {@see self::signZeroTenantAccessToken()}），验证**校验侧兜底存量 token**。
+     *
+     * **断言为何从「403/404 且 body.code === HTTP 状态」改为「401 + 2001」**：
+     *   改造前：令牌能通过鉴权 → 0 号租户上下文进入控制器 → 控制器 `forbidden()` 返回 403；
+     *   改造后：`validateAccessToken()` 直接抛 INVALID_TENANT_SCOPE → Auth 中间件统一转成
+     *   HTTP 401 + 业务码 2001（ErrorCode::UNAUTHORIZED）。
+     *   拦截点前移了（请求根本到不了控制器），这是更强的拦截，断言按实际行为随之更新。
+     *   控制器内的 `tenantId <= 0` 守卫仍保留，作为「万一将来有别的路径注入 0 号上下文」的纵深防御。
      */
     public function testZeroTenantContextIsRejectedForBothOrphanAndOwnedRecords(): void
     {
@@ -539,21 +556,124 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         // 对象形态（Definition）：同样播种一条缺失归属的定义，证明守卫对所有调用形态生效
         $orphanDefinitionId = $this->seedDefinition(null);
 
-        $headers = $this->authHeaders($this->tenant1UserId, 0);
+        // 手工签发 tenant_id = 0 的令牌：签发侧已不可产生此类 token，此处验证校验侧兜底
+        $headers = $this->rawAuthHeaders($this->signZeroTenantAccessToken($this->tenant1UserId));
 
-        $this->assertDenied(
+        $this->assertRejectedByAuthMiddleware(
             $this->httpRequest('GET', 'v1/workflow/tasks/' . $orphanTaskId, [], $headers),
-            '当前租户为 0 时，tenant_id 为 null 的任务必须被拒绝（(int) null === 0 会被误判为归属正确）'
+            '当前租户为 0 的令牌必须被鉴权层拒绝，不能把 0 号租户上下文带进控制器（任务 ' . $orphanTaskId . '）'
         );
 
-        $this->assertDenied(
+        $this->assertRejectedByAuthMiddleware(
             $this->httpRequest('GET', 'v1/workflow/tasks/' . $ownedTaskId, [], $headers),
-            '当前租户为 0 时，tenant_id = 1 的任务必须同样被拒绝（不允许只挡 null 记录的半吊子修法）'
+            '当前租户为 0 的令牌必须被鉴权层拒绝（task ' . $ownedTaskId . ' 属租户 1，亦不得在 0 号上下文下可读）'
         );
 
-        $this->assertDenied(
+        $this->assertRejectedByAuthMiddleware(
             $this->httpRequest('GET', 'v1/workflow/definitions/' . $orphanDefinitionId, [], $headers),
-            '当前租户为 0 时，tenant_id 为 null 的定义必须被拒绝（对象形态调用同样受守卫保护）'
+            '当前租户为 0 的令牌必须被鉴权层拒绝（对象形态的定义 ' . $orphanDefinitionId . ' 同样受保护）'
+        );
+    }
+
+    // =====================================================================
+    // 控制器内的纵深防御守卫（评审 M3）
+    // =====================================================================
+
+    /**
+     * 用例 15：`assertTenantOwnership()` 在「当前租户为非正数」时必须 fail-closed（403）
+     *
+     * **为什么直接调用 helper，而不是走 HTTP**（评审 M3）：
+     *   R19 之后 `tenant_id <= 0` 的令牌已在校验侧被拒（Auth 中间件返回 401），
+     *   请求根本进不了控制器，于是 `$currentTenantId <= 0` 这一分支与语言键
+     *   `workflow.invalid_tenant_context` 变成了**零覆盖**的纵深防御代码：
+     *   就算有人把它删掉，也没有任何用例变红。
+     *   这里改用反射直接调用 protected 的 `assertTenantOwnership()`，绕开鉴权层，
+     *   专门钉住这一道「第二道闸」：将来若被误删，本用例立刻失败。
+     *
+     * 断言四点：
+     *   1. `assertTenantOwnership(1, 0)` 返回的是 403 响应（而非 null = 放行）；
+     *   2. 业务码 `code === 403`；
+     *   3. `assertTenantOwnership(null, 0)`（缺失归属的脏数据）同样被拒绝 —— 守卫被删时
+     *      `(int) null === 0` 会 fail-open 放行，这一条是守卫存在性的硬证据；
+     *   4. message 是 `workflow.invalid_tenant_context` 的**翻译后文案**，不是原始语言键
+     *      （语言包缺失时 `LanguageService` 会回落为 key 本身，这里一并钉住）。
+     */
+    public function testAssertTenantOwnershipRejectsNonPositiveCurrentTenant(): void
+    {
+        $controller = $this->app()->make(WorkflowDefinitionController::class);
+
+        $method = new \ReflectionMethod(ApiController::class, 'assertTenantOwnership');
+        $method->setAccessible(true);
+
+        // 记录归属传 1（本身是合法归属），当前租户传 0：
+        // 只有「当前租户非正数 → fail-closed」这条前置守卫能拒绝它，
+        // 若守卫被删，1 !== 0 会让方法走到 403 access_denied 分支（文案不同）
+        // 或（当记录归属也传 0 时）直接放行，两种情况本用例都会失败。
+        $response = $method->invoke($controller, 1, 0);
+
+        $this->assertInstanceOf(
+            Response::class,
+            $response,
+            '当前租户为 0 时必须返回 403 响应；返回 null 意味着守卫被删、记录被人为放行'
+        );
+
+        $httpCode = $response->getCode();
+        $this->assertSame(
+            403,
+            $httpCode,
+            '当前租户为 0 时必须以 403 拒绝，实际 HTTP 状态：' . $httpCode . '，响应体：' . $response->getContent()
+        );
+
+        $body = json_decode($response->getContent(), true);
+        $this->assertIsArray($body, '响应体不是合法 JSON：' . $response->getContent());
+        $this->assertSame(403, $body['code'] ?? null, '业务码应为 403，实际响应：' . $response->getContent());
+
+        // 同一守卫的「真实危害」形态：记录归属缺失（按 `(int) null === 0` 折算为 0）+ 0 号租户上下文。
+        // 守卫被删时这里 `(int) null === 0` 会被判成「归属正确」并返回 null（fail-open：脏数据被放行），
+        // 因此本断言是守卫存在性的**硬**证据（下面的文案断言只是「拒绝了但拿错文案」的弱证据）。
+        $failOpenResponse = $method->invoke($controller, null, 0);
+
+        $this->assertInstanceOf(
+            Response::class,
+            $failOpenResponse,
+            '缺失租户归属的记录在 0 号租户上下文下也必须被拒绝；返回 null 说明守卫被删、fail-open 复现'
+        );
+        $this->assertSame(
+            403,
+            $failOpenResponse->getCode(),
+            '缺失归属的记录在 0 号租户上下文下应返回 403，实际响应：' . $failOpenResponse->getContent()
+        );
+
+        // 期望文案直接从控制器内部使用的 LanguageService 取，避免与「测试另建服务、语言不同源」的假绿
+        $langRef = new \ReflectionProperty(ApiController::class, 'langService');
+        $langRef->setAccessible(true);
+        $langService = $langRef->getValue($controller);
+        $this->assertInstanceOf(\Infrastructure\I18n\LanguageService::class, $langService);
+
+        $zhMessage = $langService->trans('workflow.invalid_tenant_context', [], 'zh-cn');
+        $enMessage = $langService->trans('workflow.invalid_tenant_context', [], 'en-us');
+
+        // 语言包守卫：缺 key 时 trans() 会回落为原始 key，那样下面的包含断言会变成空断言
+        $this->assertNotSame(
+            'workflow.invalid_tenant_context',
+            $zhMessage,
+            'zh-cn 语言包缺少 workflow.invalid_tenant_context'
+        );
+        $this->assertNotSame(
+            'workflow.invalid_tenant_context',
+            $enMessage,
+            'en-us 语言包缺少 workflow.invalid_tenant_context'
+        );
+
+        $this->assertNotSame(
+            'workflow.invalid_tenant_context',
+            $body['message'] ?? null,
+            '响应 message 不得是原始语言键（语言包未生效），实际响应：' . $response->getContent()
+        );
+        $this->assertContains(
+            $body['message'] ?? null,
+            [$zhMessage, $enMessage],
+            '响应 message 应为 workflow.invalid_tenant_context 的翻译后文案，实际响应：' . $response->getContent()
         );
     }
 
@@ -738,6 +858,101 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
             ),
             'Accept' => 'application/json',
         ];
+    }
+
+    /**
+     * 用已签好的原始令牌构造请求头（用于「签发侧造不出、只能手工签」的非法令牌）
+     */
+    private function rawAuthHeaders(string $token): array
+    {
+        return [
+            'Authorization' => 'Bearer ' . $token,
+            'Accept' => 'application/json',
+        ];
+    }
+
+    /**
+     * 手工签发一个 `tenant_id = 0` 的 access token（绕过签发侧的缺陷 R19 校验）
+     *
+     * 为什么不能用 `AuthHelper::generateTestToken(..., 0)`：
+     *   R19 修复后 `JwtService::generateAccessToken()` 在签发侧就拒绝 `tenant_id <= 0`，
+     *   因此只能绕过它，直接用 firebase/php-jwt 的 `JWT::encode()` 组装 payload，
+     *   模拟「改造之前签发的、仍在有效期内的存量令牌」。
+     *
+     * **密钥怎么拿**：反射读取 `JwtService` 的 protected `$secret` / `$issuer`。
+     *   必须与 `app\middleware\Auth` 内部 `new JwtService()` 用到的完全一致，
+     *   否则令牌会先被签名/iss 校验拦掉，就测不到「校验侧的 tenant_id 兜底」这一层了。
+     *   （不用 `Env::get('JWT_SECRET')` 硬拼：非生产环境密钥为空时会回退到内置开发密钥，
+     *    直接读实例属性才能保证与实际校验用密钥严格一致。）
+     *
+     * @param int $userId 令牌中的用户 ID（合法值，只有租户维度非法）
+     */
+    private function signZeroTenantAccessToken(int $userId): string
+    {
+        $jwtService = new JwtService();
+
+        $secretProperty = new \ReflectionProperty(JwtService::class, 'secret');
+        $secretProperty->setAccessible(true);
+        $secret = (string) $secretProperty->getValue($jwtService);
+
+        $issuerProperty = new \ReflectionProperty(JwtService::class, 'issuer');
+        $issuerProperty->setAccessible(true);
+        $issuer = (string) $issuerProperty->getValue($jwtService);
+
+        $now = time();
+
+        return JWT::encode([
+            'iss'       => $issuer,
+            'iat'       => $now,
+            'nbf'       => $now,
+            'exp'       => $now + 600,
+            'jti'       => bin2hex(random_bytes(8)),
+            'type'      => 'access',
+            'user_id'   => $userId,
+            'tenant_id' => 0, // 关键：非法租户上下文
+            'site_id'   => 0,
+        ], $secret, 'HS256');
+    }
+
+    /**
+     * 断言请求在鉴权层即被拒绝（HTTP 401 + 业务码 2001）
+     *
+     * 用于「令牌本身非法」的场景：请求不应进入控制器，响应体也不得出现被访问资源的 ID
+     * （即不能泄露「记录是否存在」）。
+     *
+     * @param mixed  $response 响应对象
+     * @param string $message  断言消息
+     */
+    private function assertRejectedByAuthMiddleware($response, string $message): void
+    {
+        $httpCode = $response->getCode();
+
+        $this->assertSame(
+            401,
+            $httpCode,
+            $message . '；鉴权层应以 401 拒绝，实际 HTTP 状态：' . $httpCode . '，响应体：' . $response->getContent()
+        );
+
+        $body = json_decode($response->getContent(), true);
+        $this->assertIsArray($body, $message . '；响应体不是合法 JSON：' . $response->getContent());
+        $this->assertSame(
+            ErrorCode::UNAUTHORIZED,
+            $body['code'] ?? null,
+            $message . '；应返回认证失败业务码 2001，实际响应：' . $response->getContent()
+        );
+
+        // 评审 M6：先断言 data 键存在，再断言其值为 null。
+        // 原写法 `assertNull($body['data'] ?? null)` 在 data 键**整个缺失**时也会通过，
+        // 无法区分「显式返回 data: null」与「响应结构漏了 data 字段」。
+        $this->assertArrayHasKey(
+            'data',
+            $body,
+            $message . '；拒绝响应必须显式包含 data 字段（null），实际响应：' . $response->getContent()
+        );
+        $this->assertNull(
+            $body['data'],
+            $message . '；拒绝响应不应携带任何业务数据（避免泄露记录是否存在），实际响应：' . $response->getContent()
+        );
     }
 
     /**

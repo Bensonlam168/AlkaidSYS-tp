@@ -94,6 +94,15 @@ class JwtService
     public const ERR_INVALID_ISSUER      = 'INVALID_ISSUER';
     public const ERR_INVALID_TOKEN_TYPE  = 'INVALID_TOKEN_TYPE';
     public const ERR_TOKEN_REVOKED       = 'TOKEN_REVOKED';
+    /**
+     * 租户/用户上下文无效（缺陷 R19）
+     *
+     * 签发侧与校验侧共用：user_id <= 0 或 tenant_id <= 0 的令牌一律拒绝
+     * （评审 M1 之后两侧校验维度一致：签发侧、校验侧都判 user_id 与 tenant_id）。
+     * 注意：该文案不得包含 expired / revoked / decode 等词，
+     * 否则 app\middleware\Auth 的失败原因归类会被误导。
+     */
+    public const ERR_INVALID_TENANT_SCOPE = 'INVALID_TENANT_SCOPE';
 
     public function __construct()
     {
@@ -252,9 +261,28 @@ class JwtService
 
     /**
      * Generate Access Token for user | 为用户生成 Access Token
+     *
+     * @throws \InvalidArgumentException 用户或租户上下文无效时抛出
      */
     public function generateAccessToken(int $userId, int $tenantId, int $siteId = 0): string
     {
+        // 安全（缺陷 R19）：租户/用户上下文无效的 token 不得签发
+        //
+        // 历史实现把 $userId / $tenantId 原样写进 payload，tenant_id = 0 的 token
+        // 能签发成功，但此后每个受保护请求都会因为「当前租户为 0」被拒绝，
+        // 表现成「拿到 token 却到处 403/401」这种极难定位的问题。
+        // 因此在这里 fail-fast，而不是让无效上下文流入下游。
+        // 注意：刷新侧（generateRefreshToken）**没有**签发侧校验，
+        // 刷新 token 的 user_id / tenant_id 校验位于 validateRefreshToken（校验侧），签发侧不重复。
+        if ($userId <= 0 || $tenantId <= 0) {
+            throw new \InvalidArgumentException(sprintf(
+                '%s: user_id and tenant_id must both be positive (got user_id=%d, tenant_id=%d)',
+                self::ERR_INVALID_TENANT_SCOPE,
+                $userId,
+                $tenantId
+            ));
+        }
+
         $claims = $this->buildStandardClaims($this->accessTtl, 'access');
 
         $payload = array_merge($claims, [
@@ -293,6 +321,8 @@ class JwtService
 
     /**
      * Validate Access Token | 验证 Access Token
+     *
+     * @throws \Exception 令牌无效、类型不符或用户/租户上下文无效（非正数）时抛出
      */
     public function validateAccessToken(string $token): array
     {
@@ -300,6 +330,29 @@ class JwtService
 
         if (($payload['type'] ?? null) !== 'access') {
             throw new \Exception(self::ERR_INVALID_TOKEN_TYPE . ': Expected access token');
+        }
+
+        // 安全（缺陷 R19）：校验侧必须兜住 user_id / tenant_id 非正数的令牌
+        //
+        // 签发侧已拒绝此类令牌，但**存量令牌**（本次改造之前签发的、仍在有效期内的）
+        // 以及「拿到同一密钥的伪造者」都不会经过签发侧，因此校验侧必须再挡一次。
+        // 否则 tenant_id = 0 会一路写进 Request 上下文，让按租户过滤的查询失去隔离语义。
+        //
+        // 补检 user_id（评审 M1）：签发侧校验的是 user_id 与 tenant_id **两个**维度，
+        // 校验侧原先只判 tenant_id，于是伪造 `user_id = 0, tenant_id = 1` 的令牌能通过校验。
+        // 这种令牌只在挂了 Permission 中间件的路由上被挡下；仅挂 Auth 的路由会以 0 号身份
+        // 继续执行业务（0 号用户不存在，权限/审计/归属判定全部落在未定义语义上），
+        // 因此把 user_id 并入同一处校验，与签发侧保持对称。
+        $userId   = (int) ($payload['user_id'] ?? 0);
+        $tenantId = (int) ($payload['tenant_id'] ?? 0);
+
+        if ($userId <= 0 || $tenantId <= 0) {
+            throw new \Exception(sprintf(
+                '%s: user_id and tenant_id must both be positive (got user_id=%d, tenant_id=%d)',
+                self::ERR_INVALID_TENANT_SCOPE,
+                $userId,
+                $tenantId
+            ));
         }
 
         return $payload;
