@@ -177,8 +177,9 @@ class WorkflowTaskController extends ApiController
 
         // Filter pending tasks for current user
         $pendingTasks = array_filter(self::$tasks, function ($task) use ($userId, $tenantId, $userGroups) {
-            // Check tenant
-            if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
+            // Check tenant | 租户归属校验（缺陷 R13）：缺失 tenant_id 的任务对任何租户都不可见
+            // 过滤器内只关心「是否归属当前租户」，故以 helper 是否返回 null 作布尔短路
+            if ($this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId) !== null) {
                 return false;
             }
 
@@ -243,10 +244,11 @@ class WorkflowTaskController extends ApiController
             return $this->notFound($this->langService->trans('workflow.task_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         // Include history
@@ -455,10 +457,11 @@ class WorkflowTaskController extends ApiController
             return $this->notFound($this->langService->trans('workflow.task_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         // Can only claim pending tasks
@@ -640,10 +643,11 @@ class WorkflowTaskController extends ApiController
             return $this->notFound($this->langService->trans('workflow.task_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         return $this->success([
@@ -789,10 +793,11 @@ class WorkflowTaskController extends ApiController
      */
     protected function checkTaskAccess(array $task, Request $request): ?Response
     {
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         // Check user access

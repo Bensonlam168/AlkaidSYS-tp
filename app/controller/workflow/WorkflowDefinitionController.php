@@ -151,10 +151,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         $data = $this->transformDefinitionToArray($definition, true);
@@ -265,10 +266,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         // Cannot update published definitions
@@ -337,10 +339,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         // Cannot delete published definitions (must archive first)
@@ -375,10 +378,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         // Validate before publishing
@@ -420,10 +424,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         $definition->archive();
@@ -461,10 +466,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         $validator = new WorkflowValidator();
@@ -503,10 +509,11 @@ class WorkflowDefinitionController extends ApiController
             return $this->notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        // Check tenant access
+        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
-            return $this->forbidden($this->langService->trans('workflow.access_denied'));
+        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId, $this->langService->trans('workflow.access_denied'));
+        if ($tenantError !== null) {
+            return $tenantError;
         }
 
         $data = $request->post();

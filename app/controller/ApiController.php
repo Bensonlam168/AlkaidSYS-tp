@@ -184,6 +184,50 @@ class ApiController extends BaseController
     }
 
     /**
+     * Assert record tenant ownership | 断言记录租户归属
+     *
+     * 缺陷 R13：历史代码对「租户归属缺失（tenant_id 为 null）」的记录一律放行
+     * （`isset($x['tenant_id'])` 对 null 值返回 false，整个校验被跳过；对象形态则显式写了
+     * `getTenantId() !== null`），使缺少 tenant_id 的脏数据可被任意租户读取/修改/发布。
+     *
+     * 此处统一收敛为 fail-closed：
+     *   - 前置守卫：当前请求租户为**非正数**时，无从判断记录归属，一律拒绝（fail-closed），
+     *     而不是退化成「`(int) null === 0` 与 0 相等即通过」的 fail-open；
+     *   - 正常情况下当前租户 ID 恒 >= 1（`app\Request::tenantId(): int`），
+     *     `(int) null === 0` 因此使「租户归属缺失」天然被判定为越权，无需额外分支；
+     *   - 归属正确 → 返回 null（调用方继续执行）；否则 → 返回 403 响应（调用方直接 return）。
+     *
+     * @param mixed $recordTenantId 记录的租户ID（可空，缺失时按 0 处理）| Record tenant ID
+     * @param int $currentTenantId 当前请求租户ID（正常情况下恒 >= 1）| Current tenant ID
+     * @param string|null $message 错误消息（null = 使用默认中英双语文案）| Error message
+     * @return Response|null null = 归属正确；否则为 403 响应 | null = owned, otherwise 403
+     */
+    protected function assertTenantOwnership(mixed $recordTenantId, int $currentTenantId, ?string $message = null): ?Response
+    {
+        // 前置守卫（缺陷 R13 边界）：当前租户为 0 / 负数时「归属」这一概念不成立。
+        // 触发路径：应用密钥签发的 tenant_id = 0 的 token（TenantIdentify 的 <= 0 拒绝只作用于
+        // 请求头，token 侧不拦）→ Request::tenantId() 返回 0 → 下面的相等比较会把
+        // `(int) null === 0` 误判为「归属正确」，使缺失归属的记录继续 fail-open。
+        if ($currentTenantId <= 0) {
+            return $this->forbidden($message ?? '租户上下文无效 | invalid tenant context');
+        }
+
+        // 严格整数比较：null / 空字符串 / 缺失键统一折算为 0，故缺失归属必然越权
+        if ((int) $recordTenantId === $currentTenantId) {
+            return null;
+        }
+
+        // 默认中英双语文案**仅在调用方不传 $message 时**才生效，不能理解为「已经兜底」：
+        // 现有 24 个调用点传入的都是 $this->langService->trans('workflow.access_denied')，
+        // 而该 key 目前并没有落在语言包里（只有 error.access_denied），
+        // LanguageService::trans() 查不到时会**回落为原始 key 字符串**，
+        // 即响应 message 可能就是 'workflow.access_denied' 本身。
+        // 唯一不传 $message 的调用点是 WorkflowTaskController::pending() 的 array_filter
+        // （那里只用返回值判断归属、丢弃 Response），才会用到下面这句默认文案。
+        return $this->forbidden($message ?? '资源不属于当前租户 | resource does not belong to current tenant');
+    }
+
+    /**
      * Validate pagination parameters | 验证分页参数
      *
      * @param int $page Page number | 页码
