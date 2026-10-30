@@ -360,6 +360,151 @@ function checkUpDownMethods(array $migrations): array
     return $issues;
 }
 
+/**
+ * 取出一对括号之间的完整实参文本（做括号配平，忽略字符串内的括号）
+ *
+ * @param string $code     源码
+ * @param int    $openPos  左括号位置
+ * @return string
+ */
+function balancedArgs(string $code, int $openPos): string
+{
+    $len   = strlen($code);
+    $depth = 0;
+    $quote = null;
+
+    for ($i = $openPos; $i < $len; $i++) {
+        $ch = $code[$i];
+
+        if ($quote !== null) {
+            if ($ch === '\\') {
+                $i++;
+                continue;
+            }
+            if ($ch === $quote) {
+                $quote = null;
+            }
+            continue;
+        }
+
+        if ($ch === "'" || $ch === '"') {
+            $quote = $ch;
+            continue;
+        }
+
+        if ($ch === '(' || $ch === '[') {
+            $depth++;
+            continue;
+        }
+
+        if ($ch === ')' || $ch === ']') {
+            $depth--;
+            if (0 === $depth) {
+                return substr($code, $openPos + 1, $i - $openPos - 1);
+            }
+        }
+    }
+
+    return substr($code, $openPos + 1);
+}
+
+/**
+ * 检查 tenant_id 的列声明是否合规
+ *
+ * 规则（与 design/01-architecture-design/04-multi-tenant-design.md 的
+ * 「tenant_id 两条语义」一致）：
+ *   - 真实租户引用：`integer` + `'signed' => false`（或 `biginteger` 同理），且**无默认值**
+ *   - 系统模板空间：允许 `DEFAULT 0`，此时不应建外键（本检查只看类型，不看默认值）
+ *   - 一律禁止：`'string'`、未标 unsigned 的 `integer`/`biginteger`、
+ *     以及 `Column::integer('tenant_id')`（默认有符号）
+ *
+ * 只检查**未应用**的迁移：已应用的迁移无法回改，历史遗留不参与判定。
+ *
+ * @param array<int, array{file:string, base:string, version:int}> $migrations
+ * @param int[]|null                                               $applied
+ * @return array<int, array{base:string, problem:string}>
+ */
+function checkTenantIdDeclaration(array $migrations, ?array $applied): array
+{
+    $issues = [];
+
+    if (null === $applied) {
+        return $issues;
+    }
+
+    // 全新库（applied 为空）时全部文件都是"未应用"，应当全查
+    $appliedSet = array_flip($applied);
+
+    foreach ($migrations as $migration) {
+        if (isset($appliedSet[$migration['version']])) {
+            continue;
+        }
+
+        $code = @file_get_contents($migration['file']);
+        if (false === $code) {
+            continue;
+        }
+
+        // 形如 addColumn('tenant_id', 'biginteger', [...])
+        if (preg_match_all('/addColumn\s*\(\s*[\'"]tenant_id[\'"]/', $code, $matches, PREG_OFFSET_CAPTURE)) {
+            foreach ($matches[0] as [$matchText, $offset]) {
+                $openPos = strpos($code, '(', $offset);
+                if (false === $openPos) {
+                    continue;
+                }
+
+                $args = balancedArgs($code, $openPos);
+
+                // 形如 'tenant_id', 'biginteger', [...] —— 取紧随其后的第二个字符串作为类型
+                if (!preg_match('/[\'"]tenant_id[\'"]\s*,\s*[\'"]([a-zA-Z]+)[\'"]/', $args, $typeMatch)) {
+                    continue;
+                }
+                $type = strtolower($typeMatch[1]);
+
+                if ('string' === $type) {
+                    $issues[] = [
+                        'base'    => $migration['base'],
+                        'problem' => 'tenant_id 不得声明为 string，应为 integer + signed => false',
+                    ];
+                    continue;
+                }
+
+                if (!in_array($type, ['integer', 'biginteger'], true)) {
+                    continue;
+                }
+
+                if (!preg_match('/[\'"]signed[\'"]\s*=>\s*false/', $args)) {
+                    $issues[] = [
+                        'base'    => $migration['base'],
+                        'problem' => "tenant_id 声明为 {$type} 但未标 signed => false（会与 tenants.id(int unsigned) 不匹配）",
+                    ];
+                }
+            }
+        }
+
+        // 形如 Column::integer('tenant_id')
+        if (preg_match_all('/Column::integer\s*\(\s*[\'"]tenant_id[\'"]/', $code, $columnMatches, PREG_OFFSET_CAPTURE)) {
+            foreach ($columnMatches[0] as [$matchText, $offset]) {
+                $openPos = strpos($code, '(', $offset);
+                if (false === $openPos) {
+                    continue;
+                }
+
+                $args = balancedArgs($code, $openPos);
+
+                if (!str_contains($args, 'setUnsigned(true)')) {
+                    $issues[] = [
+                        'base'    => $migration['base'],
+                        'problem' => 'Column::integer(\'tenant_id\') 默认有符号，需链式调用 setUnsigned(true)',
+                    ];
+                }
+            }
+        }
+    }
+
+    return $issues;
+}
+
 // ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
@@ -407,6 +552,14 @@ foreach ($methodIssues as $issue) {
     echo '   ' . colorize('[METHOD]', 'red') . " {$issue['base']}：{$issue['problem']}" . PHP_EOL;
 }
 $errorCount += count($methodIssues);
+
+// --- 检查 D：tenant_id 列声明必须与 tenants.id 类型一致 ---
+$tenantIssues = checkTenantIdDeclaration($migrations, $applied);
+printf("检查 D  tenant_id 列声明        %s\n", formatResult(count($tenantIssues), 0));
+foreach ($tenantIssues as $issue) {
+    echo '   ' . colorize('[TENANT]', 'red') . " {$issue['base']}：{$issue['problem']}" . PHP_EOL;
+}
+$errorCount += count($tenantIssues);
 
 echo str_repeat('-', 64) . PHP_EOL;
 
