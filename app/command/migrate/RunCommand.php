@@ -118,6 +118,12 @@ class RunCommand extends BaseRun
      * 全部历史迁移会被重新归入同一个批次，之后一次无参 rollback 就会试图回滚**全部**迁移。
      * 因此额外要求 `start_time >= 本次运行起始时间`：只有本次运行真正写入的行才可能命中。
      *
+     * **batch = 0 唯一约束（全新库场景，安全关键）**：全新库首次 `migrate:run` 时
+     * 所有迁移在同一批执行，`start_time` 全部落在运行窗口内，上一条约束无法区分。
+     * 而批次回填（`20251221000001`）已把先执行的行分好了批次——若此时仍按版本差集整体
+     * UPDATE，会把它们从各自批次重打成同一批，导致首次无参 rollback 一次回滚近整个 schema。
+     * 故只允许标记「从未打过批次」（`batch = 0`）的行。
+     *
      * @param int[]  $before       执行前的已应用版本
      * @param string $runStartedAt 本次运行起始时间（Y-m-d H:i:s）
      * @param Output $output       命令输出
@@ -150,7 +156,7 @@ class RunCommand extends BaseRun
             // $runStartedAt 由 date() 生成、格式固定，不存在注入面，故直接内联；
             // 这样可避免依赖 TablePrefixAdapter 未转发的 getConnection()/quote()。
             $sql = sprintf(
-                "UPDATE %s SET batch = (SELECT next_batch FROM (SELECT COALESCE(MAX(batch), 0) + 1 AS next_batch FROM %s) AS calc) WHERE version IN (%s) AND start_time >= '%s'",
+                "UPDATE %s SET batch = (SELECT next_batch FROM (SELECT COALESCE(MAX(batch), 0) + 1 AS next_batch FROM %s) AS calc) WHERE version IN (%s) AND start_time >= '%s' AND batch = 0",
                 $tableName,
                 $tableName,
                 $versionList,
