@@ -183,7 +183,7 @@ php think lowcode:create-form <表单名称> [选项]
 | `--fields` | string | 全部 | 仅包含指定字段（逗号分隔），例如 `"name,price,stock"`；未指定时包含 Collection 的全部字段 |
 | `--title` | string | 同名称 | 表单标题 |
 | `--description` | string | 空 | 表单描述 |
-| `--tenant-id` | int | 1 | 租户 ID，**必须是已存在的真实租户**（默认 1）；`0` 是系统模板空间，本命令不接受 |
+| `--tenant-id` | int | 1 | 租户 ID，**必须是已存在的真实租户**（默认 1）；`0` 是系统模板空间、不存在的正数同样会被拒绝，本命令不接受 |
 | `--site-id` | int | 0 | 站点 ID（0 = 默认站点） |
 | `--force` | flag | false | 如表单已存在则强制覆盖 |
 | `--format` | string | `text` | 输出格式：`text` 或 `json` |
@@ -197,6 +197,19 @@ php think lowcode:create-form <表单名称> [选项]
 ```text
 ✗ Invalid --tenant-id: 0 是系统模板空间（tenants 表没有 id=0），而 lowcode_forms.tenant_id
   要求真实租户（外键 fk_lowcode_forms_tenant_id → tenants.id）。请指定一个已存在的租户ID（≥ 1，默认为 1）。
+```
+
+> ⚠️ **`--tenant-id` 也不能是「不存在的正数」**：正数只过了「`> 0`」这一层，
+> 但 `tenants` 表里可能根本没有这条租户记录。命令会在**任何写库动作之前**先查 `tenants`，
+> 命中不存在即返回可读业务错误并以**退出码 1** 结束
+> （不会写出脏数据，也不会把外键 1452 的裸 SQL 错误抛给使用者）：
+
+```text
+$ php think lowcode:create-form product_create_form --tenant-id=99998 --force
+✗ Invalid --tenant-id: 租户 ID 99998 不存在（tenants 表中没有该记录）。请先创建该租户，或改传一个已存在的租户ID（例如默认为 1）。 Tenant 99998 does not exist; create it first or pass an existing tenant ID.
+
+$ echo $?
+1
 ```
 
 ### 使用示例

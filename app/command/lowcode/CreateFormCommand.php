@@ -11,6 +11,7 @@ use think\console\Input;
 use think\console\input\Argument;
 use think\console\input\Option;
 use think\console\Output;
+use think\facade\Db;
 
 /**
  * Create Lowcode Form Command | 创建低代码表单命令
@@ -77,6 +78,21 @@ class CreateFormCommand extends LowcodeCommand
                     'Invalid --tenant-id: 0 是系统模板空间（tenants 表没有 id=0），'
                     . '而 lowcode_forms.tenant_id 要求真实租户（外键 fk_lowcode_forms_tenant_id → tenants.id）。'
                     . '请指定一个已存在的租户ID（≥ 1，默认为 1）。'
+                );
+                return 1;
+            }
+
+            // Tenant 存在性校验 | Tenant existence validation
+            // tenant_id > 0 并不代表租户真实存在：传入「不存在但为正」的 ID 时，校验会一路放行，
+            // 直到写库阶段才撞上外键 fk_lowcode_forms_tenant_id，向使用者抛出裸 SQL 1452
+            // （Cannot add or update a child row ...）。这里在任何写库动作之前先查 tenants，
+            // 命中不存在就给出可读业务错误并退出，避免把数据库约束错误直接暴露给使用者。
+            $tenantExists = Db::name('tenants')->where('id', $tenantId)->count();
+            if ((int) $tenantExists < 1) {
+                $this->error(
+                    "Invalid --tenant-id: 租户 ID {$tenantId} 不存在（tenants 表中没有该记录）。"
+                    . '请先创建该租户，或改传一个已存在的租户ID（例如默认为 1）。'
+                    . " Tenant {$tenantId} does not exist; create it first or pass an existing tenant ID."
                 );
                 return 1;
             }
