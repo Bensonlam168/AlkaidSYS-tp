@@ -7,7 +7,7 @@
 | 审查方法 | superpowers `requesting-code-review` / `code-reviewer.md` 五维清单 |
 | 审查范围 | 后端 335 个 PHP / 57,376 行；`plugins/` 4,630 个跟踪文件；`frontend/`（见 C-2）；`design/` 73 份；`docs/` 111 份（不含归档） |
 | 核查方式 | 四路独立只读审计 + 主审对**每一条结论**逐项复核（复核记录见第十章） |
-| 最终结论 | **No（不建议合并）** —— 原始 4 Critical / 9 Important / 17 Minor；**截至 2026-10-30 已修复 2 个 Critical（C-2、C-4）**，剩余 2 Critical（C-1、C-3） |
+| 最终结论 | **No（不建议合并）** —— 经 2026-10-30 补充审查，Critical 由 4 个增至 **7 个**（新增 C-5/C-6/C-7，均为已实测可利用的认证/隔离缺陷）；**已修复 2 个（C-2、C-4）**，**剩余 5 个 Critical** |
 
 > **计数口径说明**：所有依赖 git 状态的数字以审查基线 `f119d98` 为准。本报告自身的提交会使"从 develop 可达提交数"与"跟踪文件数"小幅递增，属正常增量，不影响结论。
 
@@ -193,11 +193,18 @@ FormApiMultiTenantE2ETest             Tests: 7, Assertions: 43, Failures: 1
 
 `[证据: find infrastructure/Permission -name '*.php' → 6 个; find tests -name '*Casbin*' | wc -l → 8]`
 
-### S-7 工作流引擎实现规模可观
+### S-7 工作流引擎「代码规模」可观（但可用性另见 I-4）⚠️ **本节已于 2026-10-30 加限定**
 
-`plugins/workflow-engine`：**276 个自有 PHP 文件**（排除 vendor），7 层结构（Definition / Execution / Expression / Nodes / Integration / Multitenant / Monitor），5 个迁移，**51 个自带测试**，容器内 `php -l` **276/276 全部通过**。
+`plugins/workflow-engine`：**276 个 PHP 文件**（排除 vendor，其中 213 个在 `src/`），7 层结构（Definition / Core / Expression / Nodes / Integration / Multitenant / Monitor），5 个迁移，**51 个自带测试**，容器内 `php -l` **276/276 全部通过**。
 
-`[证据: find plugins/workflow-engine -name '*.php' -not -path '*/vendor/*' | wc -l → 276; find plugins/workflow-engine/tests -name '*Test.php' | wc -l → 51]`
+> **必须同时说明的限制**（详见 I-4）：
+> - `php -l` 只查语法，**不解析 trait/父类**。实测 `class_exists('...model\NodeModel')` → **Fatal: Trait "madong\ingenious\libs\traits\DynamicPropsTrait" not found**
+> - `src/` 213 个文件中 **88 个（41%）依赖未安装的 `madong/ingenious`** → 加载即 Fatal
+> - 5 个迁移不在 `database/migrations/` → 表从未创建
+>
+> 因此本节应理解为「**代码体量可观**」，**不等于**「能力可用」。
+
+`[证据: find plugins/workflow-engine -name '*.php' -not -path '*/vendor/*' | wc -l → 276; find plugins/workflow-engine/tests -name '*Test.php' | wc -l → 51; 可用性证据见 I-4]`
 
 ### S-8 文档体系成体系
 
@@ -370,6 +377,94 @@ $accessToken = $this->jwtService->generateAccessToken($user->getId(), $user->get
 
 ---
 
+#### C-5 JWT 签名密钥是仓库内公开字符串 —— 可伪造任意用户身份 🔴 **已实测可利用**
+
+> **本节为 2026-10-30 补入**。原报告把该问题列在 Important 级的 I-7，定级过低 —— 实测证明它等价于**完整认证绕过**。
+
+```php
+// infrastructure/Auth/JwtService.php:54
+$this->secret = (string) \think\facade\Env::get('JWT_SECRET', 'CHANGE_THIS_IN_PRODUCTION');
+// .env.example:14  同样的公开值
+```
+
+**运行时实测**（此前报告只查了 `echo $JWT_SECRET` 得到空，那是 shell 环境变量，不是框架视角）：
+
+```
+Env::get('JWT_SECRET') → len=25, value='CHANGE_THIS_IN_PRODUCTION'
+```
+
+**攻击链实证**（用公开密钥自行签发 token，无需任何凭据）：
+
+| 步骤 | 请求 | 结果 |
+|---|---|---|
+| 基线 | 正常 access token → `/v1/auth/me` | HTTP 200 |
+| 攻击 1 | 伪造 `user_id=999999`（不存在） | HTTP 400「用户不存在」← **说明签名已被接受** |
+| 攻击 2 | 伪造 **真实存在的** `user_id=101014` | **HTTP 200，返回该用户真实资料（email / tenant_id=1）** |
+
+`[证据: docker exec alkaid-backend php -r '...Env::get("JWT_SECRET")...' → len=25; curl -H "Authorization: Bearer <自行签发>" /v1/auth/me → 200 + 真实用户数据]`
+
+**为什么重要**：任何人拿到源码即可伪造任意用户的 JWT，**完全绕过认证与密码**。这比 C-4（注册接口可跨租户建号）严重一个量级 —— C-4 是「能注册」，C-5 是「能变成任何人」。
+
+**修复方向**：`APP_ENV=production` 且密钥为空或等于默认值时**启动即抛异常**；`.env.example` 改为空值并注明「必须设置」。改动约 10 行。
+
+#### C-6 Refresh Token 可当 Access Token 使用 🔴 **已实测可利用**
+
+```php
+// app/middleware/Auth.php:141
+$payload = $this->jwtService->validateToken($token);   // ← 只验签名，不校验 token 类型
+
+// infrastructure/Auth/JwtService.php:155  方法已存在，但无人调用
+public function validateAccessToken(string $token): array {
+    $payload = $this->validateToken($token);
+    if (($payload['type'] ?? null) !== 'access') { throw ...; }
+    return $payload;
+}
+```
+
+**实测**：用 `generateRefreshToken()` 产出的 token 访问 `/v1/auth/me` → **HTTP 200**。
+
+`[证据: 用 JwtService::generateRefreshToken() 签发后 curl /v1/auth/me → HTTP 200]`
+
+**为什么重要**：refresh token 有效期 7 天，access token 2 小时。攻击者拿到 refresh token（或 C-5 伪造一个）即可长期访问全部业务接口，Access TTL 形同虚设。
+
+**修复方向**：`Auth::handle()` 的 `validateToken()` 改为 `validateAccessToken()`。**一行改动**。
+
+#### C-7 `$request->tenantId` 属性访问恒为 null —— 54 处租户过滤静默失效 🔴 **已实测**
+
+```php
+// app/Request.php:23    protected $tenantId;            ← 受保护属性
+// app/Request.php:73    public function tenantId(...)   ← 方法
+
+// 控制器中的写法（全仓 54 处）
+$tenantId = $request->tenantId ?? null;    // ← 属性访问，走 __get
+if ($tenantId !== null) { /* 租户过滤 */ }   // ← 永不进入
+```
+
+**实测**：
+
+```
+$r->setTenantId(1);
+$r->tenantId()  → 1      方法调用，正确
+$r->tenantId    → NULL   属性访问，think\Request::__get → middleware('tenantId') → null
+```
+
+`[证据: docker exec alkaid-backend php -r '...$r->setTenantId(1); var_export($r->tenantId()); var_export($r->tenantId);' → 1 / NULL]`
+
+**影响分布**：
+
+| 位置 | 数量 | 后果 |
+|---|---|---|
+| `app/controller/workflow/*.php` | **50 处** | 租户过滤全部跳过 → 跨租户可读定义/实例/任务/触发器；`save()` 写入 `tenant_id=null`；操作人恒为 `'system'` |
+| `app/controller/admin/{User,Role,Menu,Dept}Controller.php` | 4 处 | 回退到 `header('X-Tenant-Id')`（**客户端可控**）→ 再回退到**硬编码租户 1** |
+
+**对照**：低代码控制器（`FormSchemaController`/`CollectionController`/`FormDataController` 等）用的是 `$request->tenantId()`（方法），行为正确。所以这是**两套写法并存**，不是普遍缺陷。
+
+**为什么重要**：这是设计文档 `04-multi-tenant-design.md:336`「禁止仅依赖 X-Tenant-ID 识别租户」在实现层的直接违反，且**静默**——没有报错、没有日志、测试也没有覆盖。
+
+**修复方向**：54 处改为方法调用。注意：改对之后工作流内存里混住的多租户数据会立刻被正确过滤（表现为「数据变少」），需与「工作流转 DB」一起验收。
+
+---
+
 ### Important（应当修复）
 
 #### I-1 `PermissionMonitorController` 完全脱离统一响应规范（15 处 `return json(`）
@@ -412,6 +507,12 @@ $collection->removeField($fieldName);                                       // �
 **修复方向**：先 `getField()` 校验存在；禁删系统列白名单（`id/tenant_id/site_id/created_at/updated_at`）；`$fieldName` 加 `alphaDash` 规则。
 
 #### I-3 测试套件不可信：42~43 个失败**全部**来自跨测试状态污染，无一是业务缺陷
+
+> **2026-10-30 补充说明**：本节结论「失败全部是污染」成立，但**「无一是业务缺陷」的说法过于乐观**。
+> 更准确的说法是：**失败列表里没有业务缺陷，但同时也没有任何测试覆盖真正的高危路径** ——
+> C-5（伪造 JWT）、C-6（refresh 当 access）、C-7（租户上下文失效）三个已实测可利用的缺陷，
+> 在 432 个用例中**零覆盖**。测试套件的问题不只是「红灯不可信」，
+> 更是「绿灯也不可信」——它保护不了它声称保护的东西。
 
 | 统计 | 结果 |
 |---|---|
@@ -476,23 +577,48 @@ if (isset($data['tenant_id']) && (int)$data['tenant_id'] !== $tenantId) {
 
 **修复方向**：每个测试类 `tearDown()` 清理 `bind`（`FormApiTest::setUp` 已有此 hack，应抽到基类）；`ThinkPHPTestCase` 改为每用例新建 App 或启用 `processIsolation`；`Request` 上下文改为容器注入而非属性缓存。
 
-#### I-4 主应用未加载 `plugins/workflow-engine`，存在两套并存的工作流实现
+#### I-4 工作流存在两套实现，且插件侧 41% 文件加载即 Fatal ⚠️ **本节已于 2026-10-30 修正（原结论不准确）**
 
-| 实现 | 位置 | 是否运行 |
+> **修正说明**：本节原写「主应用未加载插件」。经复核，准确表述是：
+> **未作为「插件」（无生命周期/无插件路由）加载，但已作为「类库」被使用** ——
+> 根 `composer.json` 的 PSR-4 把 `Alkaid\Workflow\Engine\` 映射到 `plugins/workflow-engine/src/`，
+> 且 `app/controller/workflow/` 中**直接 `new` 了 6 个插件类**。
+> 因此「归档插件」方案不可行——会导致主应用 Fatal。
+
+| 实现 | 位置 | 状态 |
 |---|---|---|
-| **原生**（主应用） | `app/controller/workflow/*`（4 个控制器）+ `route/workflow.php`（`v1/workflow/*`，权限码 `workflow.*`） | **是** |
-| **插件**（未加载） | `plugins/workflow-engine`（`Alkaid\Workflow` 命名空间，276 PHP） | **否** |
+| **原生 API 层** | `app/controller/workflow/*`（4 控制器，2,874 行）+ `route/workflow.php`（42 条路由） | **运行中，但数据在内存态**（7 处 `protected static array`，零 DB 调用） |
+| **插件引擎库** | `plugins/workflow-engine`（`Alkaid\Workflow\Engine\`，213 个 src PHP） | **被主应用引用 6 个类**；其余多数不可加载 |
 
-证据链：
-- `grep -rn "plugins/" --include=*.php app config infrastructure domain route` → **0 命中**
-- `config/plugin.php:7` → `'base_path' => root_path() . 'addons' . DIRECTORY_SEPARATOR . 'plugins' . DIRECTORY_SEPARATOR` ← 指向 `addons/plugins`，该目录**存在但为空**（仅 `.gitkeep` + `README.md`），**不含 workflow-engine**
-- `plugins/workflow-engine/routes/` → 仅 `.gitkeep`（0 字节），无路由文件
-- `app/AppService.php:25` → 仅 `$pluginManager->loadFromConfig();`（不做目录扫描）
-- 主 `tests/` 中 workflow 相关测试 **0 个**（插件自带 51 个测试，独立 `phpunit.xml`）
+**关键事实（本轮实测）**：
 
-`[证据: grep -rn 'plugins/' --include='*.php' app config infrastructure domain route | wc -l → 0; grep -n 'base_path' config/plugin.php; ls addons/plugins → .gitkeep + README.md; ls -la plugins/workflow-engine/routes/ → 仅 .gitkeep 0 字节; grep -n 'loadFromConfig' app/AppService.php; grep -rl 'workflow' tests/ --include='*.php' | wc -l → 0]`
+```
+1. 主应用引用的 6 个类（均无 madong 依赖，可正常加载）：
+   Definition\{WorkflowBuilder, WorkflowDefinition, WorkflowValidator,
+                Interfaces\WorkflowDefinitionInterface}
+   Triggers\{TriggerManager, TriggerContext}
 
-**为什么重要**：16 个提交（T-201~T-305）的工作流成果**与运行时无连接**；两套实现并存导致维护歧义与认知负担。需明确取舍：要么把插件接入主应用（补齐 `addons/plugins/workflow-engine` 或改 `base_path`），要么归档插件只保留原生实现。
+2. 213 个 src PHP 中 88 个（41%）`use madong\ingenious\*`，而该包从未安装：
+   class_exists('Alkaid\Workflow\Engine\model\NodeModel')
+   → Fatal error: Trait "madong\ingenious\libs\traits\DynamicPropsTrait" not found
+
+3. 命名空间大小写缺陷（Linux 环境下 autoload 必 miss）：
+   src/Core/ProcessEngines.php:14 → namespace ...Engine\core;  （小写）
+   实际目录名 → Core                                            （大写）
+   macOS 大小写不敏感掩盖了此问题
+
+4. 5 个迁移位于 plugins/workflow-engine/migrations/，
+   而 `php think migrate:run` 只扫 database/migrations/ → 表从未创建
+   SHOW TABLES LIKE '%workflow%' → 0 行
+
+5. 4 个 Repository（ProcessDefine/ProcessInstance/ProcessTask/WorkflowEvent）
+   全部为 `// TODO: 实现数据访问逻辑; return null;`
+```
+
+`[证据: 见 design-implementation-reconstruction-2026-10-30.md §零/C-5 与 §五 P0-4/P0-5/P0-6]`
+
+**为什么重要**：原判断「两套实现并存」方向正确，但结论过于简单。真实情况是
+**「一个未接通的引擎库 + 一个不落库的 API 层」**，且引擎库近半文件是死代码。
 
 **补充事实**：`addons/apps/_template/` 存在应用模板（`Application.php`、`manifest.json`、`install.sql` 等），说明应用生态骨架已铺，但无任何实际应用。
 
@@ -524,17 +650,10 @@ AGENTS.md 明确 CI 会执行该命令。当前基线为**红**（90 条路由�
 
 `[证据: 实跑上述两条命令]`
 
-#### I-7 JWT 默认密钥为仓库内公开字符串，缺启动期 fail-fast
+#### I-7 ~~JWT 默认密钥为仓库内公开字符串~~ → **已升级为 C-5（Critical）**
 
-```php
-// infrastructure/Auth/JwtService.php:54-55
-$this->secret = (string) \think\facade\Env::get('JWT_SECRET', 'CHANGE_THIS_IN_PRODUCTION');
-$this->issuer = (string) \think\facade\Env::get('JWT_ISSUER', 'https://api.alkaidsys.local');
-```
-
-`.env.example:12` 与 `.example.env:12` 均写该默认值；容器内 `echo $JWT_SECRET` → 空（进程环境无该变量，靠框架加载 `.env`）。
-
-影响：生产漏配时签名/验签用公开默认值 → 可伪造任意 `user_id/tenant_id` 的 JWT，等同全站认证绕过。**修复**：`APP_ENV=production` 且密钥为默认值/空时抛异常终止启动。
+> 本节内容已并入 **C-5**。原定级为 Important 过低：实测可用公开密钥伪造任意用户身份并成功通过认证，
+> 等价于完整认证绕过。此处保留指针，避免编号断档。
 
 #### I-8 分层违规：控制器内直接写 SQL 与业务事务
 
@@ -709,7 +828,7 @@ protected function executeSqlFile(string $relativePath): void
 | 多租户 | 80% | 16/8 迁移 + 4 核心组件过滤齐全；缺独立库模式 |
 | 权限 Casbin | 75% | 6 文件 + 2 配置 + 8 测试 + 模式切换 |
 | 系统管理 | 70% | 6 控制器 + 2 域模型 + 2 仓储 + 4 迁移 |
-| 工作流（后端） | 70% | 276 PHP 齐备，但未接入主应用 |
+| 工作流（后端） | **35%** | 引擎库 213 PHP 中 88 个加载即 Fatal；API 层 2,874 行但零 DB 调用（内存态）；5 个迁移从未执行、表不存在；4 个 Repository 全 TODO。**原估 70% 高估**（见 I-4 修正） |
 | 插件系统 | 65% | 18 PHP + 2 迁移；六大应用与市场未做 |
 | 前端 | 55% | `web-antd` 系统管理已可用；其余 3 app 为脚手架；**且未入版本库** |
 | 应用/插件市场 | 0% | 仅设计 |
@@ -770,3 +889,16 @@ protected function executeSqlFile(string $relativePath): void
 **报告生成时间**：2026-10-30
 **审查方式**：四路独立只读审计 + 主审逐项复核
 **审查对象**：AlkaidSYS-tp 本地 `develop` 分支 `f119d98`
+
+---
+
+## 十一、本报告修订记录
+
+| 日期 | 修订内容 | 触发原因 |
+|---|---|---|
+| 2026-10-30（初版） | 4 Critical / 9 Important / 17 Minor | 四路独立审计 + 主审复核 |
+| 2026-10-30（本次） | **Critical 4 → 7**：新增 C-5（JWT 公开密钥可伪造身份，实测 HTTP 200 冒充成功）、C-6（refresh 当 access 用，实测 200）、C-7（`$request->tenantId` 属性访问恒 null，54 处过滤失效）<br>**I-7 升级并入 C-5**（原定级 Important 过低）<br>**I-4 结论修正**：由「主应用未加载插件」改为「未作为插件加载、但作为类库被引用 6 个类」；补充插件 41% 文件 Fatal<br>**S-7 加限定**：`php -l` 通过 ≠ 可加载，88 文件缺 madong trait<br>**I-3 加限定**：失败确为污染，但三个 Critical 缺陷零测试覆盖<br>**工作流完成度 70% → 35%** | 设计文档全域对照（`design-implementation-reconstruction-2026-10-30.md`）发现原报告遗漏 |
+
+**配套基线报告**：[`design-implementation-reconstruction-2026-10-30.md`](design-implementation-reconstruction-2026-10-30.md)
+——184 份文档逐份对照 + 10 项实测，是本报告的上游事实来源，两者冲突时**以该报告为准**。
+
