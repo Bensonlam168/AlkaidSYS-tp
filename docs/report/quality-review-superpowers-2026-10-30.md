@@ -7,7 +7,7 @@
 | 审查方法 | superpowers `requesting-code-review` / `code-reviewer.md` 五维清单 |
 | 审查范围 | 后端 335 个 PHP / 57,376 行；`plugins/` 4,630 个跟踪文件；`frontend/`（见 C-2）；`design/` 73 份；`docs/` 111 份（不含归档） |
 | 核查方式 | 四路独立只读审计 + 主审对**每一条结论**逐项复核（复核记录见第十章） |
-| 最终结论 | **No（不建议合并）** —— 经 2026-10-30 补充审查，Critical 由 4 个增至 **7 个**（新增 C-5/C-6/C-7，均为已实测可利用的认证/隔离缺陷）；**已修复 2 个（C-2、C-4）**，**剩余 5 个 Critical** |
+| 最终结论 | **With fixes（修复后可合并）** —— Critical 共 **7 个**，**已修复 5 个（C-2/C-4/C-5/C-6/C-7，均经独立复验）**，**剩余 2 个（C-1 注入、C-3 vendor 入库）** |
 
 > **计数口径说明**：所有依赖 git 状态的数字以审查基线 `f119d98` 为准。本报告自身的提交会使"从 develop 可达提交数"与"跟踪文件数"小幅递增，属正常增量，不影响结论。
 
@@ -377,7 +377,7 @@ $accessToken = $this->jwtService->generateAccessToken($user->getId(), $user->get
 
 ---
 
-#### C-5 JWT 签名密钥是仓库内公开字符串 —— 可伪造任意用户身份 🔴 **已实测可利用**
+#### C-5 JWT 签名密钥是仓库内公开字符串 —— 可伪造任意用户身份 ✅ **已修复（2026-10-30，提交 `a7cf49b`）**
 
 > **本节为 2026-10-30 补入**。原报告把该问题列在 Important 级的 I-7，定级过低 —— 实测证明它等价于**完整认证绕过**。
 
@@ -403,11 +403,35 @@ Env::get('JWT_SECRET') → len=25, value='CHANGE_THIS_IN_PRODUCTION'
 
 `[证据: docker exec alkaid-backend php -r '...Env::get("JWT_SECRET")...' → len=25; curl -H "Authorization: Bearer <自行签发>" /v1/auth/me → 200 + 真实用户数据]`
 
+
+> **修复结果与复验证据（2026-10-30，提交 `a7cf49b`）**
+>
+> 实现要点：生产环境下拒绝「空值 / 已知公开占位符（含 `REPLACE_WITH`、`DEV-ONLY` 前缀）/ 长度 <32」；
+> 生产判定词表 `production|prod|stage|staging` + `strtolower`，未设 `APP_ENV` 视为生产（失败安全）。
+>
+> 独立复验矩阵（主审亲自执行，11/11 符合预期）：
+> | APP_ENV | JWT_SECRET | 结果 |
+> |---|---|---|
+> | production | `CHANGE_THIS_IN_PRODUCTION` | 拒绝 ✅ |
+> | production | `REPLACE_WITH_*` 占位符 | 拒绝 ✅ |
+> | prod / Production / staging / stage | 公开默认值 | 拒绝 ✅ |
+> | production | 纯空格 / `abc`(3字符) / `.env.example` 的 dev 占位值 | 拒绝 ✅ |
+> | production | 64 位随机串 | 放行 ✅（反向用例，防过严） |
+> | dev | 公开默认值 | 放行 ✅（保护本地开发） |
+>
+> 配套修复的回归（评审发现，我方引入）：`.env.example` 原被改为空值，导致 dev 环境
+> 「登录返回 200 带 token，但之后每个受保护接口 401」（firebase/php-jwt 拒绝空 key 解码）。
+> 现已改为非空 dev 占位值 + `JwtService` 非生产空密钥回退，实测「签发→校验」闭环通过。
+>
+> **仍存在的限制（已知，未在本次范围）**：校验发生在 `JwtService` 惰性构造时，
+> 因此生产环境的表现是「进程正常启动，鉴权请求失败」，**不是**启动期失败。
+> 若要真正的启动期 fail-fast，需把校验前移到 `app/provider.php` 或 `AppService::boot()`。
+
 **为什么重要**：任何人拿到源码即可伪造任意用户的 JWT，**完全绕过认证与密码**。这比 C-4（注册接口可跨租户建号）严重一个量级 —— C-4 是「能注册」，C-5 是「能变成任何人」。
 
 **修复方向**：`APP_ENV=production` 且密钥为空或等于默认值时**启动即抛异常**；`.env.example` 改为空值并注明「必须设置」。改动约 10 行。
 
-#### C-6 Refresh Token 可当 Access Token 使用 🔴 **已实测可利用**
+#### C-6 Refresh Token 可当 Access Token 使用 ✅ **已修复（2026-10-30，提交 `a7cf49b`）**
 
 ```php
 // app/middleware/Auth.php:141
@@ -421,7 +445,24 @@ public function validateAccessToken(string $token): array {
 }
 ```
 
-**实测**：用 `generateRefreshToken()` 产出的 token 访问 `/v1/auth/me` → **HTTP 200**。
+**原缺陷实测**：用 `generateRefreshToken()` 产出的 token 访问 `/v1/auth/me` → **HTTP 200**。
+
+> **修复结果与复验证据（2026-10-30，提交 `a7cf49b`）**
+>
+> 实现要点：`Auth.php` 改用 `validateAccessToken()`；`JwtService` 构造函数新增生产密钥校验
+> （生产词表对齐 `EnvCheckCommand`、未设 APP_ENV 视为生产、拒绝空值/公开占位符/长度<32、
+> 非生产空密钥回退 dev 密钥并警告）。
+>
+> 独立复验（主审亲自执行，不采信执行代理报告）：
+> | 场景 | 结果 |
+> |---|---|
+> | access token → `/v1/auth/me` | HTTP 200，返回真实用户（未误伤正常路径） |
+> | **refresh token → `/v1/auth/me`** | **HTTP 401 + code 2001**（修复前为 200） |
+> | `AuthController::refresh` 用 refresh token 刷新 | 仍正常（该方法本就用 `validateRefreshToken`，未被改动波及） |
+>
+> 说明：本缺陷此前被列为 Important(I-7)，实测证明其等价于完整认证绕过，已升级为 Critical。
+
+
 
 `[证据: 用 JwtService::generateRefreshToken() 签发后 curl /v1/auth/me → HTTP 200]`
 
@@ -429,7 +470,7 @@ public function validateAccessToken(string $token): array {
 
 **修复方向**：`Auth::handle()` 的 `validateToken()` 改为 `validateAccessToken()`。**一行改动**。
 
-#### C-7 `$request->tenantId` 属性访问恒为 null —— 54 处租户过滤静默失效 🔴 **已实测**
+#### C-7 `$request->tenantId` 属性访问恒为 null —— 54 处租户过滤静默失效 ✅ **已修复（2026-10-30，提交 `7860fab`）**
 
 ```php
 // app/Request.php:23    protected $tenantId;            ← 受保护属性
@@ -458,6 +499,25 @@ $r->tenantId    → NULL   属性访问，think\Request::__get → middleware('t
 | `app/controller/admin/{User,Role,Menu,Dept}Controller.php` | 4 处 | 回退到 `header('X-Tenant-Id')`（**客户端可控**）→ 再回退到**硬编码租户 1** |
 
 **对照**：低代码控制器（`FormSchemaController`/`CollectionController`/`FormDataController` 等）用的是 `$request->tenantId()`（方法），行为正确。所以这是**两套写法并存**，不是普遍缺陷。
+
+
+> **修复结果与复验证据（2026-10-30，提交 `7860fab`）**
+>
+> 实现要点：54 处属性访问全部改为方法调用（tenantId 32 / userId 18 / siteId 0）；
+> admin 4 个控制器移除「回退到 header → 回退到硬编码租户 1」，统一走 `Request::tenantId()`。
+>
+> 独立复验：
+> - 属性式访问残留：`tenantId` 0 / `siteId` 0 / `userId` 0
+> - `tests/Feature/Workflow/WorkflowTenantIsolationTest.php` 2 用例通过（跨租户列表不含、
+>   跨租户按 ID 读取被拒、同租户读写仍可用、写入 `tenant_id === 1`）
+> - 四个工作流控制器 `class_exists` 均 OK
+>
+> **仍存在的同类缺陷（评审发现，建议单独立项）**：
+> `WorkflowTaskController.php:166/468/782` 三处 `$request->userGroups`（属性访问）未改 ——
+> `app/Request` 中既无该属性也无 `userGroups()` 方法，需要先补数据来源。
+> 其中 `claim()`（:468）因守卫条件为 `!empty($candidateUsers) && !empty($candidateGroups)`，
+> 当任务仅有候选组时守卫被跳过 → **本租户内任意登录用户可认领组限定任务**（fail-open）。
+> 这是既有缺陷，非本次改动引入，但属同一族「归属过滤失效」，风险等级 Important。
 
 **为什么重要**：这是设计文档 `04-multi-tenant-design.md:336`「禁止仅依赖 X-Tenant-ID 识别租户」在实现层的直接违反，且**静默**——没有报错、没有日志、测试也没有覆盖。
 
@@ -897,7 +957,8 @@ protected function executeSqlFile(string $relativePath): void
 | 日期 | 修订内容 | 触发原因 |
 |---|---|---|
 | 2026-10-30（初版） | 4 Critical / 9 Important / 17 Minor | 四路独立审计 + 主审复核 |
-| 2026-10-30（本次） | **Critical 4 → 7**：新增 C-5（JWT 公开密钥可伪造身份，实测 HTTP 200 冒充成功）、C-6（refresh 当 access 用，实测 200）、C-7（`$request->tenantId` 属性访问恒 null，54 处过滤失效）<br>**I-7 升级并入 C-5**（原定级 Important 过低）<br>**I-4 结论修正**：由「主应用未加载插件」改为「未作为插件加载、但作为类库被引用 6 个类」；补充插件 41% 文件 Fatal<br>**S-7 加限定**：`php -l` 通过 ≠ 可加载，88 文件缺 madong trait<br>**I-3 加限定**：失败确为污染，但三个 Critical 缺陷零测试覆盖<br>**工作流完成度 70% → 35%** | 设计文档全域对照（`design-implementation-reconstruction-2026-10-30.md`）发现原报告遗漏 |
+| 2026-10-30（阶段 A 修复） | **C-5 / C-6 / C-7 已修复并经独立复验**（提交 `a7cf49b`、`7860fab`）：<br>· C-6 refresh→401（原 200）<br>· C-5 生产密钥 11/11 拒绝矩阵（原 6/7 可绕过）+ 修回「dev 空密钥导致能签发不能校验」的回归<br>· C-7 54 处属性访问改方法调用，残留 0<br>· **新发现并修复 3 个使工作流定义接口完全不可用的既有缺陷**：`validate()` 与父类签名不兼容（类声明期 Fatal）、`ValidationResult::getInfo()` 不存在、对 string 日期调 `format()` → 500<br>· 测试 +22 用例（454），失败集合与基线逐条相同（零回归） | 按阶段 A 计划执行 C-5/C-6/C-7；引入 superpowers TDD + 子代理实施 + 独立 Reviewer 评审，评审发现 1 个我方引入的 Critical 回归（`.env.example` 空密钥）与 6 条绕过路径，已在第二轮修复 |
+| 2026-10-30（前序） | **Critical 4 → 7**：新增 C-5（JWT 公开密钥可伪造身份，实测 HTTP 200 冒充成功）、C-6（refresh 当 access 用，实测 200）、C-7（`$request->tenantId` 属性访问恒 null，54 处过滤失效）<br>**I-7 升级并入 C-5**（原定级 Important 过低）<br>**I-4 结论修正**：由「主应用未加载插件」改为「未作为插件加载、但作为类库被引用 6 个类」；补充插件 41% 文件 Fatal<br>**S-7 加限定**：`php -l` 通过 ≠ 可加载，88 文件缺 madong trait<br>**I-3 加限定**：失败确为污染，但三个 Critical 缺陷零测试覆盖<br>**工作流完成度 70% → 35%** | 设计文档全域对照（`design-implementation-reconstruction-2026-10-30.md`）发现原报告遗漏 |
 
 **配套基线报告**：[`design-implementation-reconstruction-2026-10-30.md`](design-implementation-reconstruction-2026-10-30.md)
 ——184 份文档逐份对照 + 10 项实测，是本报告的上游事实来源，两者冲突时**以该报告为准**。

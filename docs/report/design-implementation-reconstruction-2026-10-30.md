@@ -330,9 +330,9 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 
 | # | 缺口 | 证据 | 难度 |
 |---|---|---|---|
-| 1 | **JWT 公开密钥 + 无 fail-fast**（C-5） | 实测可冒充任意用户 | 🟢 低 |
-| 2 | **Refresh 当 Access 用**（C-6） | 实测 HTTP 200 | 🟢 低（一行） |
-| 3 | **租户上下文属性访问失效**（C-7） | 54 处，实测 null | 🟢 低（改方法调用） |
+| 1 | ~~**JWT 公开密钥 + 无 fail-fast**（C-5）~~ ✅ **已修复** `a7cf49b` | 生产 11/11 拒绝矩阵；dev 空密钥回退；实测伪造 token 不再生效 | — |
+| 2 | ~~**Refresh 当 Access 用**（C-6）~~ ✅ **已修复** `a7cf49b` | 实测 refresh→`/v1/auth/me` 从 200 变 **401** | — |
+| 3 | ~~**租户上下文属性访问失效**（C-7）~~ ✅ **已修复** `7860fab` | 54 处改方法调用，残留 0；跨租户读取用例通过 | — |
 | 4 | **工作流 5 张表从未创建** | `SHOW TABLES LIKE '%workflow%'` = 0；迁移在插件目录，`migrate:run` 不扫 | 🟢 低（复制迁移+修 FK 类型） |
 | 5 | **插件 41% 源码加载即 Fatal** | `class_exists(model\NodeModel)` → Trait not found；88/213 文件依赖 `madong\ingenious` | 🔴 高（补依赖或删半边） |
 | 6 | **工作流 API 全内存态** | 7 处 `protected static array`；`ProcessDefineRepository` 全 TODO | 🔴 高（需实现编排器+持久化） |
@@ -340,6 +340,34 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | 8 | **应用系统未接线** | `ApplicationServiceProvider` 全库零引用；`applications`/`app_configs` 表缺；`menus.app_key` 列缺 | 🟡 中 |
 | 9 | **插件 autoload 断链** | `plugin\` 无 PSR-4 映射 → 任何插件都无法 `class_exists` | 🟢 低（1 行 composer 配置） |
 | 10 | **钩子零触发点** | `do_action(`=0、`apply_filter(`=0；`app/event.php` 监听全空 | 🟡 中 |
+
+### 阶段 A 已完成（2026-10-30）
+
+| # | 项 | 提交 | 独立复验 |
+|---|---|---|---|
+| A1 | C-5 JWT 密钥强度校验 | `a7cf49b` | 生产 11/11 拒绝矩阵；反向用例放行；dev 空密钥签发→校验闭环 |
+| A2 | C-6 令牌类型校验 | `a7cf49b` | refresh→`/v1/auth/me` 401/2001；access→200；refresh 接口本身未受影响 |
+| A3 | C-7 租户上下文 54 处修正 | `7860fab` | 属性式残留 0；跨租户隔离用例 2/2 通过；四个工作流控制器均可加载 |
+| A6 | 文档围栏回归修正 | `0549910` | `check-docs.php --strict` 通过 |
+
+**过程中新发现并修复的既有缺陷**（不在原 32 项缺口清单内，因被认证层 401 掩盖）：
+
+| # | 缺陷 | 影响 | 提交 |
+|---|---|---|---|
+| N1 | `WorkflowDefinitionController::validate()` 与父类 `BaseController::validate(array $data, ...)` 签名不兼容 | PHP 声明期 **Fatal** → definitions 全部接口不可用（一旦通过鉴权） | `7860fab` |
+| N2 | `ValidationResult::getInfo()` 不存在（正确为 `getInfos()`） | `/validate` 端点 500 | `7860fab` |
+| N3 | `transformDefinitionToArray()` 对 string 日期调用 `format('c')` | 所有 definitions 响应 500 | `7860fab` |
+
+**评审发现但未修（明确遗留）**：
+
+| # | 缺陷 | 风险 | 建议 |
+|---|---|---|---|
+| R1 | `WorkflowTaskController:166/468/782` 三处 `$request->userGroups` 属性访问未改；`app/Request` 无该方法 | `claim()` 守卫条件 `!empty(users) && !empty(groups)` 在仅有候选组时被跳过 → **本租户内任意登录用户可认领组限定任务**（fail-open） | 新增 `Request::userGroups()` 数据源后改方法调用；守卫改为「候选用户与候选组都为空才放行」 |
+| R2 | 生产密钥校验发生在 `JwtService` 惰性构造，非启动期 | 生产表现为「进程正常启动、鉴权请求失败」，运维易误判 | 把校验前移到 `app/provider.php` 或 `AppService::boot()` |
+| R3 | `.env.example` 注释中的 ASCII `)` 会让 `parse_ini_file` 整份返回 false | 已在本轮修正；建议写入文档维护约定 | 在 `AGENTS.md` 文档维护节加一条 |
+| R4 | `admin` 4 控制器与 workflow 其余 3 控制器的租户行为无测试覆盖 | 改动无回归保护 | 补 admin 端点测试 |
+
+---
 
 ### P1 — 设计承诺大面积落空
 
@@ -500,7 +528,7 @@ BATCH-1~4 + FINAL 五份总结用同一个 `✅` 符号表示两种语义。FINA
 
 | # | 改动 | 位置 | 关闭的问题 |
 |---|---|---|---|
-| 1 | `Auth.php:141` 改 `validateAccessToken()` | `app/middleware/Auth.php` | C-6（refresh 越权） |
+| 1 | ✅ **已完成**（`a7cf49b`）`Auth.php:141` 改 `validateAccessToken()` | `app/middleware/Auth.php` | C-6（refresh 越权） |
 | 2 | `composer.json` autoload 加 `"plugin\\": "addons/plugins/"` | `composer.json` | 插件 autoload 断链 |
 | 3 | `admin.ts` 6 个路由加 `authority` | `frontend/apps/web-antd/src/router/routes/modules/admin.ts` | 前端权限路由失效 |
 
