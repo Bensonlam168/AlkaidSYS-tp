@@ -6,7 +6,6 @@ namespace Tests\Feature;
 
 use Infrastructure\RateLimit\Service\RateLimitService;
 use Tests\ThinkPHPTestCase;
-use think\facade\Cache;
 use think\facade\Config;
 
 class RateLimitMiddlewareTest extends ThinkPHPTestCase
@@ -37,12 +36,19 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
     }
 
     /**
-     * 把限流配置覆盖为「仅启用 ip 维度 + 低容量 + 几乎不补充」，用于确定性触发 429。
+     * 把限流配置覆盖为「仅启用 ip 维度 + 低容量 + 几乎不补充」，用于确定性触发 429 或验证限额内放行。
      *
      * 中间件每次请求都会重新读取 config('ratelimit')，因此覆盖后立即生效；
      * 原始配置已由 setUp() 保存，tearDown() 会原样写回。
+     *
+     * 为什么必须覆盖配置：config/ratelimit.php 的 enabled 默认取 env('RATELIMIT_ENABLED', false)，
+     * 测试环境没有设置该变量 => 中间件直接 return $next($request) 全程直通，
+     * 不覆盖配置的用例根本不会触碰任何限流维度（历史上「限额内不拒绝」用例就是这样空转的）。
+     *
+     * @param int   $capacity 桶容量（最大令牌数）
+     * @param float $rate     令牌补充速率（令牌/秒）
      */
-    private function useLowCapacityIpScope(): void
+    private function useLowCapacityIpScope(int $capacity = 5, float $rate = 0.001): void
     {
         $override = $this->originalRateLimitConfig;
         $override['enabled']   = true;
@@ -54,8 +60,8 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
             'period'   => 60,
             // token bucket 参数：容量 5，补充速率 0.001 令牌/秒（约 1000 秒补 1 个）
             // => 连续 10 次请求内不可能靠令牌补充恢复，结果稳定可复现
-            'capacity' => 5,
-            'rate'     => 0.001,
+            'capacity' => $capacity,
+            'rate'     => $rate,
         ];
         // 显式关闭其余维度，避免 tenant/route 维度的历史桶状态干扰本用例
         foreach (['user', 'tenant', 'route'] as $scope) {
@@ -85,20 +91,44 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
 
     public function test_requests_under_limit_are_not_rate_limited(): void
     {
-        // 清理限流相关 cache，避免其他测试或手工请求遗留的计数影响本用例
-        if (class_exists(Cache::class)) {
-            Cache::clear();
-        }
+        $clientIp = '198.51.100.1';
+        $path     = 'ratelimit-test-ok';
+
+        // 只启用 ip 维度（容量 5、补充速率 0.001）：单次请求必然在限额内，
+        // 同时把「本用例自己的桶」限定成唯一一个，便于精确断言它真的被消费。
+        $this->useLowCapacityIpScope();
+
+        // 只重置本用例自己的 ip 令牌桶（限流状态存在 Redis，与 runtime/cache 文件缓存无关）。
+        // 这里刻意不再使用 Cache::clear()：File 驱动下它会 rmdir(runtime/cache) 整个目录，
+        // 多进程/并行跑测试时会误删其他用例正在写的缓存（已实测导致 Casbin 相关伪失败）。
+        $bucketKey = RateLimitService::buildKey((string) env('APP_ENV', 'dev'), 'ip', $clientIp);
+        (new RateLimitService())->reset($bucketKey);
 
         $request = new \app\Request();
         $request->setMethod('GET');
-        $request->setPathinfo('ratelimit-test-ok');
-        $request->header('X-Forwarded-For', '198.51.100.1');
+        $request->setPathinfo($path);
+        // 必须用 withHeader() 真正写入请求头：
+        // think\Request::header($name, $default) 只是「带默认值的读取」，不会写入任何头，
+        // 原写法 $request->header('X-Forwarded-For', '198.51.100.1') 因此从未设置过 XFF，
+        // 中间件只能回落到 $request->ip()（测试进程中 REMOTE_ADDR 为空 => '0.0.0.0'），
+        // 于是本用例从未命中过预期的那个 ip 维度标识。
+        $request->withHeader(['X-Forwarded-For' => $clientIp]);
 
         $response = $this->runHttp($request);
 
         $this->assertNotNull($response);
-        $this->assertNotSame(429, $response->getCode());
+        $this->assertNotSame(429, $response->getCode(), '限额内的请求不应被限流');
+
+        // 断言请求真的走到了 ip 维度：容量 5 的桶被精确消费 1 个令牌 => 剩余 4。
+        // 若 ip 维度被跳过（identifier 为空/取错 IP），桶根本不会被创建，tokens 会是 0；
+        // 若 Redis 故障导致中间件 fail-open，tokens 同样会是 0 —— 两种情况都会被这条断言抓住。
+        $info = (new RateLimitService())->getRateLimitInfo($bucketKey);
+        $this->assertEqualsWithDelta(
+            4.0,
+            $info['tokens'],
+            0.5,
+            '预期 ip 维度的令牌桶被消费 1 个令牌（证明本用例真的测到了 ip 维度，而非因标识为空被跳过）'
+        );
     }
 
     public function test_exceeding_limit_returns_429_and_sets_rate_limited_flag(): void
