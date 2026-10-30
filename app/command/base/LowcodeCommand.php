@@ -7,8 +7,6 @@ namespace app\command\base;
 use think\console\Command;
 use think\console\Input;
 use think\console\Output;
-use think\console\output\Question;
-use think\console\output\Confirm;
 use think\console\Table;
 
 /**
@@ -87,8 +85,17 @@ use think\console\Table;
      */
     protected function ask(string $question, ?string $default = null): string
     {
-        $questionObj = new Question($question, $default);
-        return $this->output->ask($this->input, $questionObj);
+        // 与 confirm() 同源问题：Output::ask() 内部会执行
+        //   $question = new Question($question, $default);
+        // 因此这里只能传「问题文本 + 默认值」，不能自己 new Question 后再塞进去 ——
+        // 否则内层 Question 的 question 字段会是一个对象，Ask::writePrompt() 里
+        // sprintf(' <info>%s</info>:', $text) 会抛
+        //   Error: Object of class think\console\output\Question could not be converted to string
+        //
+        // 归一化说明：$default 为 null（如 CreateModelCommand 的 ask('Field name')）时，
+        // 用户直接回车会让 Question::getDefault() 返回 null，而本方法声明返回 string，
+        // 唯一调用点用 empty($name) 判断「输入结束」，故把 null 归一为空串，避免返回类型 TypeError。
+        return (string) $this->output->ask($this->input, $question, $default);
     }
 
     /**
@@ -100,8 +107,14 @@ use think\console\Table;
      */
     protected function confirm(string $question, bool $default = false): bool
     {
-        $confirmObj = new Confirm($question, $default);
-        return $this->output->confirm($this->input, $confirmObj);
+        // 注意：框架里**没有** think\console\output\Confirm 这个类（历史写法会抛
+        // Class "think\console\output\Confirm" not found 致命错误），真正的类是
+        // think\console\output\question\Confirmation。
+        // 但这里不能再自己 new Confirmation(...) 传进去：Output::confirm() 内部会执行
+        // new Confirmation($question, $default)，而 Confirmation::__construct() 的第一个参数
+        // 是强类型 string，传对象会抛 TypeError。因此直接把问题文本与默认值交给框架，
+        // 由 Output::confirm() 负责实例化 Confirmation（y/n 归一化也由它完成）。
+        return $this->output->confirm($this->input, $question, $default);
     }
 
     /**
