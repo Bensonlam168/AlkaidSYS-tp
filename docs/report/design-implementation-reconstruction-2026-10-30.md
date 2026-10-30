@@ -5,10 +5,10 @@
 | 报告日期 | 2026-10-30 |
 | 审查基线 | `develop` 分支（含 C-2 前端入库、C-4 注册安全修复） |
 | 审查范围 | **184 份文档**：`design/` 73 份（50,390 行）+ `docs/technical-specs/` 39 份 + `docs/todo/` 25 份 + `docs/report/` 26 份 |
-| 对照源码 | 后端 335 PHP / 57,376 行；插件 213 PHP（src）+ 51 测试；前端 1,678 文件；**32 迁移**（阶段 A 后，原 27） |
+| 对照源码 | 后端 335 PHP / 57,376 行；插件 213 PHP（src）+ 51 测试；前端 1,678 文件；**33 迁移**（阶段 A 后，原 27） |
 | 方法 | 8 个并行只读审计包逐份精读 + 主审对 10 项关键结论独立实测 |
 | 能力项总数 | **320 项**（仅 00/01 架构、02/03 生态数据、04-07 安全运维三包；低代码与工作流另计） |
-| 阶段 A 复验基线 | `Tests: 479, Errors: 22, Failures: 19, Risky: 4`（失败集去重后 41 项 < 42 基线，零新增；剩余均为既有跨测试污染） |
+| 阶段 A 复验基线 | `Tests: 482, Errors: 22, Failures: 19, Risky: 4`（失败集去重后 41 项 < 42 基线，零新增；剩余均为既有跨测试污染） |
 | 用途 | 为项目重新规划提供事实基线 |
 
 > **阅读提示**：本报告正文记录的是 2026-10-30 首次审查的**原始快照**。凡阶段 A 已修复的条目，均以
@@ -53,7 +53,7 @@
    `protected static array`（源码注释自认 `In-memory storage for demo`）。
    ⚠️ **阶段 A 变化**：5 张表已由 `f3de7b0` 建出（`migrate:status` 31 up / 0 MISSING，回滚闭环已验证），
    但**代码层仍走内存态**（`ProcessDefineRepository` 全 TODO），"表建好了没人用" 成为新的落差形态。
-   另：外键后续已由 `c137f12` 补到 13 条（R5 已修）；但 5 张表的 `tenant_id` 仍与 `tenants.id` 类型不符，租户外键一条未建（见 R10）。
+   另：工作流外键已由 `c137f12`（R5，13 条）与 `c7b8cee`（R10，+5 条租户外键）补齐至 **18 条**。
 
 3. **文档体系存在系统性失真**：85 个标记 ✅ 的任务中仅 14 个（25%）有完成报告；工作流 TODO 的 14 项验收指标全绿而 17 个任务未开始；同一文档内并存「后端 100% 完成」与「后端 0% 缺失」。
 
@@ -399,7 +399,8 @@ $r->tenantId    → NULL   （属性访问，走 __get → middleware('tenantId'
 | R7 | `AppService::boot()` 每请求 `scandir(addons/apps)` | 本机 bind-mount 3~5ms/请求，原生 Linux 预计微秒级 | 按进程缓存 discovered 结果 |
 | R8 | `addon\` 命名空间**仍无** PSR-4 映射（A5 只加了 `plugin\`） | `addons/apps/_template/Application.php` 声明 `namespace addon\template` 但目录是 `_template` → `class_exists` 恒 false | 单独立项修正命名空间与目录约定 |
 | R9 | `workflow_definitions` **无独立 `edges` 列**，连线由 `nodes_config` JSON 承载 | 与设计文档若假定独立 edges 表/列则不符 | 核对设计后统一口径 |
-| R10 | **5 张工作流表的 `tenant_id` 仍为 `bigint`，而 `tenants.id` 是 `int unsigned`** | `tenant_id → tenants.id` 的多租户外键**一条都建不了** → 租户级引用完整性缺失；全库其余 12 张表都是 `int unsigned` 且有 5 条租户外键，工作流是唯一例外 | 与 R5 同类解法：改 `int unsigned` + 补 5 条租户外键。R5 修复时已发现但未纳入范围（用户授权的范围是外键列，不含 `tenant_id`） |
+| ~~R10~~ | ~~**5 张工作流表的 `tenant_id` 仍为 `bigint`**~~ ✅ **已修复** `c7b8cee` | 5 列改 `int unsigned`，补 5 条 `fk_{表}_tenant_id`（CASCADE/CASCADE）；指向 `tenants` 的外键 5 → **10 条**，workflow 外键总数 18。运行时验证：插入 `tenant_id=999999` 被 1452 拒绝。**同类长尾未清**：`alkaid_plugin_installations`、`lowcode_forms` 的 `tenant_id` 仍是 `bigint unsigned`，仍无租户外键 → 见 R11 | — |
+| R11 | **租户外键长尾**：`alkaid_plugin_installations.tenant_id`、`lowcode_forms.tenant_id` 为 `bigint unsigned`，与 `tenants.id`(`int unsigned`) 不匹配 | 这 2 张表仍无 `tenant_id → tenants.id` 外键；逐表打补丁（R5 改 11 列、R10 改 5 列、再改 2 列）成本高且易漏 | 做一次「全库 tenant_id 审计 + 一次性收敛」，并把类型约束写进 `check-migrations.php` |
 
 ---
 

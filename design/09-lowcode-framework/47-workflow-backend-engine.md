@@ -5,7 +5,7 @@
 > **最后更新**：2026-10-30（§7 数据库表设计按 `database/migrations/` 与 `alkaid_sys` 实测结构重写）  
 > **作者**：AlkaidSYS 架构团队
 
-> 🔶 **实现状态**：**部分实现** —— 表结构已落地（5 张表的定义在 `database/migrations/`，已在 `alkaid_sys` 库建成，**实测外键 13 条**：指向 `workflow_definitions.id` 2 条、`workflow_instances.id` 2 条、`workflow_tasks.id` 1 条、`users.id` 8 条）；**API 层未落库**（`app/controller/workflow/*` 仍为静态数组内存态，插件内 `ProcessDefineRepository`、`ProcessInstanceRepository`、`ProcessTaskRepository`、`WorkflowEventRepository` 这 4 个仓储为 TODO）。`tenant_id` 类型尚未对齐 `tenants.id`，租户外键一条未建（见 §7.1.3）。详见 §7「数据库设计」的「设计 vs 实际」对照。
+> 🔶 **实现状态**：**部分实现** —— 表结构已落地（5 张表的定义在 `database/migrations/`，已在 `alkaid_sys` 库建成，**实测外键 18 条**：指向 `workflow_definitions.id` 2 条、`workflow_instances.id` 2 条、`workflow_tasks.id` 1 条、`users.id` 8 条、`tenants.id` 5 条）；**API 层未落库**（`app/controller/workflow/*` 仍为静态数组内存态，插件内 `ProcessDefineRepository`、`ProcessInstanceRepository`、`ProcessTaskRepository`、`WorkflowEventRepository` 这 4 个仓储为 TODO）。详见 §7「数据库设计」的「设计 vs 实际」对照。详见 §7「数据库设计」的「设计 vs 实际」对照。
 
 > ⚠️ **命名空间声明**：本文示例使用**设计阶段的子层划分**（`Execution/`、`Models/`、`Services/`），与实际实现不同（实现为 `Swoole/Execution/`、`model/`（小写）、`Expression/`、`Core/`）。
 > **请勿直接照抄**，逐类映射见 [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3.3。
@@ -1135,22 +1135,48 @@ class ExpressionEngine
 | `workflow_triggers.workflow_id` | `workflow_triggers.definition_id` | 同实例表改名逻辑 |
 | `workflow_triggers.trigger_type` / `trigger_config` | `workflow_triggers.type` / `config` | 改名 |
 | `workflow_triggers.webhook_url` / `webhook_token` | ❌ 不存在 | Webhook 参数统一放在 `config` JSON 内 |
-| （设计稿 5 张表全部漏列） | 每表都有 `tenant_id bigint NOT NULL` | 多租户隔离必备列 |
+| （设计稿 5 张表全部漏列） | 每表都有 `tenant_id int unsigned NOT NULL` + `fk_{表}_tenant_id → tenants.id` | 多租户隔离必备列；类型已对齐 `tenants.id` |
 
 #### 7.1.3 外键与列类型约定
 
-- **实测外键共 13 条**（全部 `ON UPDATE CASCADE`）：
-  - 指向 `workflow_definitions.id`：`fk_workflow_instances_definition_id`、`fk_workflow_triggers_definition_id`（DELETE CASCADE）
-  - 指向 `workflow_instances.id`：`fk_workflow_tasks_instance_id`、`fk_workflow_event_logs_instance_id`（DELETE CASCADE）
-  - 指向 `workflow_tasks.id`：`fk_workflow_event_logs_task_id`（DELETE SET NULL）
-  - 指向 `users.id`（均 DELETE SET NULL）：`fk_workflow_instances_created_by`、`fk_workflow_instances_assignee`、`fk_workflow_tasks_assignee`、`fk_workflow_tasks_created_by`、`fk_workflow_triggers_created_by`、`fk_workflow_event_logs_user_id`、`fk_workflow_definitions_created_by`、`fk_workflow_definitions_updated_by`
-- 本小节 DDL 中所有外键列（`created_by`、`updated_by`、`assignee`、`user_id`、`instance_id`、`task_id`）均为 **`int unsigned`**，与 `users.id` 及各表 `id` 主键严格一致。
-- 历史沿革（供排查旧环境）：`20251216000002_add_foreign_keys.php` 最初声明的 10 条外键中，只有 2 条能建成；
-  其余 8 条因当时列类型为 `bigint` / `varchar(50)` 而失败。
-  该问题已由 `20251222000001_align_workflow_column_types.php` 修复（11 列改 `int unsigned` + 补齐 11 条外键）。
-- ⚠️ **仍未对齐**：5 张表的 `tenant_id` 仍为 `bigint`，而 `tenants.id` 是 `int unsigned`，
-  因此 `tenant_id → tenants.id` 的**多租户外键一条都没建**（全库其余 12 张表用的是 `int unsigned` 并有 5 条租户外键）。
-  这是与上述问题同类、尚未处理的遗留项。
+- **实测外键共 18 条**（全部 `ON UPDATE CASCADE`），完整清单：
+
+| 约束名 | 子表.列 | 被引用 | ON DELETE |
+|---|---|---|---|
+| `fk_workflow_instances_definition_id` | `workflow_instances.definition_id` | `workflow_definitions.id` | CASCADE |
+| `fk_workflow_triggers_definition_id` | `workflow_triggers.definition_id` | `workflow_definitions.id` | CASCADE |
+| `fk_workflow_tasks_instance_id` | `workflow_tasks.instance_id` | `workflow_instances.id` | CASCADE |
+| `fk_workflow_event_logs_instance_id` | `workflow_event_logs.instance_id` | `workflow_instances.id` | CASCADE |
+| `fk_workflow_event_logs_task_id` | `workflow_event_logs.task_id` | `workflow_tasks.id` | SET NULL |
+| `fk_workflow_definitions_created_by` | `workflow_definitions.created_by` | `users.id` | SET NULL |
+| `fk_workflow_definitions_updated_by` | `workflow_definitions.updated_by` | `users.id` | SET NULL |
+| `fk_workflow_instances_created_by` | `workflow_instances.created_by` | `users.id` | SET NULL |
+| `fk_workflow_instances_assignee` | `workflow_instances.assignee` | `users.id` | SET NULL |
+| `fk_workflow_tasks_assignee` | `workflow_tasks.assignee` | `users.id` | SET NULL |
+| `fk_workflow_tasks_created_by` | `workflow_tasks.created_by` | `users.id` | SET NULL |
+| `fk_workflow_triggers_created_by` | `workflow_triggers.created_by` | `users.id` | SET NULL |
+| `fk_workflow_event_logs_user_id` | `workflow_event_logs.user_id` | `users.id` | SET NULL |
+| `fk_workflow_definitions_tenant_id` | `workflow_definitions.tenant_id` | `tenants.id` | CASCADE |
+| `fk_workflow_instances_tenant_id` | `workflow_instances.tenant_id` | `tenants.id` | CASCADE |
+| `fk_workflow_tasks_tenant_id` | `workflow_tasks.tenant_id` | `tenants.id` | CASCADE |
+| `fk_workflow_triggers_tenant_id` | `workflow_triggers.tenant_id` | `tenants.id` | CASCADE |
+| `fk_workflow_event_logs_tenant_id` | `workflow_event_logs.tenant_id` | `tenants.id` | CASCADE |
+
+> ⚠️ **注意**：§7.2 的建表 SQL 只在 `workflow_instances`、`workflow_triggers` 两块内联了
+> `CONSTRAINT`，其余 16 条是在后续迁移里补加的（外键列类型先对齐才能建约束）。
+> **照抄 SQL 建库会缺少外键**，请以本表为准，或直接使用 `database/migrations/`。
+
+- 本小节 DDL 中所有外键列（`created_by`、`updated_by`、`assignee`、`user_id`、`instance_id`、`task_id`、`tenant_id`）
+  均为 **`int unsigned`**，与 `users.id`、`tenants.id` 及各表 `id` 主键严格一致。
+- 租户外键沿用项目既有惯例（`fk_{表}_tenant_id` + `CASCADE/CASCADE`），与
+  `depts`/`menus`/`roles`/`sites`/`users` 的 5 条一致；全库指向 `tenants` 的外键共 10 条。
+- 历史沿革（供排查旧环境）：`20251216000002_add_foreign_keys.php` 最初声明 10 条外键，
+  只有 2 条能建成 —— 其余 8 条因当时列类型是 `bigint`（用户引用列）与 `varchar(50)`
+  （`instance_id`/`task_id`）而被 MySQL 拒绝。类型对齐分两次迁移完成：
+  `20251222000001`（11 个外键列）与 `20251223000001`（5 个 `tenant_id`）。
+  在此之前，18 条外键中只有 2 条存在。
+- ⚠️ **仍未对齐的长尾**：`alkaid_plugin_installations.tenant_id`、`lowcode_forms.tenant_id`
+  仍是 `bigint unsigned`，与 `tenants.id` 不匹配，仍无租户外键（不属工作流域）。
 
 ### 7.2 核心表设计（SQL 设计稿）
 
@@ -1161,7 +1187,7 @@ class ExpressionEngine
 ```sql
 CREATE TABLE `workflow_definitions` (
   `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `tenant_id` int unsigned NOT NULL COMMENT '租户ID',
   `name` varchar(100) NOT NULL COMMENT '工作流名称（租户内唯一）',
   `display_name` varchar(200) NOT NULL COMMENT '显示名称',
   `description` text COMMENT '描述',
@@ -1197,7 +1223,7 @@ CREATE TABLE `workflow_definitions` (
 CREATE TABLE `workflow_instances` (
   `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
   `definition_id` int unsigned NOT NULL COMMENT '工作流定义ID（FK → workflow_definitions.id）',
-  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `tenant_id` int unsigned NOT NULL COMMENT '租户ID',
   `business_key` varchar(100) COMMENT '业务键（幂等/关联业务单据）',
   `title` varchar(200) NOT NULL COMMENT '实例标题',
   `status` varchar(20) NOT NULL COMMENT '状态：pending/running/completed/failed/cancelled/suspended',
@@ -1276,7 +1302,7 @@ CREATE TABLE `workflow_node_executions` (
 CREATE TABLE `workflow_tasks` (
   `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
   `instance_id` int unsigned NOT NULL COMMENT '工作流实例ID',
-  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `tenant_id` int unsigned NOT NULL COMMENT '租户ID',
   `node_id` varchar(50) NOT NULL COMMENT '节点ID',
   `node_name` varchar(200) NOT NULL COMMENT '节点名称',
   `task_type` varchar(20) NOT NULL COMMENT '任务类型：user_task/system_task/service_task',
@@ -1326,7 +1352,7 @@ CREATE TABLE `workflow_tasks` (
 CREATE TABLE `workflow_triggers` (
   `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
   `definition_id` int unsigned NOT NULL COMMENT '工作流定义ID（FK → workflow_definitions.id）',
-  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `tenant_id` int unsigned NOT NULL COMMENT '租户ID',
   `name` varchar(100) NOT NULL COMMENT '触发器名称（租户内唯一）',
   `type` varchar(20) NOT NULL COMMENT '触发器类型：manual/webhook/schedule/data_event/message_event',
   `config` json NOT NULL COMMENT '触发器配置 JSON（webhook 的 url/token 也放这里）',
@@ -1362,7 +1388,7 @@ CREATE TABLE `workflow_event_logs` (
   `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
   `instance_id` int unsigned COMMENT '工作流实例ID',
   `task_id` int unsigned COMMENT '任务ID',
-  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `tenant_id` int unsigned NOT NULL COMMENT '租户ID',
   `event_type` varchar(50) NOT NULL COMMENT '事件类型',
   `event_name` varchar(100) NOT NULL COMMENT '事件名称',
   `event_data` json COMMENT '事件数据',
