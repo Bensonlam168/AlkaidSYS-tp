@@ -42,5 +42,16 @@ return [
         'plugin:enable' => \app\command\plugin\PluginEnableCommand::class,
         'plugin:disable' => \app\command\plugin\PluginDisableCommand::class,
         'plugin:scan' => \app\command\plugin\PluginScanCommand::class,
+
+        // Migration batch semantics commands | 迁移批次语义命令 (R6)
+        //
+        // 注意：这里必须使用「数字键」而非 'migrate:run' => ... 的字符串键。
+        // 原因：vendor 的 think\migration\Service 通过 think\Console::starting() 注册同名命令，
+        //      这些回调在 Console::start() 中执行，**晚于** loadCommands() 读取本配置的时机，
+        //      字符串键注册的类会在之后被 vendor 命令覆盖（已实测）。
+        //      用数字键可让本命令在 loadCommands() 期间被实例化，从而在 configure() 中追加
+        //      一个更晚的 starting 回调，在 vendor 之后再登记一次，完成覆盖。
+        \app\command\migrate\RunCommand::class,
+        \app\command\migrate\RollbackCommand::class,
     ],
 ];
