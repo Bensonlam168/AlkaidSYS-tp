@@ -2,8 +2,10 @@
 
 > **文档版本**：v2.0  
 > **创建日期**：2025-01-20  
-> **最后更新**：2025-01-20  
+> **最后更新**：2026-10-30（§7 数据库表设计按 `database/migrations/` 与 `alkaid_sys` 实测结构重写）  
 > **作者**：AlkaidSYS 架构团队
+
+> 🔶 **实现状态**：**部分实现** —— 表结构已落地（5 张表的定义在 `database/migrations/`，已在 `alkaid_sys` 库建成，**实测外键 13 条**：指向 `workflow_definitions.id` 2 条、`workflow_instances.id` 2 条、`workflow_tasks.id` 1 条、`users.id` 8 条）；**API 层未落库**（`app/controller/workflow/*` 仍为静态数组内存态，插件内 `ProcessDefineRepository`、`ProcessInstanceRepository`、`ProcessTaskRepository`、`WorkflowEventRepository` 这 4 个仓储为 TODO）。`tenant_id` 类型尚未对齐 `tenants.id`，租户外键一条未建（见 §7.1.3）。详见 §7「数据库设计」的「设计 vs 实际」对照。
 
 > ⚠️ **命名空间声明**：本文示例使用**设计阶段的子层划分**（`Execution/`、`Models/`、`Services/`），与实际实现不同（实现为 `Swoole/Execution/`、`model/`（小写）、`Expression/`、`Core/`）。
 > **请勿直接照抄**，逐类映射见 [`../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md`](../../docs/technical-specs/lowcode/lowcode-architecture-guidelines.md) §5.3.3。
@@ -775,14 +777,18 @@ class WorkflowEngine
     
     protected function createExecutionInstance(Workflow $workflow, array $triggerData): WorkflowInstance
     {
+        // 注：下表字段以 database/migrations/ 为准——实例表只有 definition_id / tenant_id /
+        // business_key / context / variables 等列，没有 workflow_id / workflow_name /
+        // workflow_version / trigger_type / trigger_data（详见 §7.1「设计 vs 实际」）
         return WorkflowInstance::create([
-            'workflow_id' => $workflow->id,
-            'workflow_name' => $workflow->name,
-            'workflow_version' => $workflow->version,
-            'trigger_type' => $triggerData['trigger'] ?? 'manual',
-            'trigger_data' => $triggerData,
+            'definition_id' => $workflow->id,
+            'tenant_id' => $triggerData['tenant_id'] ?? 0,
+            'business_key' => $triggerData['business_key'] ?? null,
+            'title' => $workflow->name . ' - ' . now(),
             'status' => 'running',
-            'started_at' => now()
+            'context' => $triggerData,
+            'started_at' => now(),
+            'created_by' => $triggerData['user_id'] ?? null
         ]);
     }
     
@@ -1092,69 +1098,156 @@ class ExpressionEngine
 
 ## 7. 数据库设计
 
-### 7.1 核心表设计
+### 7.1 设计 vs 实际（必读）
 
-**借鉴 Ingenious 的数据库设计理念**：
+> **本文档下面（§7.2）的 SQL 是设计稿；实际表结构以 `database/migrations/` 为准。**
+> 建表：`database/migrations/20251216000001_create_workflow_tables.php`；
+> 外键：`database/migrations/20251216000002_add_foreign_keys.php`；
+> 组合索引/全文索引：`database/migrations/20251216000005_optimize_indexes.php`。
+> 核对方式：`information_schema.columns` / `information_schema.statistics` / `information_schema.referential_constraints`（库 `alkaid_sys`，实测日期 2026-10-30）。
 
-**1. workflow_definitions（工作流定义表）**：
+#### 7.1.1 表级对照
+
+| 设计文档（§7.2 SQL 的设计稿） | 实际实现（`alkaid_sys` 实测） | 差异性质 |
+| --- | --- | --- |
+| `workflow_definitions` | `workflow_definitions` | ✅ 表名一致，列有差异 |
+| `workflow_instances` | `workflow_instances` | ✅ 表名一致，列有差异（`workflow_id` → `definition_id`） |
+| `workflow_node_executions` | ❌ **未实现（当前无此表）** | 设计有、代码无；代码中无任何读写，保留为后续设计 |
+| `workflow_human_tasks`（旧名） | `workflow_tasks` | ⚠️ 表名不一致，**以代码为准**；本文档已全部改名为 `workflow_tasks` |
+| `workflow_triggers` | `workflow_triggers` | ✅ 表名一致，列有差异 |
+| （设计未列） | `workflow_event_logs` | 🆕 代码新增，设计稿漏列；本文档已补建表 SQL（见 §7.2 表 6） |
+
+#### 7.1.2 列级对照
+
+| 设计稿 | 实际实现 | 说明 |
+| --- | --- | --- |
+| `workflow_definitions.title` | `workflow_definitions.display_name` | 改名 |
+| `workflow_definitions.trigger` / `nodes` / `edges` / `variables` | `triggers_config` / `nodes_config` / `bpmn_xml` / `variables_schema` | 单列拆分 + 增加 BPMN XML |
+| `workflow_definitions.is_published` | ❌ 不存在 | 状态由 `status`（draft/published/archived）表达 |
+| `workflow_definitions.deleted_at` | ❌ 不存在 | 当前未做软删除 |
+| `workflow_instances.workflow_id` | `workflow_instances.definition_id` | **改名**，外键指向 `workflow_definitions.id` |
+| `workflow_instances.workflow_name` | ❌ 不存在 | 冗余列未落地；需要名称/版本时 JOIN `workflow_definitions` |
+| `workflow_instances.workflow_version` | ❌ 不存在 | 同上 |
+| `workflow_instances.trigger_type` / `trigger_data` | ❌ 不存在 | 改由 `business_key` / `context` / `variables` 承载 |
+| `workflow_instances.current_node_id`（`varchar(100)`） | `current_node_id`（`varchar(50)`）+ 新增 `current_node_name` | 长度收窄并补名称冗余 |
+| `workflow_human_tasks.node_execution_id` | ❌ 不存在 | 依赖未实现的 `workflow_node_executions` |
+| `workflow_human_tasks.instance_id`（`bigint unsigned`） | `workflow_tasks.instance_id`（`int unsigned`） | 存放实例主键值；类型已统一为 `int unsigned`，见 §7.1.3 |
+| `workflow_triggers.workflow_id` | `workflow_triggers.definition_id` | 同实例表改名逻辑 |
+| `workflow_triggers.trigger_type` / `trigger_config` | `workflow_triggers.type` / `config` | 改名 |
+| `workflow_triggers.webhook_url` / `webhook_token` | ❌ 不存在 | Webhook 参数统一放在 `config` JSON 内 |
+| （设计稿 5 张表全部漏列） | 每表都有 `tenant_id bigint NOT NULL` | 多租户隔离必备列 |
+
+#### 7.1.3 外键与列类型约定
+
+- **实测外键共 13 条**（全部 `ON UPDATE CASCADE`）：
+  - 指向 `workflow_definitions.id`：`fk_workflow_instances_definition_id`、`fk_workflow_triggers_definition_id`（DELETE CASCADE）
+  - 指向 `workflow_instances.id`：`fk_workflow_tasks_instance_id`、`fk_workflow_event_logs_instance_id`（DELETE CASCADE）
+  - 指向 `workflow_tasks.id`：`fk_workflow_event_logs_task_id`（DELETE SET NULL）
+  - 指向 `users.id`（均 DELETE SET NULL）：`fk_workflow_instances_created_by`、`fk_workflow_instances_assignee`、`fk_workflow_tasks_assignee`、`fk_workflow_tasks_created_by`、`fk_workflow_triggers_created_by`、`fk_workflow_event_logs_user_id`、`fk_workflow_definitions_created_by`、`fk_workflow_definitions_updated_by`
+- 本小节 DDL 中所有外键列（`created_by`、`updated_by`、`assignee`、`user_id`、`instance_id`、`task_id`）均为 **`int unsigned`**，与 `users.id` 及各表 `id` 主键严格一致。
+- 历史沿革（供排查旧环境）：`20251216000002_add_foreign_keys.php` 最初声明的 10 条外键中，只有 2 条能建成；
+  其余 8 条因当时列类型为 `bigint` / `varchar(50)` 而失败。
+  该问题已由 `20251222000001_align_workflow_column_types.php` 修复（11 列改 `int unsigned` + 补齐 11 条外键）。
+- ⚠️ **仍未对齐**：5 张表的 `tenant_id` 仍为 `bigint`，而 `tenants.id` 是 `int unsigned`，
+  因此 `tenant_id → tenants.id` 的**多租户外键一条都没建**（全库其余 12 张表用的是 `int unsigned` 并有 5 条租户外键）。
+  这是与上述问题同类、尚未处理的遗留项。
+
+### 7.2 核心表设计（SQL 设计稿）
+
+**借鉴 Ingenious 的数据库设计理念**（列名/类型/索引已按 `alkaid_sys` 实测结构校正）：
+
+**1. workflow_definitions（工作流定义表）✅ 已实现**：
 
 ```sql
 CREATE TABLE `workflow_definitions` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `name` varchar(100) NOT NULL COMMENT '工作流名称',
-  `title` varchar(200) NOT NULL COMMENT '工作流标题',
-  `description` text COMMENT '工作流描述',
-  `type` varchar(50) NOT NULL COMMENT '工作流类型：approval/automation/hybrid',
-  `trigger` json NOT NULL COMMENT '触发器配置',
-  `nodes` json NOT NULL COMMENT '节点配置',
-  `edges` json NOT NULL COMMENT '边配置',
-  `variables` json COMMENT '全局变量',
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `name` varchar(100) NOT NULL COMMENT '工作流名称（租户内唯一）',
+  `display_name` varchar(200) NOT NULL COMMENT '显示名称',
+  `description` text COMMENT '描述',
+  `type` varchar(20) NOT NULL DEFAULT 'approval' COMMENT '类型：approval/automation/hybrid',
+  `category` varchar(50) COMMENT '分类',
+  `icon` varchar(100) COMMENT '图标',
   `version` int NOT NULL DEFAULT 1 COMMENT '版本号',
-  `is_active` tinyint NOT NULL DEFAULT 1 COMMENT '是否激活',
-  `is_published` tinyint NOT NULL DEFAULT 0 COMMENT '是否发布',
-  `created_by` bigint unsigned COMMENT '创建人',
-  `updated_by` bigint unsigned COMMENT '更新人',
-  `created_at` timestamp NULL DEFAULT NULL,
-  `updated_at` timestamp NULL DEFAULT NULL,
-  `deleted_at` timestamp NULL DEFAULT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'draft' COMMENT '状态：draft/published/archived',
+  `bpmn_xml` text COMMENT 'BPMN 2.0 XML 定义',
+  `nodes_config` json COMMENT '节点配置 JSON',
+  `triggers_config` json COMMENT '触发器配置 JSON',
+  `variables_schema` json COMMENT '变量 Schema 定义',
+  `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '是否激活',
+  `created_at` datetime COMMENT '创建时间',
+  `updated_at` datetime COMMENT '更新时间',
+  `created_by` int unsigned COMMENT '创建用户ID',
+  `updated_by` int unsigned COMMENT '更新用户ID',
   PRIMARY KEY (`id`),
-  KEY `idx_name` (`name`),
+  UNIQUE KEY `uk_tenant_name_version` (`tenant_id`, `name`, `version`),
+  KEY `idx_tenant` (`tenant_id`),
+  KEY `idx_status` (`status`),
   KEY `idx_type` (`type`),
-  KEY `idx_is_active` (`is_active`)
+  KEY `idx_tenant_status_active` (`tenant_id`, `status`, `is_active`),
+  KEY `idx_tenant_type_category` (`tenant_id`, `type`, `category`),
+  KEY `idx_tenant_updated` (`tenant_id`, `updated_at`),
+  FULLTEXT KEY `idx_search` (`name`, `display_name`, `description`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流定义表';
 ```
 
-**2. workflow_instances（工作流实例表）**：
+**2. workflow_instances（工作流实例表）✅ 已实现**：
 
 ```sql
 CREATE TABLE `workflow_instances` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `workflow_id` bigint unsigned NOT NULL COMMENT '工作流定义ID',
-  `workflow_name` varchar(100) NOT NULL COMMENT '工作流名称（冗余）',
-  `workflow_version` int NOT NULL COMMENT '工作流版本（冗余）',
-  `trigger_type` varchar(50) NOT NULL COMMENT '触发类型',
-  `trigger_data` json COMMENT '触发数据',
-  `status` varchar(50) NOT NULL COMMENT '状态：running/completed/failed/cancelled/pending',
-  `current_node_id` varchar(100) COMMENT '当前节点ID',
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `definition_id` int unsigned NOT NULL COMMENT '工作流定义ID（FK → workflow_definitions.id）',
+  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `business_key` varchar(100) COMMENT '业务键（幂等/关联业务单据）',
+  `title` varchar(200) NOT NULL COMMENT '实例标题',
+  `status` varchar(20) NOT NULL COMMENT '状态：pending/running/completed/failed/cancelled/suspended',
+  `priority` int NOT NULL DEFAULT 5 COMMENT '优先级（1-10）',
+  `current_node_id` varchar(50) COMMENT '当前节点ID',
+  `current_node_name` varchar(200) COMMENT '当前节点名称',
+  `context` json COMMENT '执行上下文数据',
   `variables` json COMMENT '执行变量',
+  `started_at` datetime COMMENT '开始时间',
+  `completed_at` datetime COMMENT '完成时间',
+  `suspended_at` datetime COMMENT '暂停时间',
+  `duration` bigint COMMENT '执行时长（毫秒）',
   `error_message` text COMMENT '错误信息',
-  `started_at` timestamp NULL COMMENT '开始时间',
-  `completed_at` timestamp NULL COMMENT '完成时间',
-  `created_at` timestamp NULL DEFAULT NULL,
-  `updated_at` timestamp NULL DEFAULT NULL,
+  `error_stack` text COMMENT '错误堆栈',
+  `created_at` datetime COMMENT '创建时间',
+  `updated_at` datetime COMMENT '更新时间',
+  `created_by` int unsigned COMMENT '发起用户ID',
+  `assignee` int unsigned COMMENT '当前处理人ID',
   PRIMARY KEY (`id`),
-  KEY `idx_workflow_id` (`workflow_id`),
+  KEY `idx_tenant` (`tenant_id`),
+  KEY `idx_definition` (`definition_id`),
   KEY `idx_status` (`status`),
-  KEY `idx_started_at` (`started_at`)
+  KEY `idx_business_key` (`business_key`),
+  KEY `idx_started_at` (`started_at`),
+  KEY `idx_created_by` (`created_by`),
+  KEY `idx_assignee` (`assignee`),
+  KEY `idx_tenant_status_time` (`tenant_id`, `status`, `started_at`),
+  KEY `idx_tenant_status_user` (`tenant_id`, `status`, `created_by`),
+  KEY `idx_tenant_status_assignee` (`tenant_id`, `status`, `assignee`),
+  KEY `idx_tenant_business_key` (`tenant_id`, `business_key`),
+  KEY `idx_tenant_def_status` (`tenant_id`, `definition_id`, `status`),
+  KEY `idx_status_time` (`status`, `started_at`),
+  KEY `idx_tenant_completed` (`tenant_id`, `completed_at`),
+  KEY `idx_tenant_status_time_range` (`tenant_id`, `status`, `started_at`, `completed_at`),
+  CONSTRAINT `fk_workflow_instances_definition_id`
+    FOREIGN KEY (`definition_id`) REFERENCES `workflow_definitions` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流实例表';
 ```
 
-**3. workflow_node_executions（节点执行记录表）**：
+**3. workflow_node_executions（节点执行记录表）❌ 未实现（当前无此表）**：
+
+> ⚠️ 该表**在代码与数据库中都不存在**（`database/migrations/` 未创建，代码中无任何读写）。
+> 下面的 SQL 仅作为**后续设计参考**，请勿据此编码；当前节点执行信息通过 `workflow_event_logs`
+> 事件流与 `workflow_tasks` 人工任务间接体现。
 
 ```sql
 CREATE TABLE `workflow_node_executions` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `instance_id` bigint unsigned NOT NULL COMMENT '工作流实例ID',
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `instance_id` int unsigned NOT NULL COMMENT '工作流实例ID',
   `node_id` varchar(100) NOT NULL COMMENT '节点ID',
   `node_type` varchar(50) NOT NULL COMMENT '节点类型',
   `node_name` varchar(200) COMMENT '节点名称',
@@ -1170,51 +1263,128 @@ CREATE TABLE `workflow_node_executions` (
   KEY `idx_instance_id` (`instance_id`),
   KEY `idx_node_id` (`node_id`),
   KEY `idx_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='节点执行记录表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='节点执行记录表（未实现）';
 ```
 
-**4. workflow_human_tasks（人工任务表）**：
+**4. workflow_tasks（工作流任务表，设计稿旧名 `workflow_human_tasks`）✅ 已实现**：
+
+> 表名以代码为准：设计稿的 `workflow_human_tasks` 未落地，实际表为 `workflow_tasks`；
+> 列也随之变化（无 `node_execution_id`，新增 `task_sub_type` / `assignee_name` /
+> `candidate_users` / `candidate_groups` / `comment` / `due_date` / `reminder_times` / `rejected_at` / `cancelled_at` 等）。
 
 ```sql
-CREATE TABLE `workflow_human_tasks` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `instance_id` bigint unsigned NOT NULL COMMENT '工作流实例ID',
-  `node_id` varchar(100) NOT NULL COMMENT '节点ID',
-  `node_execution_id` bigint unsigned NOT NULL COMMENT '节点执行记录ID',
-  `task_type` varchar(50) NOT NULL COMMENT '任务类型：approval/countersign',
+CREATE TABLE `workflow_tasks` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `instance_id` int unsigned NOT NULL COMMENT '工作流实例ID',
+  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `node_id` varchar(50) NOT NULL COMMENT '节点ID',
+  `node_name` varchar(200) NOT NULL COMMENT '节点名称',
+  `task_type` varchar(20) NOT NULL COMMENT '任务类型：user_task/system_task/service_task',
+  `task_sub_type` varchar(20) COMMENT '任务子类型：approval/countersign/notify',
   `title` varchar(200) NOT NULL COMMENT '任务标题',
   `description` text COMMENT '任务描述',
+  `status` varchar(20) NOT NULL COMMENT '状态：pending/claimed/completed/rejected/cancelled/escalated',
+  `priority` int NOT NULL DEFAULT 5 COMMENT '优先级（1-10）',
+  `assignee` int unsigned COMMENT '处理人ID',
+  `assignee_name` varchar(100) COMMENT '处理人姓名',
+  `candidate_users` json COMMENT '候选用户列表',
+  `candidate_groups` json COMMENT '候选组列表',
   `form_data` json COMMENT '表单数据',
-  `assignee` bigint unsigned NOT NULL COMMENT '处理人',
-  `status` varchar(50) NOT NULL COMMENT '状态：pending/completed/rejected/cancelled',
   `result` json COMMENT '处理结果',
-  `completed_at` timestamp NULL COMMENT '完成时间',
-  `created_at` timestamp NULL DEFAULT NULL,
-  `updated_at` timestamp NULL DEFAULT NULL,
+  `comment` text COMMENT '审批意见',
+  `due_date` datetime COMMENT '截止时间',
+  `reminder_times` json COMMENT '提醒时间列表',
+  `completed_at` datetime COMMENT '完成时间',
+  `rejected_at` datetime COMMENT '拒绝时间',
+  `cancelled_at` datetime COMMENT '取消时间',
+  `created_at` datetime COMMENT '创建时间',
+  `updated_at` datetime COMMENT '更新时间',
+  `created_by` int unsigned COMMENT '创建人ID',
   PRIMARY KEY (`id`),
-  KEY `idx_instance_id` (`instance_id`),
+  KEY `idx_tenant` (`tenant_id`),
+  KEY `idx_instance` (`instance_id`),
+  KEY `idx_status` (`status`),
   KEY `idx_assignee` (`assignee`),
-  KEY `idx_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人工任务表';
+  KEY `idx_due_date` (`due_date`),
+  KEY `idx_created_at` (`created_at`),
+  KEY `idx_node` (`node_id`),
+  KEY `idx_tenant_status_assignee` (`tenant_id`, `status`, `assignee`),
+  KEY `idx_tenant_status_due` (`tenant_id`, `status`, `due_date`),
+  KEY `idx_tenant_assignee_status` (`tenant_id`, `assignee`, `status`),
+  KEY `idx_todo_list` (`assignee`, `status`, `priority`, `due_date`),
+  KEY `idx_tenant_instance_node` (`tenant_id`, `instance_id`, `node_id`),
+  KEY `idx_tenant_type_status` (`tenant_id`, `task_type`, `status`),
+  KEY `idx_status_created` (`status`, `created_at`),
+  KEY `idx_tenant_completed` (`tenant_id`, `completed_at`),
+  KEY `idx_tenant_status_date_range` (`tenant_id`, `status`, `created_at`, `due_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流任务表';
 ```
 
-**5. workflow_triggers（触发器注册表）**：
+**5. workflow_triggers（触发器注册表）✅ 已实现**：
 
 ```sql
 CREATE TABLE `workflow_triggers` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `workflow_id` bigint unsigned NOT NULL COMMENT '工作流定义ID',
-  `trigger_type` varchar(50) NOT NULL COMMENT '触发器类型',
-  `trigger_config` json NOT NULL COMMENT '触发器配置',
-  `webhook_url` varchar(500) COMMENT 'Webhook URL',
-  `webhook_token` varchar(100) COMMENT 'Webhook Token',
-  `is_active` tinyint NOT NULL DEFAULT 1 COMMENT '是否激活',
-  `created_at` timestamp NULL DEFAULT NULL,
-  `updated_at` timestamp NULL DEFAULT NULL,
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `definition_id` int unsigned NOT NULL COMMENT '工作流定义ID（FK → workflow_definitions.id）',
+  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `name` varchar(100) NOT NULL COMMENT '触发器名称（租户内唯一）',
+  `type` varchar(20) NOT NULL COMMENT '触发器类型：manual/webhook/schedule/data_event/message_event',
+  `config` json NOT NULL COMMENT '触发器配置 JSON（webhook 的 url/token 也放这里）',
+  `is_active` tinyint(1) NOT NULL DEFAULT 1 COMMENT '是否激活',
+  `created_at` datetime COMMENT '创建时间',
+  `updated_at` datetime COMMENT '更新时间',
+  `created_by` int unsigned COMMENT '创建人ID',
   PRIMARY KEY (`id`),
-  KEY `idx_workflow_id` (`workflow_id`),
-  KEY `idx_trigger_type` (`trigger_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='触发器注册表';
+  UNIQUE KEY `uk_tenant_name` (`tenant_id`, `name`),
+  KEY `idx_tenant` (`tenant_id`),
+  KEY `idx_definition` (`definition_id`),
+  KEY `idx_type` (`type`),
+  KEY `idx_is_active` (`is_active`),
+  KEY `idx_def_type` (`definition_id`, `type`),
+  KEY `idx_tenant_def_active` (`tenant_id`, `definition_id`, `is_active`),
+  KEY `idx_tenant_type_active` (`tenant_id`, `type`, `is_active`),
+  KEY `idx_tenant_updated` (`tenant_id`, `updated_at`),
+  CONSTRAINT `fk_workflow_triggers_definition_id`
+    FOREIGN KEY (`definition_id`) REFERENCES `workflow_definitions` (`id`)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流触发器表';
+```
+
+**6. workflow_event_logs（工作流事件日志表）🆕 代码新增（设计稿漏列）**：
+
+> 设计稿没有这张表，迁移已创建（`create_workflow_tables.php` 的 `createWorkflowEventLogs()`），
+> 用于按实例/任务维度记录事件流水：`event_type` 区分事件类别，`event_data` 存事件载荷。
+> 注意：业务代码目前尚未写入该表（仓储仍为 TODO，仅迁移种子数据有插入）；
+> 而 `workflow_node_executions` 不存在，因此**没有节点级「输入/输出/耗时」明细表**，需要时再按 §7.2 表 3 落地。
+
+```sql
+CREATE TABLE `workflow_event_logs` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT COMMENT '主键',
+  `instance_id` int unsigned COMMENT '工作流实例ID',
+  `task_id` int unsigned COMMENT '任务ID',
+  `tenant_id` bigint NOT NULL COMMENT '租户ID',
+  `event_type` varchar(50) NOT NULL COMMENT '事件类型',
+  `event_name` varchar(100) NOT NULL COMMENT '事件名称',
+  `event_data` json COMMENT '事件数据',
+  `user_id` int unsigned COMMENT '操作用户ID',
+  `user_name` varchar(100) COMMENT '操作用户姓名',
+  `ip_address` varchar(45) COMMENT 'IP地址',
+  `user_agent` text COMMENT '用户代理',
+  `created_at` datetime COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_tenant` (`tenant_id`),
+  KEY `idx_instance` (`instance_id`),
+  KEY `idx_task` (`task_id`),
+  KEY `idx_event_type` (`event_type`),
+  KEY `idx_created_at` (`created_at`),
+  KEY `idx_tenant_instance_time` (`tenant_id`, `instance_id`, `created_at`),
+  KEY `idx_tenant_task_time` (`tenant_id`, `task_id`, `created_at`),
+  KEY `idx_tenant_type_time` (`tenant_id`, `event_type`, `created_at`),
+  KEY `idx_tenant_user_time` (`tenant_id`, `user_id`, `created_at`),
+  KEY `idx_type_time` (`event_type`, `created_at`),
+  KEY `idx_ip_time` (`ip_address`, `created_at`),
+  KEY `idx_multi_condition` (`tenant_id`, `event_type`, `user_id`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流事件日志表';
 ```
 
 ---
@@ -1340,6 +1510,9 @@ class WorkflowController extends Controller
 
 ---
 
-**最后更新**：2025-01-20
+**最后更新**：2026-10-30
 **文档版本**：v2.0
 **维护者**：AlkaidSYS 架构团队
+
+**变更记录**：
+- 2026-10-30：§7 数据库表设计整体对齐实际代码——`workflow_human_tasks` → `workflow_tasks`、`workflow_node_executions` 标注「❌ 未实现」、补 `workflow_event_logs` 建表 SQL、`workflow_id` → `definition_id` 并删除 `workflow_name`/`workflow_version` 等未落地列；新增 §7.1「设计 vs 实际」对照表（依据 `alkaid_sys` 的 information_schema 实测）。
