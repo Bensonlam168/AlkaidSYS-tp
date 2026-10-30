@@ -16,6 +16,12 @@ use Firebase\JWT\BeforeValidException;
  * Handles JWT token generation and validation.
  * 处理JWT令牌的生成和验证。
  *
+ * 环境行为 | Environment behaviour：
+ * - 生产类环境（production/prod/stage/staging，或未设置 APP_ENV）：密钥为空、命中公开占位符
+ *   或长度不足 32 字节时，**构造本类即抛异常**；由于本类是惰性构造的（中间件/DI 按需解析），
+ *   进程不会在启动期失败，表现是「进程正常启动，之后每个需要鉴权的请求被拒绝」。
+ * - 非生产环境（dev/local/testing）：允许占位符；密钥为空时回退到内置开发密钥并记录 warning。
+ *
  * @package Infrastructure\Auth
  */
 class JwtService
@@ -42,6 +48,46 @@ class JwtService
      */
     protected int $refreshTtl = 604800; // 7 days
 
+    /**
+     * 内置开发密钥 | Built-in development fallback secret
+     *
+     * 仅用于非生产环境：当 JWT_SECRET 为空时回退到该值。
+     * 原因：firebase/php-jwt 拒绝空 key 解码，若直接用空密钥签名会出现
+     * 「登录返回 200 且带 token，但随后每个受保护接口都 401」的极难定位问题。
+     * 该值属于公开占位符（前缀 dev-only），生产环境会被 fail-fast 拒绝。
+     */
+    public const DEV_FALLBACK_SECRET = 'dev-only-insecure-secret-please-change-in-production-0123456789';
+
+    /**
+     * 生产环境公开占位符黑名单（精确匹配，忽略大小写）
+     */
+    protected const PUBLIC_PLACEHOLDER_SECRETS = [
+        'CHANGE_THIS_IN_PRODUCTION',
+        'REPLACE_WITH_STRONG_RANDOM_SECRET_KEY_AT_LEAST_32_BYTES',
+    ];
+
+    /**
+     * 生产环境公开占位符前缀黑名单（前缀匹配，忽略大小写）
+     *
+     * 采用前缀匹配而不是逐个枚举，避免以后新增 REPLACE_WITH_XXX / DEV_ONLY_XXX
+     * 之类占位符时又漏判。
+     */
+    protected const PUBLIC_PLACEHOLDER_PREFIXES = [
+        'REPLACE_WITH',
+        'DEV_ONLY',
+        'DEV-ONLY',
+    ];
+
+    /**
+     * 生产环境密钥最小长度（字节），用于保证足够熵
+     */
+    protected const MIN_PRODUCTION_SECRET_LENGTH = 32;
+
+    /**
+     * 生产类环境词表（与 app/command/EnvCheckCommand.php 的词表保持一致）
+     */
+    protected const PRODUCTION_ENVS = ['production', 'prod', 'stage', 'staging'];
+
     // Error type identifiers for token validation | Token 校验错误类型标识
     public const ERR_INVALID_TOKEN_FORMAT = 'INVALID_TOKEN_FORMAT';
     public const ERR_TOKEN_EXPIRED       = 'TOKEN_EXPIRED';
@@ -53,6 +99,102 @@ class JwtService
     {
         $this->secret = (string) \think\facade\Env::get('JWT_SECRET', 'CHANGE_THIS_IN_PRODUCTION');
         $this->issuer = (string) \think\facade\Env::get('JWT_ISSUER', 'https://api.alkaidsys.local');
+
+        // 安全（缺陷 C-5）：生产环境密钥不安全时立即失败
+        //
+        // `CHANGE_THIS_IN_PRODUCTION` / `REPLACE_WITH_*` / `dev-only-*` 都是仓库内公开字符串，
+        // 若生产环境仍使用它们（或密钥为空、长度不足），任何知道该字符串的人都能伪造任意用户的
+        // token。生产环境必须在 .env 中配置足够长的随机密钥，否则构造 JwtService 时抛异常。
+        //
+        // 注意（问题 3）：JwtService 是**惰性构造**的（中间件 / DI 按需解析，无 provider 在启动期解析它），
+        // 因此进程**不会**在启动期失败；真实表现是「进程正常启动，之后每个需要鉴权的请求被拒绝」。
+        //
+        // 未显式配置（或显式配置为空）APP_ENV 时按 production 处理（失败安全）。
+        $appEnv = strtolower(trim((string) \think\facade\Env::get('APP_ENV', 'production')));
+        if ($appEnv === '') {
+            $appEnv = 'production';
+        }
+
+        if (in_array($appEnv, self::PRODUCTION_ENVS, true)) {
+            $this->assertProductionSecretIsSecure($this->secret, $appEnv);
+            return;
+        }
+
+        // 非生产环境（dev/local/testing）：空密钥回退到内置开发密钥，并记录 warning
+        //
+        // 缺陷修复（问题 1）：若不回退，空密钥会「签发成功但校验失败」——
+        // firebase/php-jwt 的 Key::__construct 拒绝空 key，异常为
+        // `INVALID_TOKEN_FORMAT: Key material must not be empty`。
+        if (trim($this->secret) === '') {
+            $this->secret = self::DEV_FALLBACK_SECRET;
+
+            \think\facade\Log::warning(
+                'JWT_SECRET is empty; falling back to the built-in development secret. '
+                . 'The public development key is ONLY acceptable for local development/testing. | '
+                . 'JWT_SECRET 为空，已回退到内置开发密钥（公开字符串），仅限本地开发/测试使用；生产环境必须配置独立强密钥。'
+            );
+        }
+    }
+
+    /**
+     * 生产环境密钥强度校验 | Assert production secret strength
+     *
+     * 依次校验：非空 → 不是公开占位符 → 长度满足最小熵要求。
+     * 异常消息中只暴露「原因 + 长度」，不输出密钥本身，避免把密钥写进日志。
+     *
+     * @param string $secret 待校验密钥
+     * @param string $appEnv 已归一化（小写）的环境名
+     * @throws \RuntimeException 密钥不满足生产环境要求时抛出
+     */
+    protected function assertProductionSecretIsSecure(string $secret, string $appEnv): void
+    {
+        $trimmed = trim($secret);
+
+        if ($trimmed === '') {
+            throw new \RuntimeException(sprintf(
+                'JWT_SECRET must not be empty in production (APP_ENV=%s); configure a sufficiently long random secret',
+                $appEnv
+            ));
+        }
+
+        if ($this->isPublicPlaceholder($trimmed)) {
+            throw new \RuntimeException(sprintf(
+                'JWT_SECRET is a known public placeholder in production (APP_ENV=%s); '
+                . 'generate a unique random secret, e.g. `openssl rand -hex 32`',
+                $appEnv
+            ));
+        }
+
+        if (strlen($trimmed) < self::MIN_PRODUCTION_SECRET_LENGTH) {
+            throw new \RuntimeException(sprintf(
+                'JWT_SECRET is too short (%d < %d bytes) for production (APP_ENV=%s); '
+                . 'use at least %d bytes of entropy',
+                strlen($trimmed),
+                self::MIN_PRODUCTION_SECRET_LENGTH,
+                $appEnv,
+                self::MIN_PRODUCTION_SECRET_LENGTH
+            ));
+        }
+    }
+
+    /**
+     * 判断密钥是否为仓库内公开的占位符 | Is a publicly known placeholder
+     */
+    protected function isPublicPlaceholder(string $secret): bool
+    {
+        $upper = strtoupper($secret);
+
+        if (in_array($upper, self::PUBLIC_PLACEHOLDER_SECRETS, true)) {
+            return true;
+        }
+
+        foreach (self::PUBLIC_PLACEHOLDER_PREFIXES as $prefix) {
+            if (str_starts_with($upper, strtoupper($prefix))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

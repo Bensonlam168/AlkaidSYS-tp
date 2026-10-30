@@ -137,8 +137,12 @@ class Auth
         }
 
         try {
-            // Validate token | 验证token
-            $payload = $this->jwtService->validateToken($token);
+            // Validate ACCESS token only | 仅校验 Access Token
+            //
+            // 安全（缺陷 C-6）：受保护接口必须拒绝 Refresh Token。
+            // validateToken() 只验签名不校验 token 类型，会让 refresh token
+            // 直接获得接口访问权限；validateAccessToken() 会额外校验 type=access。
+            $payload = $this->jwtService->validateAccessToken($token);
 
             // Set user context to request (only if custom Request class is used) | 设置用户上下文到请求（仅当使用自定义Request类时）
             if (isset($payload['user_id']) && method_exists($request, 'setUserId')) {
