@@ -183,11 +183,21 @@ php think lowcode:create-form <表单名称> [选项]
 | `--fields` | string | 全部 | 仅包含指定字段（逗号分隔），例如 `"name,price,stock"`；未指定时包含 Collection 的全部字段 |
 | `--title` | string | 同名称 | 表单标题 |
 | `--description` | string | 空 | 表单描述 |
-| `--tenant-id` | int | 0 | 租户 ID（0 = 系统模板） |
+| `--tenant-id` | int | 1 | 租户 ID，**必须是已存在的真实租户**（默认 1）；`0` 是系统模板空间，本命令不接受 |
 | `--site-id` | int | 0 | 站点 ID（0 = 默认站点） |
 | `--force` | flag | false | 如表单已存在则强制覆盖 |
 | `--format` | string | `text` | 输出格式：`text` 或 `json` |
 | `--audit-out` | string | - | 将 JSON envelope 写入指定文件 |
+
+> ⚠️ **`--tenant-id` 不能是 0**：`lowcode_forms.tenant_id` 是「真实租户引用」
+> （`NOT NULL`、无默认值，且带外键 `fk_lowcode_forms_tenant_id → tenants.id`），
+> 而 `tenants` 表没有 `id=0`（0 是「系统模板空间」，仅供 `lowcode_collections` 等模板表使用）。
+> 显式传 `--tenant-id=0` 会在写库前直接返回业务错误并以退出码 1 结束（不会写出脏数据，也不会撞外键报 1452）：
+
+```text
+✗ Invalid --tenant-id: 0 是系统模板空间（tenants 表没有 id=0），而 lowcode_forms.tenant_id
+  要求真实租户（外键 fk_lowcode_forms_tenant_id → tenants.id）。请指定一个已存在的租户ID（≥ 1，默认为 1）。
+```
 
 ### 使用示例
 
@@ -519,12 +529,16 @@ Migration file generated: database/migrations/20251215_update_product_table.php
 ### 3. 多租户使用
 
 ```bash
-# 系统模板（所有租户共享）
+# 系统模板（所有租户共享）——仅适用于 lowcode:create-model / generate / migration:diff
 --tenant-id=0 --site-id=0
 
 # 特定租户
 --tenant-id=1 --site-id=1
 ```
+
+> ⚠️ `--tenant-id=0`（系统模板空间）**不适用于 `lowcode:create-form`**：
+> 表单表 `lowcode_forms.tenant_id` 是真实租户引用（带外键指向 `tenants.id`），
+> 该命令的默认值是 `1`，显式传 `0` 会被拒绝。详见上文 [lowcode:create-form](#lowcodecreate-form)。
 
 ### 4. 版本化工作流
 

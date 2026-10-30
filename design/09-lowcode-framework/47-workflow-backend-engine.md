@@ -1169,7 +1169,8 @@ class ExpressionEngine
 - 本小节 DDL 中所有外键列（`created_by`、`updated_by`、`assignee`、`user_id`、`instance_id`、`task_id`、`tenant_id`）
   均为 **`int unsigned`**，与 `users.id`、`tenants.id` 及各表 `id` 主键严格一致。
 - 租户外键沿用项目既有惯例（`fk_{表}_tenant_id` + `CASCADE/CASCADE`），与
-  `depts`/`menus`/`roles`/`sites`/`users` 的 5 条一致；全库指向 `tenants` 的外键共 10 条。
+  `depts`/`menus`/`roles`/`sites`/`users` 的 5 条一致；全库指向 `tenants` 的外键共 **11 条**
+  （含 `fk_lowcode_forms_tenant_id`，由 `20251224000001` 补齐）。
 - 历史沿革（供排查旧环境）：`20251216000002_add_foreign_keys.php` 最初声明 10 条外键，
   只有 2 条能建成 —— 其余 8 条因当时列类型是 `bigint`（用户引用列）与 `varchar(50)`
   （`instance_id`/`task_id`）而被 MySQL 拒绝。类型对齐分两次迁移完成：
@@ -1180,8 +1181,19 @@ class ExpressionEngine
     `PluginManager::enable/disable/uninstall` 的 `$tenantId` 默认值也是 0 ——
     **属「系统模板空间」，本就不该有租户外键**；全库「有默认值的 213 张表零外键」是零例外的实测结论。
   - `lowcode_forms.tenant_id`：`bigint unsigned NOT NULL` 无默认值，按「无默认值 = 真实租户引用」
-    规则本应带外键，但低代码 CLI 默认写 0，归属待决。详见
+    规则本应带外键——已于 `20251224000001` 收口（列改 `int unsigned` + 补外键 + CLI 默认值改 1）。详见
     [`04-multi-tenant-design.md` §0](../../design/01-architecture-design/04-multi-tenant-design.md) 的两条语义。
+- **`workflow_event_logs` 是「运行事件日志」，不是合规审计账本**：它记录的是**某个流程实例运行期**
+  发生的事件（节点进入/离开、任务分派、状态迁移等），生命周期**从属于实例**。因此
+  `fk_workflow_event_logs_instance_id` 与 `fk_workflow_event_logs_tenant_id` 都声明 `ON DELETE CASCADE`：
+  实例被删、租户被删时连带清理事件日志，**符合「日志属于实例」的语义**，不应被误读为"审计数据被销毁"。
+  若将来需要满足合规审计（保留期、防篡改、留痕主体跨租户可查），
+  **应新建 append-only 的审计表（不设 CASCADE、只追加不更新）**，而不是改造本表 ——
+  把运行日志表当审计表用，会同时污染写入路径与清理语义。
+- **口径补充**（迁移 `20251224000001_add_tenant_fk_to_lowcode_forms` 之后）：
+  上方「相邻域的两张表」中 `lowcode_forms.tenant_id` 的归属**已定案为真实租户引用** ——
+  列已对齐 `int unsigned` 并补建 `fk_lowcode_forms_tenant_id → tenants.id`（CASCADE/CASCADE），
+  低代码 CLI `lowcode:create-form` 的 `--tenant-id` 默认值由 `0` 改为 `1`。
 
 ### 7.2 核心表设计（SQL 设计稿）
 

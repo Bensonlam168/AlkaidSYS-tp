@@ -508,19 +508,19 @@ function checkTenantIdDeclaration(array $migrations, ?array $applied): array
 /**
  * 检查 E 用的已知例外基线
  *
- * `lowcode_forms` 是当前唯一违反「tenant_id 无默认值就必须有租户外键」的表：
- * 它的列定义是 bigint unsigned NOT NULL 且无默认值（按规则应带外键），
- * 但低代码 CLI（`CreateFormCommand`）默认写入 tenant_id=0（系统模板），
- * 而 tenants 表没有 id=0，因此物理上加不上外键。
+ * 保留机制，供将来复用；**当前为空**：`lowcode_forms` 已于迁移
+ * `20251224000001_add_tenant_fk_to_lowcode_forms` 收口 ——
+ *   1. 列类型 bigint unsigned → int unsigned（与 tenants.id 一致）；
+ *   2. 补建外键 fk_lowcode_forms_tenant_id → tenants.id（CASCADE/CASCADE）；
+ *   3. 低代码 CLI `lowcode:create-form` 的 --tenant-id 默认值 0 → 1，
+ *      且显式传 0 时直接给出业务错误（0 = 系统模板空间，该表要求真实租户）。
  *
- * 归属待决（见实施计划第三节 D1）：
- *   (a) 给它加 DEFAULT 0，归入「系统模板空间」组；或
- *   (b) 去掉 CLI 的 0 默认，按真实租户引用处理并加外键。
- * 决策前先以告警形式放行，避免门禁长期红灯；定案后应从此基线删除。
+ * 因此全库「无默认值却不带租户外键」的表为 0 张，检查 E 已无例外需要放行。
+ * 若将来确需临时接受某张表，请在此登记表名并写清归属待决的原因与去向。
  *
  * @var string[]
  */
-const KNOWN_TENANT_FK_EXCEPTIONS = ['lowcode_forms'];
+const KNOWN_TENANT_FK_EXCEPTIONS = [];
 
 /**
  * 检查 E：无默认值的 tenant_id 必须有 tenant_id → tenants.id 外键

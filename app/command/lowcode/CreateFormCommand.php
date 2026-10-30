@@ -38,7 +38,7 @@ class CreateFormCommand extends LowcodeCommand
             ->addOption('collection', 'c', Option::VALUE_REQUIRED, 'Collection name to base form on | 基于的Collection名称')
             ->addOption('title', 't', Option::VALUE_OPTIONAL, 'Form title | 表单标题')
             ->addOption('description', 'd', Option::VALUE_OPTIONAL, 'Form description | 表单描述')
-            ->addOption('tenant-id', null, Option::VALUE_OPTIONAL, 'Tenant ID (default: 0) | 租户ID（默认：0）', '0')
+            ->addOption('tenant-id', null, Option::VALUE_OPTIONAL, 'Tenant ID (default: 1) | 租户ID（默认：1）', '1')
             ->addOption('site-id', null, Option::VALUE_OPTIONAL, 'Site ID (default: 0) | 站点ID（默认：0）', '0')
             ->addOption('fields', null, Option::VALUE_OPTIONAL, 'Comma separated fields to include | 包含的字段（逗号分隔）')
             ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if form exists | 如果表单存在则强制覆盖')
@@ -66,6 +66,20 @@ class CreateFormCommand extends LowcodeCommand
             $tenantId = $this->getTenantId();
             $siteId = $this->getSiteId();
             $force = $input->getOption('force');
+
+            // Tenant 校验 | Tenant validation
+            // lowcode_forms.tenant_id 是「真实租户引用」：列 NOT NULL、无默认值，并有外键
+            // fk_lowcode_forms_tenant_id → tenants.id。tenant_id = 0 是「系统模板空间」，
+            // 而 tenants 表没有 id=0，本表也不承载模板行 —— 必须在这里拒绝，
+            // 否则会一路写库，最后撞外键抛 1452（对使用者是一句无法理解的 SQL 报错）。
+            if ($tenantId <= 0) {
+                $this->error(
+                    'Invalid --tenant-id: 0 是系统模板空间（tenants 表没有 id=0），'
+                    . '而 lowcode_forms.tenant_id 要求真实租户（外键 fk_lowcode_forms_tenant_id → tenants.id）。'
+                    . '请指定一个已存在的租户ID（≥ 1，默认为 1）。'
+                );
+                return 1;
+            }
 
             $fieldsOption = $input->getOption('fields');
             $includedFields = null;

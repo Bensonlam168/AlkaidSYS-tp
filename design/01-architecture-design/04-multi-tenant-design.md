@@ -13,13 +13,13 @@
 
 | 语义 | 列定义 | 默认值 | 租户外键 | 典型表 |
 |---|---|---|---|---|
-| **真实租户引用** | `int unsigned NOT NULL` | **无默认值** | **必须有** `fk_{表}_tenant_id → tenants.id` | `users`、`roles`、`depts`、`menus`、`sites`、`workflow_*` 5 张 |
+| **真实租户引用** | `int unsigned NOT NULL` | **无默认值** | **必须有** `fk_{表}_tenant_id → tenants.id` | `users`、`roles`、`depts`、`menus`、`sites`、`workflow_*` 5 张、`lowcode_forms` |
 | **系统模板空间** | `int unsigned` | `DEFAULT 0` | **不得有**（`tenants` 表没有 `id=0`，加了会拒绝 0 值写入） | `lowcode_collections`/`fields`/`relationships`/`schema_versions`、`alkaid_plugin_installations`、`event_*`、`hook_*`、动态业务表 |
 
 实测依据（可复现）：
 
 ```
-tenant_id 无默认值 → 11 张，其中 10 张有租户外键
+tenant_id 无默认值 → 11 张，其中 11 张有租户外键（原为 10 张；lowcode_forms 于 20251224000001 收口后补齐为 11）
 tenant_id 有默认值 → 213 张，其中 0 张有租户外键
 ```
 
@@ -30,7 +30,14 @@ tenant_id 有默认值 → 213 张，其中 0 张有租户外键
 - **`tenant_id = 0` 不是一个租户**。`tenants` 表 id 从 1 开始，0 永远不可能满足外键。
 - **`site_id = 0` 与 `tenant_id = 0` 不同构**。`site_id = 0` 是"默认站点"这个真实分区值，会被正常用于过滤（`where('site_id', 0)`）；`tenant_id = 0` 则一半是模板空间、一半是"关闭租户过滤"的开关（`$tenantId > 0` 时才拼 `where`）。
 - **HTTP 请求链路上的 `tenantId()` 恒 ≥ 1**（`Request::tenantId()` 默认回退 1，且 `TenantIdentify` 对 `X-Tenant-ID ≤ 0` 直接 403）。0 只可能来自 CLI 与内部调用。
-- **当前唯一违反规则一的表是 `lowcode_forms`**（无默认值却无外键）。它的归属待决：加 `DEFAULT 0` 归入模板组，还是去掉 CLI 的 0 默认为真实租户引用。检查 E 暂时以 INFO 放行。
+- **`lowcode_forms` 已收口（原「唯一违反规则一的表」）**：已由迁移 `20251224000001_add_tenant_fk_to_lowcode_forms`
+  按**规则一（真实租户引用）**处理，不再有"待决"。
+  具体做了三件事：① `tenant_id` 由 `bigint unsigned` 对齐为 `int unsigned`（与 `tenants.id` 一致）；
+  ② 补建 `fk_lowcode_forms_tenant_id → tenants.id`（`ON DELETE CASCADE / ON UPDATE CASCADE`）；
+  ③ 低代码 CLI `lowcode:create-form` 的 `--tenant-id` 默认值由 `0` 改为 `1`，
+  显式传 `--tenant-id=0` 时直接返回业务错误（`0` 是系统模板空间，`tenants` 没有 `id=0`，该表要求真实租户）。
+  **现全库无例外**：`scripts/check-migrations.php` 的 `KNOWN_TENANT_FK_EXCEPTIONS` 基线已清空（`[]`），
+  检查 E 不再有任何 `[INFO]` 放行 —— 它变绿即代表规则真的被满足，而不是被基线掩盖。
 
 ## 📋 文档信息
 
@@ -39,7 +46,7 @@ tenant_id 有默认值 → 213 张，其中 0 张有租户外键
 | **文档名称** | AlkaidSYS 多租户架构设计 |
 | **文档版本** | v1.0 |
 | **创建日期** | 2025-01-19 |
-| **最后更新** | 2026-10-31（新增 §0「tenant_id 的两条语义」；修正表名 `alkaid_tenants`→`tenants`、中间件启用状态） |
+| **最后更新** | 2026-10-31（新增 §0「tenant_id 的两条语义」；`lowcode_forms` 收口；修正表名 `alkaid_tenants`→`tenants`、中间件启用状态） |
 ## 🔗 关联设计文档
 
 - [术语表（Glossary）](../00-core-planning/99-GLOSSARY.md)
