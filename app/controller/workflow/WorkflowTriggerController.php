@@ -112,11 +112,11 @@ class WorkflowTriggerController extends ApiController
         $allTriggers = array_values(self::$triggers);
 
         // Apply tenant filter
-        if ($tenantId !== null) {
-            $allTriggers = array_filter($allTriggers, fn($trigger) =>
-                ($trigger['tenant_id'] ?? null) === $tenantId || ($trigger['tenant_id'] ?? null) === null
-            );
-        }
+        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_triggers.tenant_id` 是 NOT NULL，
+        // 不存在「全局触发器」，原实现的 `|| (... ?? null) === null` 是死分支，
+        // 却会让「缺少 tenant_id 的脏数据」对所有租户可见（fail-open）。
+        // 注：`app\Request::tenantId()` 返回 int（恒 >= 1），故不再需要 null 包裹判断。
+        $allTriggers = array_filter($allTriggers, fn($trigger) => ($trigger['tenant_id'] ?? null) === $tenantId);
 
         // Apply type filter
         if (!empty($params['type'])) {

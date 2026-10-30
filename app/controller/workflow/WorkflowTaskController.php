@@ -6,6 +6,7 @@ namespace app\controller\workflow;
 
 use app\controller\ApiController;
 use think\App;
+use think\facade\Db;
 use think\Request;
 use think\Response;
 
@@ -103,11 +104,13 @@ class WorkflowTaskController extends ApiController
         $allTasks = array_values(self::$tasks);
 
         // Apply tenant filter
-        if ($tenantId !== null) {
-            $allTasks = array_filter($allTasks, fn($task) =>
-                ($task['tenant_id'] ?? null) === $tenantId || ($task['tenant_id'] ?? null) === null
-            );
-        }
+        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_tasks.tenant_id` 是 NOT NULL，
+        // 不存在「全局任务」，原实现的 `|| (... ?? null) === null` 是永不成立的死分支，
+        // 却会让「缺少 tenant_id 的脏数据」对所有租户可见（fail-open）。
+        // 同时 `app\Request::tenantId()` 的返回类型是 int（恒 >= 1），原先的
+        // `if ($tenantId !== null)` 包裹同为死条件；去掉后即便将来返回 null，
+        // 结果也只是「过滤掉全部记录」（fail-closed），而不是跳过过滤。
+        $allTasks = array_filter($allTasks, fn($task) => ($task['tenant_id'] ?? null) === $tenantId);
 
         // Apply status filter
         if (!empty($params['status'])) {
@@ -337,11 +340,20 @@ class WorkflowTaskController extends ApiController
             return $this->validationError(['target_user' => $this->langService->trans('workflow.target_user_required')]);
         }
 
+        // 缺陷 P2：赋值前必须校验目标用户。
+        // 原实现把 `$data['target_user']` 原样写入 `assignee`，而 DB 层
+        // `workflow_tasks.assignee` 是 int unsigned 且外键指向 `users.id`，
+        // 非数字 → 1366、用户不存在 → 1452，把「用户输入错误」伪装成 500 系统故障。
+        [$targetUserId, $targetUserError] = $this->resolveTargetUser($data['target_user'], $request->tenantId());
+        if ($targetUserId === null) {
+            return $this->validationError(['target_user' => $targetUserError]);
+        }
+
         $userId = $request->userId() ?? 'system';
         $originalAssignee = $task['assignee'];
 
         // Update task
-        $task['assignee'] = $data['target_user'];
+        $task['assignee'] = $targetUserId;
         $task['status'] = self::STATUS_PENDING; // Reset to pending for new assignee
         $task['updated_at'] = (new \DateTimeImmutable())->format('c');
         self::$tasks[$id] = $task;
@@ -349,7 +361,7 @@ class WorkflowTaskController extends ApiController
         // Add history
         $this->addTaskHistory($id, 'TRANSFERRED', $userId, [
             'from_user' => $originalAssignee,
-            'to_user' => $data['target_user'],
+            'to_user' => $targetUserId,
             'comment' => $data['comment'] ?? null,
         ]);
 
@@ -401,10 +413,17 @@ class WorkflowTaskController extends ApiController
             return $this->validationError(['delegate_to' => $this->langService->trans('workflow.delegate_user_required')]);
         }
 
+        // 缺陷 P2：与 transfer 同理。`delegate_to` 落到 `delegated_to`（同样是对用户 ID 的引用），
+        // 不做校验的话，任何字符串都会被写入，后续按用户 ID 匹配时会静默失效。
+        [$delegateToUserId, $delegateToError] = $this->resolveTargetUser($data['delegate_to'], $request->tenantId());
+        if ($delegateToUserId === null) {
+            return $this->validationError(['delegate_to' => $delegateToError]);
+        }
+
         $userId = $request->userId() ?? 'system';
 
         // Update task - keep original owner but set delegate
-        $task['delegated_to'] = $data['delegate_to'];
+        $task['delegated_to'] = $delegateToUserId;
         $task['delegated_by'] = $userId;
         $task['delegated_at'] = (new \DateTimeImmutable())->format('c');
         $task['updated_at'] = (new \DateTimeImmutable())->format('c');
@@ -412,7 +431,7 @@ class WorkflowTaskController extends ApiController
 
         // Add history
         $this->addTaskHistory($id, 'DELEGATED', $userId, [
-            'delegate_to' => $data['delegate_to'],
+            'delegate_to' => $delegateToUserId,
             'comment' => $data['comment'] ?? null,
         ]);
 
@@ -815,6 +834,49 @@ class WorkflowTaskController extends ApiController
         }
 
         return null;
+    }
+
+    /**
+     * 解析并校验「目标用户」入参 | Resolve & validate target user
+     *
+     * 缺陷 P2 的统一校验入口（transfer / delegate 共用），两条硬性要求：
+     *   1. 必须是**纯数字**的用户 ID（int 或数字字符串）——入参最终落到
+     *      `workflow_tasks.assignee` / `delegated_to`，二者都是 int unsigned；
+     *   2. 该用户必须存在于**当前租户**——否则等价于允许把任务指派给其它租户的用户，
+     *      造成跨租户数据泄漏。
+     *
+     * @param mixed $raw      客户端原始入参（可能是任意类型）
+     * @param int   $tenantId 当前租户 ID（app\Request::tenantId() 恒返回 >= 1 的 int）
+     * @return array{0: int|null, 1: string} [合法用户 ID, 错误消息]；合法时错误消息为空字符串
+     */
+    protected function resolveTargetUser(mixed $raw, int $tenantId): array
+    {
+        // 只接受 int 与字符串：数组/对象/布尔/null 一律拒绝（JSON 里的用户 ID 只会是前两者）
+        if (!is_int($raw) && !is_string($raw)) {
+            return [null, '目标用户 ID 必须为纯数字 | target user ID must be numeric'];
+        }
+
+        // ctype_digit 只接受 0-9 组成的字符串，天然拒绝 "12.5"、"-1"、"1e3"、"user_name"
+        if (!ctype_digit((string) $raw)) {
+            return [null, '目标用户 ID 必须为纯数字 | target user ID must be numeric'];
+        }
+
+        $userId = (int) $raw;
+        if ($userId <= 0) {
+            return [null, '目标用户 ID 必须为正整数 | target user ID must be positive'];
+        }
+
+        // 必须存在于当前租户：DB 层 users.tenant_id 为 NOT NULL，跨租户用户一律视为不存在
+        $exists = Db::name('users')
+            ->where('id', $userId)
+            ->where('tenant_id', $tenantId)
+            ->count();
+
+        if ((int) $exists === 0) {
+            return [null, '目标用户不存在或不属于当前租户 | target user does not exist in current tenant'];
+        }
+
+        return [$userId, ''];
     }
 
     /**

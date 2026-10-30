@@ -89,11 +89,14 @@ class WorkflowDefinitionController extends ApiController
         $allDefinitions = array_values(self::$definitions);
 
         // Apply tenant filter
-        if ($tenantId !== null) {
-            $allDefinitions = array_filter($allDefinitions, function ($def) use ($tenantId) {
-                return $def->getTenantId() === $tenantId || $def->getTenantId() === null;
-            });
-        }
+        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_definitions.tenant_id` 是 NOT NULL，
+        // 不存在「全局定义」，原实现的 `|| getTenantId() === null` 是死分支，
+        // 却会让「没有租户归属」的定义对所有租户可见（fail-open）。
+        // 注：`app\Request::tenantId()` 返回 int（恒 >= 1），故不再需要 null 包裹判断；
+        // 万一将来退化为 null，结果只是「过滤掉全部记录」（fail-closed）。
+        $allDefinitions = array_filter($allDefinitions, function ($def) use ($tenantId) {
+            return $def->getTenantId() === $tenantId;
+        });
 
         // Apply status filter
         if (!empty($filters['status'])) {
