@@ -84,7 +84,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Get tenant ID
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
 
         // Filter instances
         $allInstances = array_values(self::$instances);
@@ -160,7 +160,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -194,8 +194,8 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Get tenant ID and user info
-        $tenantId = $request->tenantId ?? null;
-        $userId = $request->userId ?? 'system';
+        $tenantId = $request->tenantId();
+        $userId = $request->userId() ?? 'system';
 
         // Generate instance ID
         $instanceId = 'inst_' . uniqid();
@@ -250,7 +250,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -267,7 +267,7 @@ class WorkflowInstanceController extends ApiController
 
         $data = $request->post();
         $reason = $data['reason'] ?? 'No reason provided';
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update instance
         $instance['status'] = self::STATUS_CANCELLED;
@@ -299,7 +299,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -314,7 +314,7 @@ class WorkflowInstanceController extends ApiController
             );
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update instance
         $instance['status'] = self::STATUS_SUSPENDED;
@@ -344,7 +344,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -359,7 +359,7 @@ class WorkflowInstanceController extends ApiController
             );
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update instance
         $instance['status'] = self::STATUS_RUNNING;
@@ -389,7 +389,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -421,7 +421,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -459,7 +459,7 @@ class WorkflowInstanceController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($instance['tenant_id']) && $instance['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -490,7 +490,7 @@ class WorkflowInstanceController extends ApiController
 
         self::$instances[$id] = $instance;
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
         $this->addHistoryEntry($id, 'VARIABLES_UPDATED', null, 'Variables updated', $userId);
 
         return $this->success([

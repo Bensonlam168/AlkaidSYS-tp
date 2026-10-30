@@ -62,7 +62,9 @@ Route::group('v1/workflow/definitions', function () {
         ->pattern(['id' => '[\w\-]+']);
 
     // Validate definition | 验证定义
-    Route::post(':id/validate', 'app\controller\workflow\WorkflowDefinitionController@validate')
+    // 注意：动作方法名为 validateAction（不能叫 validate，会与父类 ThinkPHP 数据验证方法同名），
+    // 但对外 URL 保持不变，仍是 POST v1/workflow/definitions/:id/validate
+    Route::post(':id/validate', 'app\controller\workflow\WorkflowDefinitionController@validateAction')
         ->middleware(\app\middleware\Permission::class, 'workflow.definition.read')
         ->pattern(['id' => '[\w\-]+']);
 

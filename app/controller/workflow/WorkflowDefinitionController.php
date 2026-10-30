@@ -71,7 +71,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Get tenant ID from request
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
 
         // Build filter criteria
         $filters = [];
@@ -149,7 +149,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -190,7 +190,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Get tenant ID
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
 
         try {
             // Create definition using builder
@@ -263,7 +263,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -335,7 +335,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -373,7 +373,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -418,7 +418,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -436,11 +436,21 @@ class WorkflowDefinitionController extends ApiController
      *
      * POST /workflow/definitions/{id}/validate
      *
-     * @param string $id Definition ID
-     * @param Request $request
+     * 命名说明（独立评审问题 4）：本动作方法曾命名为 `validate()`，与父类
+     * `app\BaseController::validate()`（ThinkPHP 数据验证，签名为
+     * `validate(array $data, string|array $validate, array $message = [], bool $batch = false)`）同名。
+     * 上一轮为让类能加载，把签名放宽成 `mixed` 并回退到 `$this->request`，副作用是：
+     * 客户端只要传 `?message=x`，框架按参数名绑定就会触发
+     * `TypeError: Argument #3 ($message) must be of type array, string given` → 可控 500。
+     *
+     * 现改为 `validateAction()`，恢复类型化签名；**路由 URL 保持不变**，
+     * 仅 `route/workflow.php` 中的目标方法名同步为 `@validateAction`。
+     *
+     * @param string $id Definition ID | 定义ID
+     * @param Request $request Request instance | 请求实例
      * @return Response
      */
-    public function validate(string $id, Request $request): Response
+    public function validateAction(string $id, Request $request): Response
     {
         $definition = self::$definitions[$id] ?? null;
 
@@ -449,7 +459,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -461,7 +471,9 @@ class WorkflowDefinitionController extends ApiController
             'valid' => $result->isValid(),
             'errors' => $result->getErrors(),
             'warnings' => $result->getWarnings(),
-            'info' => $result->getInfo(),
+            // 修复（问题 4）：ValidationResult 的信息读取方法名是 getInfos()，
+            // 原 getInfo() 不存在，进入校验逻辑后必然 Fatal error → 500
+            'info' => $result->getInfos(),
         ]);
     }
 
@@ -489,7 +501,7 @@ class WorkflowDefinitionController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && $definition->getTenantId() !== null && $definition->getTenantId() !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -539,9 +551,12 @@ class WorkflowDefinitionController extends ApiController
             'status' => $definition->getStatus(),
             'version' => $definition->getVersion(),
             'tenant_id' => $definition->getTenantId(),
-            'created_at' => $definition->getCreatedAt()?->format('c'),
-            'updated_at' => $definition->getUpdatedAt()?->format('c'),
-            'published_at' => $definition->getPublishedAt()?->format('c'),
+            // 修复（前置阻塞）：getCreatedAt()/getUpdatedAt()/getPublishedAt() 返回 string|null，
+            // 原实现对 string 调用 format() 会抛 "Call to a member function format() on string"，
+            // 导致定义接口的响应序列化整体 500。这里统一规范化为 ISO 8601 字符串。
+            'created_at' => $this->formatDateTime($definition->getCreatedAt()),
+            'updated_at' => $this->formatDateTime($definition->getUpdatedAt()),
+            'published_at' => $this->formatDateTime($definition->getPublishedAt()),
         ];
 
         if ($includeDetails) {
@@ -552,6 +567,26 @@ class WorkflowDefinitionController extends ApiController
         }
 
         return $data;
+    }
+
+    /**
+     * 规范化日期时间输出为 ISO 8601 字符串
+     *
+     * WorkflowDefinition 的日期字段是 string|null（非 DateTimeInterface），
+     * 无法直接调用 format()，这里统一转换为 ISO 8601 格式。
+     *
+     * @param string|null $dateTime 原始日期时间字符串
+     * @return string|null
+     */
+    protected function formatDateTime(?string $dateTime): ?string
+    {
+        if ($dateTime === null || $dateTime === '') {
+            return null;
+        }
+
+        $timestamp = strtotime($dateTime);
+
+        return $timestamp === false ? $dateTime : date('c', $timestamp);
     }
 
     /**

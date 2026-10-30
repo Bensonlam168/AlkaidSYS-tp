@@ -97,7 +97,7 @@ class WorkflowTaskController extends ApiController
         }
 
         // Get tenant ID
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
 
         // Filter tasks
         $allTasks = array_values(self::$tasks);
@@ -161,8 +161,8 @@ class WorkflowTaskController extends ApiController
         }
 
         // Get current user and tenant
-        $userId = $request->userId ?? null;
-        $tenantId = $request->tenantId ?? null;
+        $userId = $request->userId();
+        $tenantId = $request->tenantId();
         $userGroups = $request->userGroups ?? [];
 
         if ($userId === null) {
@@ -238,7 +238,7 @@ class WorkflowTaskController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -334,7 +334,7 @@ class WorkflowTaskController extends ApiController
             return $this->validationError(['target_user' => $this->langService->trans('workflow.target_user_required')]);
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
         $originalAssignee = $task['assignee'];
 
         // Update task
@@ -398,7 +398,7 @@ class WorkflowTaskController extends ApiController
             return $this->validationError(['delegate_to' => $this->langService->trans('workflow.delegate_user_required')]);
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update task - keep original owner but set delegate
         $task['delegated_to'] = $data['delegate_to'];
@@ -434,7 +434,7 @@ class WorkflowTaskController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -459,7 +459,7 @@ class WorkflowTaskController extends ApiController
             );
         }
 
-        $userId = $request->userId ?? null;
+        $userId = $request->userId();
         if ($userId === null) {
             return $this->unauthorized();
         }
@@ -522,7 +522,7 @@ class WorkflowTaskController extends ApiController
             );
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Unclaim the task
         $task['assignee'] = null;
@@ -577,7 +577,7 @@ class WorkflowTaskController extends ApiController
         }
 
         $data = $request->post();
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Complete the task
         $task['status'] = self::STATUS_COMPLETED;
@@ -614,7 +614,7 @@ class WorkflowTaskController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -671,7 +671,7 @@ class WorkflowTaskController extends ApiController
             return $this->validationError(['form_data' => $this->langService->trans('workflow.form_data_required')]);
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update task form data
         $task['form_data'] = $data['form_data'];
@@ -722,7 +722,7 @@ class WorkflowTaskController extends ApiController
         }
 
         $data = $request->post();
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update task
         $task['status'] = $approved ? self::STATUS_COMPLETED : self::STATUS_REJECTED;
@@ -763,13 +763,13 @@ class WorkflowTaskController extends ApiController
     protected function checkTaskAccess(array $task, Request $request): ?Response
     {
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($task['tenant_id']) && $task['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
 
         // Check user access
-        $userId = $request->userId ?? null;
+        $userId = $request->userId();
         if ($userId === null) {
             return $this->unauthorized();
         }

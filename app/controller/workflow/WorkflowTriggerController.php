@@ -106,7 +106,7 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Get tenant ID
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
 
         // Filter triggers
         $allTriggers = array_values(self::$triggers);
@@ -245,7 +245,7 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($trigger['tenant_id']) && $trigger['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -284,8 +284,8 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Get tenant ID
-        $tenantId = $request->tenantId ?? null;
-        $userId = $request->userId ?? 'system';
+        $tenantId = $request->tenantId();
+        $userId = $request->userId() ?? 'system';
 
         // Generate trigger ID and webhook key
         $triggerId = 'trig_' . uniqid();
@@ -340,13 +340,13 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($trigger['tenant_id']) && $trigger['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
 
         $data = $request->put();
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         // Update allowed fields
         if (isset($data['name'])) {
@@ -389,7 +389,7 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($trigger['tenant_id']) && $trigger['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -452,7 +452,7 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($trigger['tenant_id']) && $trigger['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -460,7 +460,7 @@ class WorkflowTriggerController extends ApiController
         $data = $request->post();
         $testData = $data['test_data'] ?? [];
         $dryRun = $data['dry_run'] ?? true;
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
 
         try {
             // Create test context
@@ -693,7 +693,7 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($trigger['tenant_id']) && $trigger['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
@@ -729,12 +729,12 @@ class WorkflowTriggerController extends ApiController
         }
 
         // Check tenant access
-        $tenantId = $request->tenantId ?? null;
+        $tenantId = $request->tenantId();
         if ($tenantId !== null && isset($trigger['tenant_id']) && $trigger['tenant_id'] !== $tenantId) {
             return $this->forbidden($this->langService->trans('workflow.access_denied'));
         }
 
-        $userId = $request->userId ?? 'system';
+        $userId = $request->userId() ?? 'system';
         $newStatus = $enabled ? self::STATUS_ENABLED : self::STATUS_DISABLED;
 
         $trigger['status'] = $newStatus;

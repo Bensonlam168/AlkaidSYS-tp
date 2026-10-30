@@ -38,15 +38,10 @@ class MenuController extends ApiController
      */
     protected function getTenantId(): int
     {
-        // Get from authenticated user context | 从认证用户上下文获取
-        $tenantId = $this->request->tenantId ?? $this->request->header('X-Tenant-Id');
-
-        if ($tenantId === null) {
-            // Default to tenant 1 for development | 开发环境默认租户 1
-            return 1;
-        }
-
-        return (int)$tenantId;
+        // 租户上下文统一由 app\Request::tenantId() 解析
+        //（该方法已内置「认证上下文 → X-Tenant-ID 请求头 → 默认租户」降级），
+        // 控制器内不再重复降级，避免出现硬编码租户 1 的兜底分支。
+        return $this->request->tenantId();
     }
 
     /**
