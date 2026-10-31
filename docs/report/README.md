@@ -1,21 +1,25 @@
 # 项目审计与审查报告目录
 
-> **最后更新**: 2026-10-30
+> **最后更新**: 2026-10-31
 >
 > **状态**: 活跃文档
 >
 > **说明**: 本目录包含当前项目活跃的审计、审查和分析报告。过期报告已归档至 `report_archive/` 目录。
 >
-> **计数口径**（以 `find` 为准，2026-10-30 复核）：本目录顶层 26 个 `.md`，其中 25 份为报告 + 1 份本索引。
+> **计数口径**（2026-10-31 复核）：本目录顶层 29 个 `.md`，其中 28 份为报告 + 1 份本索引。
+>
+> **重启阅读入口**：[企业生产级重启审计与重建路线](enterprise-production-restart-audit-2026-10-31.md)。各历史报告是对应版本的审计快照，修复状态和相互冲突的结论以该报告的实证复核与证据边界为参考；报告不自动取代 Always Rules 或已接受的 ADR。
 
 ---
 
-## 当前活跃报告（25 份报告 + 本索引）
+## 当前报告（28 份报告 + 本索引，历史状态需结合源码复核）
 
 ### 综合审计与审查
 
 | 文档名称 | 日期 | 状态 | 描述 |
 |----------|------|------|------|
+| [enterprise-production-restart-audit-2026-10-31.md](enterprise-production-restart-audit-2026-10-31.md) | 2026-10-31 | 🟢 **重启审计入口** | 当前提交的设计裁决、20 项主要问题、旧报告纠偏、资产去留、重启阶段与企业上线证据门槛 |
+| [production-readiness-analysis-2026-10-31.md](production-readiness-analysis-2026-10-31.md) | 2026-10-31 | 历史分析，部分结论需纠偏 | 图谱及生产就绪度分析；CI、公告、任务 API 等结论的本次复核见重启审计第 8 节 |
 | `quality-review-superpowers-2026-10-30.md` | 2026-10-30 | 🟢 **最新** | **代码质量审查报告**（4 Critical / 9 Important / 17 Minor）。四路独立审计 + 主审逐项复核。结论：不建议合并 |
 | `doc-review-design-docs-2026-10-30.md` | 2026-10-30 | 🟢 **最新** | **design/ 与 docs/ 文档质量分析**（184 份 / 83,674 行）。22 项问题：5 阻断 / 7 严重 / 7 中等 / 3 轻微（P0 五项已修复） |
 | `design-implementation-reconstruction-2026-10-30.md` | 2026-10-30 | 🟢 **最新·基线** | **设计意图还原与实现差距全景**（8 包并行精读 184 份文档 + 主审 10 项实测）。新增 3 个已验证 Critical：JWT 公开密钥可伪造身份 / refresh 当 access 用 / 租户上下文属性访问失效 |
@@ -62,6 +66,16 @@
 | `git-audit-implementation-log.md` | 2025-12-17 | 🔴 活跃 | Git 审计实施日志 |
 | `git-cleanup-implementation-plan-2025-12-17.md` | 2025-12-17 | 🔴 活跃 | Git 清理实施计划 |
 | `git-status-analysis-2025-12-17.md` | 2025-12-17 | 🔴 活跃 | Git 状态分析报告 |
+
+### 实施记录与系统管理参考
+
+| 文档名称 | 日期 | 状态 | 描述 |
+| --- | --- | --- | --- |
+| [t115-completion-report-2025-12-18.md](t115-completion-report-2025-12-18.md) | 2025-12-18 | 历史记录 | T-115 完成报告，实际状态需结合当前实现复核 |
+| [t117-completion-report-2025-12-18.md](t117-completion-report-2025-12-18.md) | 2025-12-18 | 历史记录 | T-117 完成报告，实际状态需结合当前实现复核 |
+| [t118-completion-report-2025-12-18.md](t118-completion-report-2025-12-18.md) | 2025-12-18 | 历史记录 | T-118 完成报告，与专项迁移审计配套阅读 |
+| [web-antd-system-management-analysis-2025-12-18.md](web-antd-system-management-analysis-2025-12-18.md) | 2025-12-18 | 历史分析 | web-antd 系统管理分析 |
+| [system-management-user-guide-2025-12-18.md](system-management-user-guide-2025-12-18.md) | 2025-12-18 | 使用参考 | 系统管理使用说明，接口和权限以当前实现为准 |
 
 ---
 
@@ -157,6 +171,8 @@
 
 ### 最新审计报告
 
+- [企业生产级重启审计与重建路线](enterprise-production-restart-audit-2026-10-31.md) - 2026-10-31 ← **重启阅读入口**
+- [生产就绪度历史分析](production-readiness-analysis-2026-10-31.md) - 2026-10-31（结合重启审计勘误阅读）
 - [代码质量审查报告](quality-review-superpowers-2026-10-30.md) - 2026-10-30 ← 最新
 - [文档质量分析报告](doc-review-design-docs-2026-10-30.md) - 2026-10-30 ← 最新
 - [设计意图还原与实现差距全景](design-implementation-reconstruction-2026-10-30.md) - 2026-10-30 ← **规划基线**
@@ -177,5 +193,5 @@
 
 ---
 
-*索引文档最后更新: 2026-10-30*
+*索引文档最后更新: 2026-10-31*
 *下次审查时间: 2026-11-30*
