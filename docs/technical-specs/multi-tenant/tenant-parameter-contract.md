@@ -419,6 +419,14 @@ $this->roleRepository->syncPermissions($id, array_map('intval', $data['permissio
   `record(string $objectType, string $objectName, array $schema, int $tenantId = 0, int $siteId = 0, ?int $currentId = null)`：
   `0` 表示「系统模板空间的审计行」。该方法里的 `where('tenant_id', ...)` 只用于定位**同一条审计记录的上一个版本**
   （配合 `object_type` / `object_name` 自增 `version`），不用于读取业务数据，越权也读不到业务行。
+- [ ] `app/Request.php:175` `siteId(): int` —— 「无站点 → `0`」**不是** §2.3 的「假必填」：
+  `0` 在站点维度是**真实的过滤值**（`app/model/BaseModel::scopeSite()` 是
+  `where('site_id', $siteId)`，`0` 也照样过滤），不是「跳过 where」的开关，
+  而且绝大多数请求本来就不带 `X-Site-ID`。
+  要区分「显式 0」与「根本没提供站点」，用同文件新增的 `siteIdOrNull(): ?int`（`:201`）；
+  但**不要**把 `null` 传给 `if ($siteId !== null)` 型仓储（如
+  `FormSchemaRepository::findByName()`）—— 那里 `null` 的语义是「不过滤」，
+  等于把「本站点」放宽成「本租户任意站点」。
 
 判据：**问「这个 `0` 是决定『过滤谁的数据』，还是只决定『数据自己贴哪个标签 / 拼哪个名字』」**。
 前者适用本规范，后者不适用。
@@ -559,6 +567,8 @@ docker exec alkaid-backend php scripts/check-docs.php --strict
 | 13 | ⚪ 已知例外：无 `tenant_id` 列的表 | `Tenant/Repository/TenantRepository.php:39`、`Permission/Repository/PermissionRepository.php:28` | 现行 |
 | 14 | ⚪ 已知例外：业务默认值 `0` | `TableNameGenerator.php:18`、`SchemaVersionService.php:49` | 现行 |
 | 15 | 🛡 静态守卫 | `tests/Unit/Infrastructure/TenantScopedRepositorySignatureGuardTest.php:56`（规则）/ `:74`（豁免） | 现行 |
+| 16 | ⚠️ 站点维度：`siteId()` 回落 `0` 属「业务默认值」，非「假必填」 | `app/Request.php:175`（`siteId()`）/ `:201`（`siteIdOrNull()`） | 现行 |
+| 17 | ✅ 站点标识非法被入口拒绝（403 / 2002） | `app/middleware/SiteIdentify.php:53` / `app/exception/InvalidSiteContextException.php:47` | 现行 |
 
 ---
 
@@ -584,6 +594,37 @@ docker exec alkaid-backend php scripts/check-docs.php --strict
       `TenantContextMissingException` 配置级 HTTP 500 / 业务码 5000）。
       落到默认租户的请求会写 `[TENANT_IDENTIFY_DEFAULT]` 审计日志，可被 grep 观测。
       本机 `.env` 与三份 `phpunit*.xml` 均已显式声明该配置。
+- [x] ~~`app/Request.php` 的 `siteId(?int $default = 0)` 与 `tenantId(?int $default = 1)` 是同构缺陷：
+      解析不出来就用默认值，`X-Site-ID: -5` / `abc` 从未被校验~~ —— **已收敛（2026-10-31），
+      但结论与租户「不同构」：同构只在形状上成立，语义上不成立**：
+      `site_id = 0` 是**有语义的「全局 / 无站点」桶**（`TableNameGenerator` / `SchemaVersionService`
+      把 0 当业务默认值，`BaseModel::scopeSite()` 是 `where('site_id', $siteId)` 的真过滤，
+      且绝大多数请求本来就不带 `X-Site-ID`），所以**刻意不照抄「无站点即抛」** ——
+      那会打断几乎所有低代码请求。实际做了三件事：
+
+      1. `app/Request.php:175` `siteId(): int` 删掉 `$default` 参数与 `-1` 哨兵，
+         无站点时返回 `0`（全局桶），**不抛异常**；
+      2. 新增 `app/Request.php:201` `siteIdOrNull(): ?int`：区分「未提供」（`null`）与
+         「显式 0」（`0`）。这是站点维度唯一无法用「0 即全部」表达的语义，
+         `getTenantContext()`（`:473`）已改用可空版本，避免日志里把「没带头」伪装成「显式站点 0」；
+      3. 真缺陷在**输入校验**：`app/middleware/SiteIdentify.php:53` 现在要求 `X-Site-ID`
+         是**非负整数**，`-5`（负数）/ `abc` / `1.5`（格式错）一律 HTTP 403 + 业务码 2002
+         （与 `TenantIdentify` 对 `invalid_tenant_header` 的处理一致，**不新增错误码**），
+         异常类为 `app/exception/InvalidSiteContextException.php`，日志 tag
+         `[SITE_IDENTIFY_REJECTED]` / `[SITE_CONTEXT_INVALID_NEGATIVE|MALFORMED]`；
+         未带请求头时记 `[SITE_IDENTIFY_DEFAULT]` 审计日志（与 `[TENANT_IDENTIFY_DEFAULT]` 对齐），
+         且**不写入**任何值 —— 让 `siteIdOrNull()` 能保持「缺失」语义，`siteId()` 仍然给 0。
+
+      31 处 `->siteId()` 调用点已逐个分类：只有 `getTenantContext()` 与
+      `FieldController` / `RelationshipController` 的**事件 payload 元数据**改用可空版本
+      （其下游 `FieldManager` / `RelationshipManager` 只把该值写进事件，不做过滤）；
+      其余保持 `siteId()` —— 尤其 `BaseModel::getSiteContext()` 与
+      `FormSchemaManager` 调用链：那边 `null` 的语义是「**不加站点过滤**」，
+      换成 `siteIdOrNull()` 等于把「本站点」放宽成「本租户任意站点」，属于站点维度越权。
+- [ ] **站点与租户的归属校验仍未实现**：`SiteIdentify` 目前只校验「格式合法」，
+      不校验「该 `site_id` 是否属于当前租户 / 是否存在 / 是否被停用」。
+      需要先补齐 `sites` 表归属模型（默认站点解析、status）才能收紧，
+      否则会把「站点 0 全局桶」与「任意 site_id 都能读写」两个问题混在一起。
 - [ ] `CollectionManager::create()`（`:59`）与 `update()`（`:180`）对实体可空属性做 `?? 0`，
       缺失租户时静默归入系统模板空间（§5.3）；
 - [ ] `infrastructure/Plugin/PluginManager.php:151 / :166 / :183` 的 `int $tenantId = 0` 不在 `Repository/` 目录下，
