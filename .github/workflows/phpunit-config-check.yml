@@ -2,20 +2,25 @@ name: PHPUnit Config Check
 
 # phpunit 配置一致性门禁 | PHPUnit config consistency gate
 #
-# 检查三份 phpunit 配置的「测试语义变量」是否保持一致：
+# 检查仓库内 phpunit 配置的「测试语义变量」是否保持一致：
 #   1. phpunit.xml 的 force 项必须是 t048/t050 变体的子集（含取值一致）
 #   2. DB_* 一律不得 force（连接参数必须跟随运行环境）
 #   3. 变体不得 force 基线没有的变量
-#   4. 新增的 phpunit*.xml 必须登记，防止新变体绕过门禁
+#   4. 新增的 phpunit*.xml 必须登记（递归扫描子目录，排除 vendor/node_modules/.git/runtime）
+#   5. 豁免配置必须带 review_by，到期即失败
 #
 # 详情见 scripts/check-phpunit-config.php
 
 on:
   pull_request:
     paths:
-      # 用 phpunit*.xml 而不是逐个点名：新增变体配置（如 phpunit.t060.xml）也必须触发本门禁，
-      # 否则「新加一份变体 + 只改这份变体」就能完全不进 CI，等于绕过检查 D。
+      # 同时列出根层与递归两种模式：
+      #   'phpunit*.xml'    —— 根层变体（phpunit.t060.xml 之类）
+      #   '**/phpunit*.xml' —— 任意子目录（如 plugins/workflow-engine/phpunit.xml）
+      # 意图是：新增变体配置必须触发本门禁，否则「新加一份变体 + 只改这份变体」就能完全不进 CI，
+      # 等于绕过检查 D。R34 起脚本本身是递归扫描的，触发路径必须同步放宽。
       - 'phpunit*.xml'
+      - '**/phpunit*.xml'
       - 'scripts/check-phpunit-config.php'
       - '.github/workflows/phpunit-config-check.yml'
   push:
@@ -24,6 +29,7 @@ on:
       - main
     paths:
       - 'phpunit*.xml'
+      - '**/phpunit*.xml'
       - 'scripts/check-phpunit-config.php'
 
 jobs:

@@ -4,7 +4,7 @@
 declare(strict_types=1);
 
 /**
- * PHPUnit Config Consistency Check | phpunit 配置一致性检查（R30）
+ * PHPUnit Config Consistency Check | phpunit 配置一致性检查（R30 / R34 / R35）
  *
  * 背景：
  *   phpunit.xml 用 <env ... force="true"> 钉死「测试语义变量」（APP_ENV / ALLOW_RUNTIME_DDL /
@@ -24,8 +24,11 @@ declare(strict_types=1);
  *   B. DB_* 一律不得 force：连接参数必须跟随运行环境，理由见 phpunit.xml 的 A 段注释。
  *   C. 变体不得出现 phpunit.xml 没有的 forced env（防止某个变体偷偷钉死 APP_DEBUG 之类）。
  *      若有新增需求，必须先加到 phpunit.xml。
- *   D. 仓库根下所有 phpunit*.xml 都必须登记（纳入门禁或显式豁免），
- *      防止新增第四份变体配置绕过本脚本。
+ *   D. 仓库内（**递归扫描**，排除 vendor/node_modules/.git/runtime）所有 phpunit*.xml 都必须登记
+ *      （纳入门禁或显式豁免），防止新增变体配置绕过本脚本。登记判定按**相对路径**，
+ *      因为子目录里同名配置（如 plugins/xxx/phpunit.xml）与根层 phpunit.xml 不能混为一谈（R34）。
+ *   E. 豁免必须带 review_by 到期日：缺失/格式非法/已过期一律报错，未到期则每次运行打印剩余天数
+ *      （可见性，避免「设了豁免就再也不看」）（R35）。
  *
  * 缺失配置文件一律**报错**而不是跳过：漏掉一个变体就等于漏检。
  *
@@ -61,13 +64,32 @@ const VARIANT_CONFIGS = [
 ];
 
 /**
- * 显式豁免的配置（basename => 豁免理由）
+ * 递归扫描时跳过的目录名（任意层级生效）
+ *
+ * vendor/ 里躺着第三方自带的 phpunit*.xml（如 topthink/think-swoole、casbin/casbin），
+ * 它们不受本仓库维护，纳入门禁只会制造噪音；node_modules / .git / runtime 同理。
+ * 除 node_modules 外都是小写，统一转小写后比较以兼容大小写不敏感的文件系统。
+ */
+const SCAN_EXCLUDED_DIRS = ['vendor', 'node_modules', '.git', 'runtime'];
+
+/**
+ * 显式豁免的配置（**相对仓库根的路径** => 豁免元数据）
  *
  * 豁免只对检查 A / C 生效（变体覆盖关系）；检查 B（DB_* 不得 force）对**所有**配置生效，
  * 因为没有哪种配置有理由把连接参数钉死。
+ *
+ * review_by：豁免到期日（R35）。到期后检查 E 报错，强制重新复核 —— 否则「豁免」会变成
+ * 永久的免检通道，某个豁免配置悄悄开始 force 变量也没人知道。
  */
 const EXEMPT_CONFIGS = [
-    'phpunit.performance.xml' => '性能/压测专用配置，只声明不带 force 的 APP_DEBUG / PERFORMANCE_TEST，不属于 T-048/T-050 验收链',
+    'phpunit.performance.xml' => [
+        'reason'    => '性能/压测专用配置，只声明不带 force 的 APP_DEBUG / PERFORMANCE_TEST，不属于 T-048/T-050 验收链',
+        'review_by' => '2027-04-30',
+    ],
+    'plugins/workflow-engine/phpunit.xml' => [
+        'reason'    => '插件独立测试域（自带 bootstrap/testsuites，独立运行插件测试），env 全部不带 force，不参与根级强制变量策略',
+        'review_by' => '2027-04-30',
+    ],
 ];
 
 // ---------------------------------------------------------------------------
@@ -187,13 +209,80 @@ function forcedMap(array $envs): array
 }
 
 /**
- * 按文件路径读取配置；文件不在仓库根时返回「不存在」结构
+ * 按相对仓库根的路径读取配置；文件缺失时返回「不存在」结构
  *
+ * @param string $relativePath 形如 phpunit.xml 或 plugins/workflow-engine/phpunit.xml
  * @return array{ok:bool, message:string, envs:array<int, array<string, mixed>>}
  */
-function readConfig(string $basename): array
+function readConfig(string $relativePath): array
 {
-    return readEnvDeclarations(REPO_ROOT . '/' . $basename);
+    return readEnvDeclarations(REPO_ROOT . '/' . $relativePath);
+}
+
+/**
+ * 递归发现仓库内全部 phpunit*.xml，返回**相对仓库根**的路径（统一用 / 分隔，已排序）（R34）
+ *
+ * 为什么不能继续用 `glob(REPO_ROOT . '/phpunit*.xml')`：glob 只扫根层，
+ * `plugins/workflow-engine/phpunit.xml` 是一份真实、被 git 跟踪、含 10 个 <env> 的插件配置，
+ * 它靠「根层扫不到」侥幸绕过了检查 B/D —— 那不是通过，而是没被看见。
+ *
+ * 排除规则：任意层级的 vendor / node_modules / .git / runtime 目录整棵剪掉（见 SCAN_EXCLUDED_DIRS），
+ * 以免把第三方自带的 phpunit*.xml 卷进来。目录剪枝用 RecursiveCallbackFilterIterator 做，
+ * 未匹配的目录直接不进入，不会为了排除 vendor 而先遍历一遍 vendor（该目录有数万文件）。
+ *
+ * 不跟随符号链接（RecursiveDirectoryIterator 默认行为）：避免软链成环导致无限递归。
+ *
+ * @return array<int, string>
+ */
+function discoverConfigs(string $root): array
+{
+    $rootReal = realpath($root);
+    if ($rootReal === false || !is_dir($rootReal)) {
+        return [];
+    }
+
+    try {
+        $iterator = new RecursiveDirectoryIterator(
+            $rootReal,
+            FilesystemIterator::SKIP_DOTS
+        );
+    } catch (UnexpectedValueException $e) {
+        // 根目录不可读：返回空集，让检查 0 的「门禁必需配置缺失」去报错，而不是在这里抛异常
+        return [];
+    }
+
+    // 目录剪枝：命中排除名单的目录不进入（返回 false 时 RecursiveIteratorIterator 不会 descend）
+    $filtered = new RecursiveCallbackFilterIterator(
+        $iterator,
+        static function (SplFileInfo $current): bool {
+            if ($current->isDir()) {
+                return !in_array(strtolower($current->getFilename()), SCAN_EXCLUDED_DIRS, true);
+            }
+
+            return true;
+        }
+    );
+
+    $found = [];
+    foreach (new RecursiveIteratorIterator($filtered) as $file) {
+        /** @var SplFileInfo $file */
+        if (!$file->isFile()) {
+            continue;
+        }
+        $name = $file->getFilename();
+        // 与 glob 的 'phpunit*.xml' 语义等价：以 phpunit 开头、以 .xml 结尾
+        if (!str_starts_with($name, 'phpunit') || !str_ends_with($name, '.xml')) {
+            continue;
+        }
+        $absolute = $file->getPathname();
+        // 统一成正斜杠，保证 Windows / macOS / Linux 下报告与登记表可读且可比
+        $relative = str_replace(DIRECTORY_SEPARATOR, '/', substr($absolute, strlen($rootReal) + 1));
+        $found[] = $relative;
+    }
+
+    sort($found, SORT_STRING);
+
+    return array_values(array_unique($found));
 }
 
 // ---------------------------------------------------------------------------
@@ -205,12 +294,8 @@ $strict = in_array('--strict', $argv, true);
 echo colorize('PHPUnit Config Consistency Check | phpunit 配置一致性检查', 'blue') . PHP_EOL;
 echo str_repeat('=', 64) . PHP_EOL;
 
-// 仓库根下实际存在的 phpunit*.xml（检查 D 用：未登记的配置不许存在）
-$discovered = [];
-foreach (glob(REPO_ROOT . '/phpunit*.xml') ?: [] as $file) {
-    $discovered[] = basename($file);
-}
-sort($discovered);
+// 仓库内实际存在的 phpunit*.xml（递归扫描，已排除第三方目录）；检查 D 用：未登记的配置不许存在
+$discovered = discoverConfigs(REPO_ROOT);
 
 $required = array_merge([BASE_CONFIG], VARIANT_CONFIGS);
 $registered = array_merge($required, array_keys(EXEMPT_CONFIGS));
@@ -368,23 +453,92 @@ if (!$baseReady) {
 }
 
 // --- 检查 D：所有 phpunit*.xml 都必须登记（防新增变体绕过门禁） ---
+// 判定按**相对路径**：递归扫描后可能同时存在 phpunit.xml（根层）与 plugins/xxx/phpunit.xml，
+// 只看 basename 会把两者混为一谈，等于给子目录配置开了后门。
 $dIssues = [];
 foreach ($discovered as $name) {
     if (in_array($name, $registered, true)) {
         continue;
     }
-    $dIssues[] = "{$name} 未登记到门禁（请加入 VARIANT_CONFIGS，或加入 EXEMPT_CONFIGS 并写明豁免理由）";
+    $dIssues[] = "{$name} 未登记到门禁（请加入 VARIANT_CONFIGS，或加入 EXEMPT_CONFIGS 并写明豁免理由与 review_by）";
 }
 printf("检查 D  phpunit 配置登记完整     %s\n", formatResult(count($dIssues)));
 foreach ($dIssues as $issue) {
     echo '   ' . colorize('[UNREGISTERED]', 'red') . " {$issue}" . PHP_EOL;
 }
-foreach (EXEMPT_CONFIGS as $name => $reason) {
+foreach (EXEMPT_CONFIGS as $name => $meta) {
     if (in_array($name, $discovered, true)) {
-        echo '   ' . colorize('[EXEMPT]', 'gray') . " {$name}：{$reason}" . PHP_EOL;
+        echo '   ' . colorize('[EXEMPT]', 'gray') . " {$name}：" . ($meta['reason'] ?? '（缺少 reason）') . PHP_EOL;
     }
 }
 $errorCount += count($dIssues);
+
+// --- 检查 E：豁免复核到期（review_by 缺失 / 格式非法 / 已过期一律报错）（R35） ---
+// 目的：豁免不是永久免检通道。到期后必须有人真的看一遍那份配置，
+// 要么续期（更新 review_by），要么移除豁免纳入门禁。
+// 错误用两种标签区分：EXEMPT-META（元数据缺失/格式非法，写的人的问题）
+// 与 EXEMPT-EXPIRED（真的到期了，需要复核决策），便于 CI 日志快速定位。
+$eIssues = [];   // list<array{tag:string, msg:string}>
+$eNotices = [];
+$today = new DateTimeImmutable('today'); // 服务器当天零点，按日期粒度比较
+
+foreach (EXEMPT_CONFIGS as $name => $meta) {
+    if (!is_array($meta)) {
+        // 兼容被误改回旧格式（字符串理由）的情况：直接报结构错误，避免 review_by 静默丢失
+        $eIssues[] = [
+            'tag' => 'EXEMPT-META',
+            'msg' => "{$name} 的豁免元数据必须是数组 ['reason' => ..., 'review_by' => 'YYYY-MM-DD']",
+        ];
+
+        continue;
+    }
+
+    $reviewBy = $meta['review_by'] ?? null;
+    if (!is_string($reviewBy) || preg_match('/^\d{4}-\d{2}-\d{2}$/', $reviewBy) !== 1) {
+        $eIssues[] = [
+            'tag' => 'EXEMPT-META',
+            'msg' => "{$name} 的 review_by 缺失或格式非法（应为 YYYY-MM-DD，实际="
+                . (is_string($reviewBy) ? $reviewBy : gettype($reviewBy)) . '）',
+        ];
+
+        continue;
+    }
+
+    $deadline = DateTimeImmutable::createFromFormat('!Y-m-d', $reviewBy);
+    // createFromFormat 会把 2027-02-30 溢出成 2027-03-02，回写比对才能识别出「不存在的日期」
+    if ($deadline === false || $deadline->format('Y-m-d') !== $reviewBy) {
+        $eIssues[] = [
+            'tag' => 'EXEMPT-META',
+            'msg' => "{$name} 的 review_by={$reviewBy} 不是真实存在的日期",
+        ];
+
+        continue;
+    }
+
+    // %r 带出符号：负值表示已过期
+    $daysLeft = (int) $today->diff($deadline)->format('%r%a');
+    if ($daysLeft < 0) {
+        $eIssues[] = [
+            'tag' => 'EXEMPT-EXPIRED',
+            'msg' => "{$name} 的豁免已到期（review_by={$reviewBy}，已过期 " . abs($daysLeft) . ' 天）'
+                . '：请复核后更新 review_by，或移除豁免并纳入门禁',
+        ];
+
+        continue;
+    }
+
+    // 未到期：每次运行都打印，制造可见性（不然「设了就不管」）
+    $eNotices[] = "{$name} 豁免有效期至 {$reviewBy}，剩余 {$daysLeft} 天";
+}
+
+printf("检查 E  豁免复核有效期          %s\n", formatResult(count($eIssues)));
+foreach ($eIssues as $issue) {
+    echo '   ' . colorize("[{$issue['tag']}]", 'red') . " {$issue['msg']}" . PHP_EOL;
+}
+foreach ($eNotices as $notice) {
+    echo '   ' . colorize('[EXEMPT-REVIEW]', 'gray') . " {$notice}" . PHP_EOL;
+}
+$errorCount += count($eIssues);
 
 echo str_repeat('-', 64) . PHP_EOL;
 
