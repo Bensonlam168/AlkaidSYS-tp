@@ -83,3 +83,6 @@ docker-compose.override.local.yml
 
 # SDD 工作区（superpowers subagent-driven-development 的临时产物）
 .superpowers/
+
+# Graphify 知识图谱产物（可再生，不入库）
+graphify-out/
