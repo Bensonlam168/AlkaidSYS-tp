@@ -109,5 +109,17 @@ CI 门禁：`.github/workflows/docs-check.yml`（`design/**` 或 `docs/**` 变�
 
 ## Configuration & Security
 - Create local config from `.env.example` (`cp .env.example .env`) and never commit secrets；env 命名以 `.env.example` 为“单一真相源”。
+- **`.env` / `.env.example` 的注释行禁用 ASCII 括号与引号**（`(` `)` `"` `'` `[` `]` `{` `}` 等）：
+  `parse_ini_file` 遇到未加引号的 ASCII 括号/引号会抛 `syntax error`，导致**整份文件解析失败**、所有键**静默失效**
+  （`think\Env::load()` 拿到 `false` 后按 `?: []` 兜底），表现为「容器正常起来了，但连不上库 / 配置像没生效」，
+  极难定位。需要括号时一律用**全角括号**：`（）`（书名号 `「」` 同理可用）。
+- **注释里也不要出现半角 `=`**：`parse_ini_file` 会把 `# xxx = yyy` 解析成**伪键**（键名形如 `# 1. 生产类环境（APP_ENV`）。
+  虽有 `#` 前缀不会覆盖真实键，但会制造噪音，并掩盖「注释里含 `=` 会变键」这一危险模式。
+  表达「等于」请改写为「取值为 / 为 / 即」，或改用全角 `＝`。
+- **上述两条的自查命令**（改完 `.env` / `.env.example` 必跑，在 `alkaid-backend` 容器内执行）：
+  - 能否正常解析：`php -r 'var_dump(parse_ini_file(".env.example", true, INI_SCANNER_RAW) !== false);'`
+    —— 必须输出 `bool(true)`。输出 `bool(false)` 时同屏还会打印 `syntax error, unexpected '(' in ... on line N`，据此定位行号。
+  - 有无伪键：`php -r '$d = parse_ini_file(".env.example", true, INI_SCANNER_RAW) ?: []; var_dump(array_values(array_filter(array_keys($d), fn ($k) => !preg_match("/^[A-Z][A-Z0-9_]*$/", (string) $k))));'`
+    —— 必须输出 `array(0) {}`。非空即说明注释里有半角 `=`。
 - Avoid committing generated artifacts like `vendor/`, `runtime/`, and `node_modules/`.
 - **禁止提交嵌套 `vendor/`**：根 `.gitignore` 的 `/vendor/` 只对根目录生效，`plugins/**/vendor/` 需单独忽略（现存问题见质量审查报告 C-3）。
