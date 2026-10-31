@@ -147,38 +147,90 @@ class Request extends ThinkRequest
     }
 
     /**
-     * Get site ID | 获取站点ID
+     * Get site ID | 获取站点ID（无站点时返回 0 = 全局桶，**刻意不抛异常**）
      *
-     * Resolves site ID from:
-     * 1. Previously set site ID (from middleware)
-     * 2. X-Site-ID header
-     * 3. Default site ID (for dev / single-site setups)
+     * 解析优先级（**没有 `-1` 哨兵、也没有 `$default` 参数**）：
+     * 1. 已被 `setSiteId()` 写入的值（正常来自 `SiteIdentify` 中间件；含刻意写入的 0）
+     * 2. `X-Site-ID` 请求头（必须是非负整数，即 `0` 或正整数）
+     * 3. 两者都没有 → `0`
      *
-     * 解析站点ID来源：
-     * 1. 之前设置的站点ID（来自中间件）
-     * 2. X-Site-ID 请求头
-     * 3. 默认站点ID（开发 / 单站点部署）
+     * 为什么**不**照抄 `tenantId()` 的 fail-closed —— 这是语义差异，不是遗漏：
+     *   - **租户**：`tenant_id = 0` 不是租户（`tenants.id` 从 1 开始）。解析不出租户若静默回落到
+     *     租户 1，等于按别人的租户读写，属于跨租户越界 → 必须抛
+     *     `TenantContextMissingException`。
+     *   - **站点**：`site_id = 0` 是**有语义的「全局 / 无站点」桶**，不是缺失标记：
+     *     `infrastructure/Lowcode/Collection/Service/TableNameGenerator.php` 与
+     *     `infrastructure/Lowcode/Schema/SchemaVersionService.php` 把 0 当业务默认值；
+     *     `app\model\BaseModel::scopeSite()` 是 `where('site_id', $siteId)`（0 也照样真过滤）；
+     *     而且绝大多数请求本来就不带 `X-Site-ID`。
+     *     「无站点 → 抛异常」会打断几乎所有低代码请求，因此这里回落 0。
      *
-     * @param int|null $default Default site ID | 默认站点ID
-     * @return int
+     * 真正的缺陷在**输入校验**（历史实现把 `abc` 静默当 0、把 `-5` 原样写进
+     * `where('site_id', -5)`），已由 `app\middleware\SiteIdentify` 收敛为入口 403。
+     *
+     * 需要区分「显式 0」与「本次请求没有站点维度」时，用 `siteIdOrNull()`。
+     *
+     * @return int 当前站点ID；0 表示「全局 / 无站点」桶
      */
-    public function siteId(?int $default = 0): int
+    public function siteId(): int
     {
+        return $this->siteIdOrNull() ?? 0;
+    }
+
+    /**
+     * Get site ID or null | 获取站点ID（**区分「显式 0」与「未提供」**）
+     *
+     * 这是 `siteId()` 的可空版本，两种返回值语义不同，不要混用：
+     *   - `0`   ：调用方/请求头**明确**指定了「全局 / 无站点」桶；
+     *   - `null`：本次请求**根本没有**提供站点维度（无 `X-Site-ID`，且无人调用过
+     *             `setSiteId()`）。
+     *
+     * 业务读写路径请继续用 `siteId()`（返回 int，0 会真的参与 `where('site_id', 0)` 过滤）。
+     * 只有「确实要如实区分『没给站点』」的地方才用本方法，例如：
+     *   - `getTenantContext()` 的日志/诊断字段 —— 缺失就是缺失，不该伪造一个 0；
+     *   - 事件 payload 里的可选 `site_id`（见 `FieldController` / `RelationshipController`），
+     *     其下游 `FieldManager` / `RelationshipManager` 只把该值原样写进事件，不做过滤。
+     *
+     * ⚠️ **不要**把 `null` 喂给「`null` = 不过滤」的仓储方法（例如
+     * `FormSchemaRepository::findByName($name, $tenantId, $siteId)` 里的
+     * `if ($siteId !== null) where('site_id', $siteId)`）—— 那会把「本站点」放宽成
+     * 「本租户内任意站点」，属于站点维度越权。这类位置必须传 `siteId()`。
+     *
+     * @return int|null 显式站点ID（含 0）；既无已设值、也无合法 `X-Site-ID` 时返回 null
+     */
+    public function siteIdOrNull(): ?int
+    {
+        // 1) 已被中间件 / 调用方写入 → 直接返回（含刻意写入的 0）
         if ($this->siteId !== null) {
             return $this->siteId;
         }
 
-        // Try to get from header | 尝试从 header 获取
-        $siteId = (int)$this->header('X-Site-ID', '-1');
+        // 2) 尝试从 header 获取 | Try to get from header
+        $rawHeader = $this->header('X-Site-ID');
 
-        if ($siteId >= 0) {
-            $this->siteId = $siteId;
-            return $siteId;
+        // 头缺失 / 空串 → 「本次请求没有提供站点维度」，不写入实例属性
+        if ($rawHeader === null || $rawHeader === '') {
+            return null;
         }
 
-        // Use default | 使用默认值
-        $this->siteId = $default ?? 0;
-        return $this->siteId;
+        // 非标量（例如重复请求头被框架解析成数组）直接视为「未提供」，
+        // 不做 `(string)` 强制转换 —— 那会在数组上触发 "Array to string conversion" 告警。
+        $raw = is_scalar($rawHeader) ? (string) $rawHeader : '';
+
+        // 只接受非负整数：`abc` / `-5` / ` 7` / `1.5` 一律视为「未提供」。
+        //
+        // 这里是**最后一道兜底** —— 正常 HTTP 链路上 `SiteIdentify` 已在入口 403 拒绝
+        // 非法 header；但调用链也可能绕过中间件（CLI / 队列 / 测试直调控制器），
+        // 此时绝不能把脏值塞进 `where('site_id', ...)`，宁可回落到全局桶 0。
+        if (preg_match('/^\d+$/', $raw) !== 1) {
+            return null;
+        }
+
+        $siteId = (int) $raw;
+
+        $this->siteId = $siteId;
+
+        return $siteId;
     }
 
     /**
@@ -408,18 +460,23 @@ class Request extends ThinkRequest
      * 用途：**诊断/日志聚合**（`Auth` / `Permission` / `AccessLog` / `RateLimit` /
      * `SlowQueryListener` 在写日志前一次性取三个维度），不参与任何业务读写决策。
      *
-     * 因此这里的 `tenant_id` 用可空版本 `tenantIdOrNull()`：
-     * 若用严格版 `tenantId()`，一旦租户上下文缺失，整个聚合会抛异常，
-     * 调用方 catch 之后连本来能拿到的 `site_id` / `user_id` 也会一起丢掉 ——
-     * 排障时最需要的信息反而消失。业务代码要租户ID请直接用 `tenantId()`。
+     * 因此 `tenant_id` / `site_id` 都用**可空版本**：
+     *   - `tenant_id` 用 `tenantIdOrNull()`：若用严格版 `tenantId()`，一旦租户上下文缺失，
+     *     整个聚合会抛异常，调用方 catch 之后连本来能拿到的 `site_id` / `user_id` 也会一起丢掉 ——
+     *     排障时最需要的信息反而消失；
+     *   - `site_id` 用 `siteIdOrNull()`：这里要的是「**本次请求到底有没有站点维度**」，
+     *     用 `siteId()` 会把「没带 X-Site-ID」伪装成「显式站点 0」，让排障时无法区分
+     *     「请求没指定站点」与「请求指定了全局桶」。
      *
-     * @return array{tenant_id: int|null, site_id: int, user_id: int|null}
+     * 业务代码要租户ID请直接用 `tenantId()`；要站点ID（参与过滤）请用 `siteId()`。
+     *
+     * @return array{tenant_id: int|null, site_id: int|null, user_id: int|null}
      */
     public function getTenantContext(): array
     {
         return [
             'tenant_id' => $this->tenantIdOrNull(),
-            'site_id' => $this->siteId(),
+            'site_id' => $this->siteIdOrNull(),
             'user_id' => $this->userId(),
         ];
     }

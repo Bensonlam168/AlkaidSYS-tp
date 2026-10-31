@@ -32,6 +32,8 @@ class ExceptionHandle extends Handle
         // 租户上下文缺失：由 render() 按「请求级/配置级」分别记 warning / error，
         // 这里的报告交给 render()，避免同一条失败被打两条日志（且级别不同会互相干扰告警）
         \app\exception\TenantContextMissingException::class,
+        // 站点标识非法：同样由 render() 记 warning（带 reason 与原始取值），避免重复记 error
+        \app\exception\InvalidSiteContextException::class,
     ];
 
     /**
@@ -150,6 +152,54 @@ class ExceptionHandle extends Handle
                     ? 'Tenant context unavailable | 租户上下文不可用（请联系管理员检查 DEFAULT_TENANT_ID 配置）'
                     : $e->getMessage(),
                 (int) $e->getCode() ?: 5000,
+                null,
+                $traceId,
+                $isDebug ? $e : null
+            );
+        }
+
+        // 2.7 Invalid site context | 站点标识非法（`X-Site-ID` 校验失败的显式出口）
+        //
+        // 来源：`app\middleware\SiteIdentify` 收到非法 `X-Site-ID`（非整数 / 负数）时抛出。
+        // 与 `TenantContextMissingException` 的**语义差异**：这不是「缺少上下文」，
+        // 而是「**提供了站点标识，但标识本身非法**」—— 「无站点」是合法的（按 0 全局桶处理），
+        // 因此这里不存在「缺站点」对应的分支。
+        //
+        // 两个分支按 reason 分开（排查方向不同，tag 也可直接 grep）：
+        //   - REASON_MALFORMED：不是整数（`abc` / `1.5` / `1e3`）→ 多半是前端把非数字塞进 header；
+        //   - REASON_NEGATIVE ：负数（`-5` / `-1`）→ 多半是把 `-1` 当成「未设置」哨兵。
+        // 两者对外映射一致：HTTP 403 + 业务码 2002（与 `invalid_tenant_header` 完全对齐，
+        // 不新增错误码，保证前端既有的 2002 分支继续生效）。
+        if ($e instanceof \app\exception\InvalidSiteContextException) {
+            $context = [
+                'reason'    => $e->getReason(),
+                'raw_value' => $e->getRawValue(),
+                'message'   => $e->getMessage(),
+                'path'      => method_exists($request, 'pathinfo') ? $request->pathinfo() : null,
+                'method'    => method_exists($request, 'method') ? $request->method() : null,
+                'trace_id'  => $traceId,
+            ];
+
+            if ($e->getReason() === \app\exception\InvalidSiteContextException::REASON_NEGATIVE) {
+                $this->safeLog(
+                    'warning',
+                    '[SITE_CONTEXT_INVALID_NEGATIVE] 站点标识非法：X-Site-ID 为负数，已拒绝'
+                        . '（path=' . ($context['path'] ?? '') . '）',
+                    $context
+                );
+            } else {
+                $this->safeLog(
+                    'warning',
+                    '[SITE_CONTEXT_INVALID_MALFORMED] 站点标识非法：X-Site-ID 不是非负整数，已拒绝'
+                        . '（path=' . ($context['path'] ?? '') . '）',
+                    $context
+                );
+            }
+
+            return $this->buildJsonResponse(
+                403,
+                $e->getMessage() ?: 'Invalid site context | 站点标识非法',
+                (int) $e->getCode() ?: 2002,
                 null,
                 $traceId,
                 $isDebug ? $e : null

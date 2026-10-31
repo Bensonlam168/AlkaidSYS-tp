@@ -58,7 +58,9 @@ class FieldController extends ApiController
 
         try {
             $tenantId = $this->request->tenantId();
-            $siteId = method_exists($this->request, 'siteId') ? $this->request->siteId() : null;
+            // 站点维度只作为事件 payload 的可选元数据往下传（FieldManager 不做站点过滤），
+            // 因此这里用可空版本：没带 X-Site-ID 就如实传 null，不伪造「显式站点 0」。
+            $siteId = method_exists($this->request, 'siteIdOrNull') ? $this->request->siteIdOrNull() : null;
 
             // Create field | 创建字段
             $field = FieldFactory::create(
@@ -89,7 +91,8 @@ class FieldController extends ApiController
     {
         try {
             $tenantId = $this->request->tenantId();
-            $siteId = method_exists($this->request, 'siteId') ? $this->request->siteId() : null;
+            // 同上：仅事件元数据，允许为 null（未提供站点维度）
+            $siteId = method_exists($this->request, 'siteIdOrNull') ? $this->request->siteIdOrNull() : null;
 
             $this->fieldManager->removeField($collectionName, $fieldName, $tenantId, $siteId);
 
