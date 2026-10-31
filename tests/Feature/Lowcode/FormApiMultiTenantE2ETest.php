@@ -245,4 +245,3 @@ final class FormApiMultiTenantE2ETest extends FormApiTest
         $this->assertEquals(1, $row['site_id']);
     }
 }
-

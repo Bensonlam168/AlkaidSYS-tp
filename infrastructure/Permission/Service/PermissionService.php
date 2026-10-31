@@ -8,7 +8,6 @@ use Infrastructure\User\Repository\UserRepository;
 use think\facade\Db;
 use think\facade\Config;
 use think\facade\Log;
-use think\Request;
 
 /**
  * Permission Service | 权限服务

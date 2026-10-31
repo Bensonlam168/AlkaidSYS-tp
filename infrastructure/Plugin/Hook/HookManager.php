@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Infrastructure\Plugin\Hook;
 
 use Domain\Event\EventContext;
-use Infrastructure\Plugin\Hook\HookResult;
 use think\facade\Config;
 use think\facade\Log;
 use think\facade\Queue;
@@ -101,7 +100,7 @@ class HookManager
 
     /**
      * 执行 Action 钩子（兼容方法名）
-     * 
+     *
      * @param string $tag 钩子名称
      * @param array $args 参数
      * @return mixed 执行结果
@@ -130,10 +129,10 @@ class HookManager
         $this->actions = [];
         $this->filters = [];
     }
-    
+
     /**
      * 移除指定插件的所有钩子 / Remove all hooks for a specific plugin
-     * 
+     *
      * @param string $pluginId 插件ID / Plugin ID
      */
     public function removePluginHooks(string $pluginId): void
@@ -157,7 +156,7 @@ class HookManager
                 unset($this->actions[$tag]);
             }
         }
-        
+
         // 移除 Filter 钩子
         foreach ($this->filters as $tag => $priorities) {
             foreach ($priorities as $priority => $callbacks) {
@@ -178,10 +177,10 @@ class HookManager
             }
         }
     }
-    
+
     /**
      * 检查回调是否属于指定插件 / Check if callback belongs to specific plugin
-     * 
+     *
      * @param callable $callback 回调函数 / Callback function
      * @param string $pluginId 插件ID / Plugin ID
      * @return bool 是否属于插件 / Whether belongs to plugin
@@ -200,14 +199,14 @@ class HookManager
                 return true;
             }
         }
-        
+
         // 对于闭包，无法直接判断，暂时返回 false
         return false;
     }
-    
+
     /**
      * 获取所有已注册的钩子标签 / Get all registered hook tags
-     * 
+     *
      * @return array<string> 钩子标签列表 / List of hook tags
      */
     public function getRegisteredTags(): array
@@ -217,20 +216,20 @@ class HookManager
             array_keys($this->filters)
         ));
     }
-    
+
     /**
      * 获取指定标签的钩子数量 / Get hook count for specific tag
-     * 
+     *
      * @param string $tag 钩子标签 / Hook tag
      * @return int 钩子数量 / Hook count
      */
     public function getHookCount(string $tag): int
     {
-        $actionCount = isset($this->actions[$tag]) ? 
+        $actionCount = isset($this->actions[$tag]) ?
             array_sum(array_map('count', $this->actions[$tag])) : 0;
-        $filterCount = isset($this->filters[$tag]) ? 
+        $filterCount = isset($this->filters[$tag]) ?
             array_sum(array_map('count', $this->filters[$tag])) : 0;
-        
+
         return $actionCount + $filterCount;
     }
 

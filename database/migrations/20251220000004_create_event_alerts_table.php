@@ -82,4 +82,3 @@ class CreateEventAlertsTable extends Migrator
             ->create();
     }
 }
-

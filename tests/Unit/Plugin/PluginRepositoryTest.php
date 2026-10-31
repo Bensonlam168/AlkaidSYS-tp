@@ -77,7 +77,7 @@ class PluginRepositoryTest extends ThinkPHPTestCase
     protected function ensureTables(): void
     {
         Db::execute(
-            "CREATE TABLE IF NOT EXISTS alkaid_plugin_packages (
+            'CREATE TABLE IF NOT EXISTS alkaid_plugin_packages (
                 id bigint unsigned AUTO_INCREMENT PRIMARY KEY,
                 plugin_key varchar(64) NOT NULL UNIQUE,
                 name varchar(128) NOT NULL,
@@ -91,7 +91,7 @@ class PluginRepositoryTest extends ThinkPHPTestCase
                 manifest json NOT NULL,
                 created_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
         );
 
         Db::execute(
@@ -113,4 +113,3 @@ class PluginRepositoryTest extends ThinkPHPTestCase
         );
     }
 }
-

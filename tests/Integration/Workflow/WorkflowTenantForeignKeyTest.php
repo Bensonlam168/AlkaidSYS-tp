@@ -205,7 +205,7 @@ class WorkflowTenantForeignKeyTest extends ThinkPHPTestCase
     {
         $rows = Db::query(
             'SELECT table_name, column_name, column_type FROM information_schema.columns'
-            . " WHERE table_schema = DATABASE() AND table_name IN ("
+            . ' WHERE table_schema = DATABASE() AND table_name IN ('
             . implode(', ', array_map(static fn (string $t): string => "'" . $t . "'", self::EXPECTED_UNSIGNED_TENANT_TABLES))
             . ") AND column_name = 'tenant_id'"
         );

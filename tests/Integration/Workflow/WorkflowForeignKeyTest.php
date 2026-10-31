@@ -157,7 +157,7 @@ class WorkflowForeignKeyTest extends ThinkPHPTestCase
     public function testWorkflowTasksInstanceIdRemainsNotNull(): void
     {
         $rows = Db::query(sprintf(
-            "SELECT is_nullable FROM information_schema.columns"
+            'SELECT is_nullable FROM information_schema.columns'
             . " WHERE table_schema = DATABASE() AND table_name = 'workflow_tasks' AND column_name = 'instance_id'"
         ));
 
@@ -184,10 +184,10 @@ class WorkflowForeignKeyTest extends ThinkPHPTestCase
     private function workflowForeignKeys(): array
     {
         $rows = Db::query(
-            "SELECT constraint_name, table_name, column_name, referenced_table_name, referenced_column_name"
-            . " FROM information_schema.key_column_usage"
+            'SELECT constraint_name, table_name, column_name, referenced_table_name, referenced_column_name'
+            . ' FROM information_schema.key_column_usage'
             . " WHERE table_schema = DATABASE() AND table_name LIKE 'workflow%' AND referenced_table_name IS NOT NULL"
-            . " ORDER BY table_name, column_name"
+            . ' ORDER BY table_name, column_name'
         );
 
         $result = [];
@@ -225,7 +225,7 @@ class WorkflowForeignKeyTest extends ThinkPHPTestCase
     private function columnTypes(): array
     {
         $rows = Db::query(
-            "SELECT table_name, column_name, column_type FROM information_schema.columns"
+            'SELECT table_name, column_name, column_type FROM information_schema.columns'
             . " WHERE table_schema = DATABASE() AND table_name LIKE 'workflow%'"
             . " AND column_name IN ('instance_id','task_id','created_by','updated_by','assignee','user_id')"
         );

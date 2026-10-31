@@ -6,8 +6,6 @@ namespace app\controller\api\admin;
 
 use app\controller\ApiController;
 use Infrastructure\Permission\Service\PermissionService;
-use think\facade\Request;
-use think\facade\Response;
 
 /**
  * 权限服务监控 API 控制器

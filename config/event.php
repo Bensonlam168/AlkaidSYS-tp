@@ -23,4 +23,3 @@ return [
         'retry_delay_seconds' => (int) (getenv('EVENT_DLQ_RETRY_DELAY') ?: 10),
     ],
 ];
-

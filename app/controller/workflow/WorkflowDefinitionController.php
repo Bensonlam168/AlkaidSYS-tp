@@ -129,7 +129,7 @@ class WorkflowDefinitionController extends ApiController
         $list = array_slice($allDefinitions, $offset, $pageSize);
 
         // Transform to array format
-        $list = array_map(fn($def) => $this->transformDefinitionToArray($def), $list);
+        $list = array_map(fn ($def) => $this->transformDefinitionToArray($def), $list);
 
         return $this->paginate($list, $total, $page, $pageSize);
     }
@@ -570,8 +570,8 @@ class WorkflowDefinitionController extends ApiController
         ];
 
         if ($includeDetails) {
-            $data['nodes'] = array_map(fn($node) => $node->toArray(), $definition->getNodes());
-            $data['connections'] = array_map(fn($conn) => $conn->toArray(), $definition->getConnections());
+            $data['nodes'] = array_map(fn ($node) => $node->toArray(), $definition->getNodes());
+            $data['connections'] = array_map(fn ($conn) => $conn->toArray(), $definition->getConnections());
             $data['config'] = $definition->getConfig();
             $data['metadata'] = $definition->getMetadata();
         }

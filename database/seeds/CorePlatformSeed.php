@@ -324,11 +324,11 @@ class CorePlatformSeed extends Seeder
             // 而是消除「值里含半角单引号就会破 SQL / 被静默截断」这类脆弱性（健壮性改进）。
             // 例：name 若写成 'View O\'Brien Forms'，旧写法会拼出语法错误的 SQL，新写法原样入库。
             $created += $this->execute(
-                "INSERT INTO `permissions`
+                'INSERT INTO `permissions`
                     (`name`, `slug`, `resource`, `action`, `description`, `created_at`, `updated_at`)
                  SELECT ?, ?, ?, ?, ?, ?, ?
                  FROM DUAL
-                 WHERE NOT EXISTS (SELECT 1 FROM `permissions` WHERE `slug` = ?)",
+                 WHERE NOT EXISTS (SELECT 1 FROM `permissions` WHERE `slug` = ?)',
                 [
                     $permission['name'],
                     $permission['slug'],
@@ -420,7 +420,7 @@ class CorePlatformSeed extends Seeder
         //
         // 因此改为 INSERT ... SELECT 动态读取 permissions 表的**全部** ID 分配给管理员。
         // NOT EXISTS 保证幂等：重复执行 seeder 不会产生重复行，也不会撞复合主键 (role_id, permission_id)。
-        $this->execute("
+        $this->execute('
             INSERT INTO role_permissions (role_id, permission_id, created_at)
             SELECT 1, p.id, NOW()
             FROM permissions p
@@ -428,7 +428,7 @@ class CorePlatformSeed extends Seeder
                 SELECT 1 FROM role_permissions rp
                 WHERE rp.role_id = 1 AND rp.permission_id = p.id
             )
-        ");
+        ');
 
         // Regular user gets view permissions only | 普通用户只有查看权限
         //
@@ -447,13 +447,13 @@ class CorePlatformSeed extends Seeder
         $assigned = 0;
         foreach ($readonlyPermissionIds as $permissionId) {
             $assigned += $this->execute(
-                "INSERT INTO `role_permissions` (`role_id`, `permission_id`, `created_at`)
+                'INSERT INTO `role_permissions` (`role_id`, `permission_id`, `created_at`)
                  SELECT 2, ?, NOW()
                  FROM DUAL
                  WHERE NOT EXISTS (
                      SELECT 1 FROM `role_permissions`
                      WHERE `role_id` = 2 AND `permission_id` = ?
-                 )",
+                 )',
                 [$permissionId, $permissionId]
             );
         }
@@ -590,11 +590,11 @@ class CorePlatformSeed extends Seeder
 
         // Assign admin role to admin user | 分配管理员角色
         // 幂等写法：NOT EXISTS 保证重复执行不会撞 (user_id, role_id) 复合主键。
-        $this->execute("
+        $this->execute('
             INSERT INTO `user_roles` (`user_id`, `role_id`, `created_at`)
             SELECT 1, 1, NOW()
             FROM DUAL
             WHERE NOT EXISTS (SELECT 1 FROM `user_roles` WHERE `user_id` = 1 AND `role_id` = 1)
-        ");
+        ');
     }
 }

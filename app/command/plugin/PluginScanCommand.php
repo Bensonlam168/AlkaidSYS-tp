@@ -49,7 +49,7 @@ class PluginScanCommand extends Command
             try {
                 $repo->upsert($manifest);
                 $output->writeln(sprintf(
-                    "<info>✓</info> %s (%s) => %s",
+                    '<info>✓</info> %s (%s) => %s',
                     $manifest['plugin_key'],
                     $manifest['version'],
                     $manifest['manifest_path']
@@ -61,7 +61,7 @@ class PluginScanCommand extends Command
             }
         }
 
-        $output->writeln("<info>Scan completed. Total: " . count($manifests) . "</info>");
+        $output->writeln('<info>Scan completed. Total: ' . count($manifests) . '</info>');
         return 0;
     }
 }

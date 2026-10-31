@@ -110,31 +110,31 @@ class WorkflowTaskController extends ApiController
         // 同时 `app\Request::tenantId()` 的返回类型是 int（恒 >= 1），原先的
         // `if ($tenantId !== null)` 包裹同为死条件；去掉后即便将来返回 null，
         // 结果也只是「过滤掉全部记录」（fail-closed），而不是跳过过滤。
-        $allTasks = array_filter($allTasks, fn($task) => ($task['tenant_id'] ?? null) === $tenantId);
+        $allTasks = array_filter($allTasks, fn ($task) => ($task['tenant_id'] ?? null) === $tenantId);
 
         // Apply status filter
         if (!empty($params['status'])) {
-            $allTasks = array_filter($allTasks, fn($task) => $task['status'] === $params['status']);
+            $allTasks = array_filter($allTasks, fn ($task) => $task['status'] === $params['status']);
         }
 
         // Apply instance filter
         if (!empty($params['instance_id'])) {
-            $allTasks = array_filter($allTasks, fn($task) => $task['instance_id'] === $params['instance_id']);
+            $allTasks = array_filter($allTasks, fn ($task) => $task['instance_id'] === $params['instance_id']);
         }
 
         // Apply type filter
         if (!empty($params['type'])) {
-            $allTasks = array_filter($allTasks, fn($task) => $task['type'] === $params['type']);
+            $allTasks = array_filter($allTasks, fn ($task) => $task['type'] === $params['type']);
         }
 
         // Apply assignee filter
         if (!empty($params['assignee'])) {
-            $allTasks = array_filter($allTasks, fn($task) => $task['assignee'] === $params['assignee']);
+            $allTasks = array_filter($allTasks, fn ($task) => $task['assignee'] === $params['assignee']);
         }
 
         // Re-index and sort by created_at desc
         $allTasks = array_values($allTasks);
-        usort($allTasks, fn($a, $b) => strtotime($b['created_at']) - strtotime($a['created_at']));
+        usort($allTasks, fn ($a, $b) => strtotime($b['created_at']) - strtotime($a['created_at']));
 
         $total = count($allTasks);
         $offset = ($page - 1) * $pageSize;

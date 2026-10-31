@@ -79,7 +79,7 @@ class EventMonitorIntegrationTest extends ThinkPHPTestCase
     protected function ensureTables(): void
     {
         Db::execute(
-            "CREATE TABLE IF NOT EXISTS `event_metrics` (
+            'CREATE TABLE IF NOT EXISTS `event_metrics` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 `event` VARCHAR(128) NOT NULL,
                 `trace_id` VARCHAR(64) NULL,
@@ -93,11 +93,11 @@ class EventMonitorIntegrationTest extends ThinkPHPTestCase
                 KEY `idx_event_created_at` (`event`, `created_at`),
                 KEY `idx_tenant_site_failed` (`tenant_id`, `site_id`, `failed`),
                 KEY `idx_trace_id` (`trace_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
 
         Db::execute(
-            "CREATE TABLE IF NOT EXISTS `event_dead_letters` (
+            'CREATE TABLE IF NOT EXISTS `event_dead_letters` (
                 `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
                 `code` INT UNSIGNED NOT NULL DEFAULT 2001,
                 `event` VARCHAR(128) NOT NULL,
@@ -114,7 +114,7 @@ class EventMonitorIntegrationTest extends ThinkPHPTestCase
                 KEY `idx_dlq_code_created_at` (`code`, `created_at`),
                 KEY `idx_dlq_tenant_site` (`tenant_id`, `site_id`),
                 KEY `idx_dlq_trace_id` (`trace_id`)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
     }
 
@@ -132,4 +132,3 @@ class EventMonitorIntegrationTest extends ThinkPHPTestCase
         }
     }
 }
-

@@ -84,4 +84,3 @@ class PluginPackageRepository
         return $row;
     }
 }
-

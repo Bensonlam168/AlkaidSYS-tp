@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Unit\Domain\Lowcode\Collection\Model;
 
 use Domain\Lowcode\Collection\Interfaces\FieldInterface;
-use Domain\Lowcode\Collection\Interfaces\RelationshipInterface;
 use Domain\Lowcode\Collection\Model\Collection;
 use Domain\Lowcode\Collection\Model\Relationship;
 use PHPUnit\Framework\TestCase;
@@ -40,7 +39,7 @@ class CollectionTest extends TestCase
             ->setTableName('lc_custom')
             ->setOptions(['a' => 1]);
 
-        $field = new class('email') implements FieldInterface {
+        $field = new class ('email') implements FieldInterface {
             public function __construct(private string $name)
             {
             }
@@ -126,4 +125,3 @@ class CollectionTest extends TestCase
         $this->assertSame('2025-01-02 00:00:00', $collection->getUpdatedAt());
     }
 }
-

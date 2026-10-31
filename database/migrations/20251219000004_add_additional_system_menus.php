@@ -352,6 +352,6 @@ class AddAdditionalSystemMenus extends Migrator
     private function insertMenu(array $data): int
     {
         $this->table('menus')->insert($data)->saveData();
-        return $this->fetchRow("SELECT LAST_INSERT_ID() as id")['id'];
+        return $this->fetchRow('SELECT LAST_INSERT_ID() as id')['id'];
     }
 }

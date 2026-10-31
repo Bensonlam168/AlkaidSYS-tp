@@ -76,17 +76,17 @@ class AddTenantToLowcodeFieldsAndRelationships extends Migrator
 
         // 回填 tenant_id：从 lowcode_collections 关联写入
         $this->execute(
-            "UPDATE `lowcode_fields` f
+            'UPDATE `lowcode_fields` f
              JOIN `lowcode_collections` c ON c.id = f.collection_id
              SET f.tenant_id = c.tenant_id
-             WHERE f.tenant_id IS NULL OR f.tenant_id = 0"
+             WHERE f.tenant_id IS NULL OR f.tenant_id = 0'
         );
 
         $this->execute(
-            "UPDATE `lowcode_relationships` r
+            'UPDATE `lowcode_relationships` r
              JOIN `lowcode_collections` c ON c.id = r.collection_id
              SET r.tenant_id = c.tenant_id
-             WHERE r.tenant_id IS NULL OR r.tenant_id = 0"
+             WHERE r.tenant_id IS NULL OR r.tenant_id = 0'
         );
     }
 

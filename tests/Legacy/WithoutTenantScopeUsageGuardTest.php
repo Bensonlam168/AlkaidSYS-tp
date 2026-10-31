@@ -81,7 +81,7 @@ final class WithoutTenantScopeUsageGuardTest extends TestCase
             );
 
             $this->fail(
-                "BaseModel::withoutTenantScope is considered a high-risk capability and must not be used " .
+                'BaseModel::withoutTenantScope is considered a high-risk capability and must not be used ' .
                 "without explicit design review and whitelisting. Found:\n" . implode("\n", $messages)
             );
         }
@@ -89,4 +89,3 @@ final class WithoutTenantScopeUsageGuardTest extends TestCase
         $this->assertTrue(true); // Explicit assertion for clarity
     }
 }
-

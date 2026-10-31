@@ -123,7 +123,7 @@ class PluginScanner
      */
     protected function ensureTrailingSeparator(string $path): string
     {
-        return rtrim($path, "/\\") . DIRECTORY_SEPARATOR;
+        return rtrim($path, '/\\') . DIRECTORY_SEPARATOR;
     }
 
     /**

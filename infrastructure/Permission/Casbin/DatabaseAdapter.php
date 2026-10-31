@@ -10,7 +10,6 @@ use think\facade\Cache;
 use think\facade\Config;
 use think\facade\Db;
 use think\facade\Log;
-use think\facade\Request;
 
 /**
  * Casbin 数据库适配器

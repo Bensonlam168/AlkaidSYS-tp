@@ -55,7 +55,7 @@ class PluginListCommand extends Command
             $status = $install['status'] ?? ($plugin->isEnabled() ? 'enabled' : ($plugin->isInstalled() ? 'installed' : 'uninstalled'));
             $version = $install['installed_version'] ?? ($plugin->getManifest()['version'] ?? 'n/a');
             $output->writeln(sprintf(
-                "- %s | version=%s | status=%s | installed=%s enabled=%s",
+                '- %s | version=%s | status=%s | installed=%s enabled=%s',
                 $key,
                 $version,
                 $status,

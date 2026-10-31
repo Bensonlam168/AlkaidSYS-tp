@@ -146,4 +146,3 @@ final class TestTenantScopedModel extends BaseModel
         return parent::getSiteContext();
     }
 }
-

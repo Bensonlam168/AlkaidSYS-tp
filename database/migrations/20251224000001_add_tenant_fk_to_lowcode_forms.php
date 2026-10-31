@@ -296,7 +296,7 @@ class AddTenantFkToLowcodeForms extends Migrator
         $target = self::REF_TABLE . '.' . self::REF_COLUMN;
 
         if (!$this->hasTable(self::TABLE)) {
-            $this->notice("跳过外键 " . self::CONSTRAINT . " -> {$target}：表 " . self::TABLE . ' 不存在');
+            $this->notice('跳过外键 ' . self::CONSTRAINT . " -> {$target}：表 " . self::TABLE . ' 不存在');
 
             return;
         }
@@ -314,7 +314,7 @@ class AddTenantFkToLowcodeForms extends Migrator
         }
 
         if (!$this->hasTable(self::REF_TABLE)) {
-            $this->notice("跳过外键 " . self::CONSTRAINT . " -> {$target}：被引用表 " . self::REF_TABLE . ' 不存在');
+            $this->notice('跳过外键 ' . self::CONSTRAINT . " -> {$target}：被引用表 " . self::REF_TABLE . ' 不存在');
 
             return;
         }

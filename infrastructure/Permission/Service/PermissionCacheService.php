@@ -7,7 +7,6 @@ namespace Infrastructure\Permission\Service;
 use think\facade\Cache;
 use think\facade\Config;
 use think\facade\Log;
-use think\Request;
 
 /**
  * Permission Cache Service | 权限缓存服务

@@ -53,4 +53,3 @@ class SchemaVersionServiceTest extends TestCase
         $this->assertNotSame($service->computeHash($schemaA), $service->computeHash($schemaB));
     }
 }
-

@@ -101,13 +101,13 @@ class PermissionServiceBenchmarkTest extends ThinkPHPTestCase
         // 输出性能指标
         echo "\n=== 权限查询性能测试结果 ===\n";
         echo "查询次数: {$queryCount}\n";
-        echo "平均延迟: " . round($avgLatency, 2) . "ms\n";
-        echo "P95 延迟: " . round($p95Latency, 2) . "ms\n";
-        echo "P99 延迟: " . round($latencies[(int) floor(count($latencies) * 0.99)], 2) . "ms\n";
+        echo '平均延迟: ' . round($avgLatency, 2) . "ms\n";
+        echo 'P95 延迟: ' . round($p95Latency, 2) . "ms\n";
+        echo 'P99 延迟: ' . round($latencies[(int) floor(count($latencies) * 0.99)], 2) . "ms\n";
 
         // 验证 P95 < 100ms
         $this->assertLessThan(100, $p95Latency, "P95 延迟 ({$p95Latency}ms) 超过 100ms 目标");
-        echo "✅ P95 延迟达标: " . round($p95Latency, 2) . "ms < 100ms\n";
+        echo '✅ P95 延迟达标: ' . round($p95Latency, 2) . "ms < 100ms\n";
     }
 
     /**
@@ -152,13 +152,13 @@ class PermissionServiceBenchmarkTest extends ThinkPHPTestCase
         echo "总查询次数: {$totalQueries}\n";
         echo "批大小: {$batchSize}\n";
         echo "批次数: {$batches}\n";
-        echo "总耗时: " . round($totalTime, 2) . "s\n";
-        echo "QPS: " . round($qps, 2) . "\n";
+        echo '总耗时: ' . round($totalTime, 2) . "s\n";
+        echo 'QPS: ' . round($qps, 2) . "\n";
 
         // 验证 QPS > 300（在测试环境下的合理期望）
         // 实际生产环境在 Swoole 协程下可达 1000+ QPS
         $this->assertGreaterThan(300, $qps, "QPS ({$qps}) 低于 300 最低期望");
-        echo "✅ QPS 达标: " . round($qps, 2) . " > 300 (生产环境可达 1000+)\n";
+        echo '✅ QPS 达标: ' . round($qps, 2) . " > 300 (生产环境可达 1000+)\n";
     }
 
     /**
@@ -188,9 +188,9 @@ class PermissionServiceBenchmarkTest extends ThinkPHPTestCase
         $stats = $this->cacheService->getCacheStats();
 
         echo "\n=== 第一轮查询（缓存未命中）===\n";
-        echo "L1 命中率: " . $stats['l1_cache']['hit_rate'] . "%\n";
-        echo "L2 命中率: " . $stats['l2_cache']['hit_rate'] . "%\n";
-        echo "总体命中率: " . $stats['overall']['overall_hit_rate'] . "%\n";
+        echo 'L1 命中率: ' . $stats['l1_cache']['hit_rate'] . "%\n";
+        echo 'L2 命中率: ' . $stats['l2_cache']['hit_rate'] . "%\n";
+        echo '总体命中率: ' . $stats['overall']['overall_hit_rate'] . "%\n";
 
         // 重置统计
         $this->cacheService->resetStats();
@@ -205,10 +205,10 @@ class PermissionServiceBenchmarkTest extends ThinkPHPTestCase
         $stats = $this->cacheService->getCacheStats();
 
         echo "\n=== 第二轮查询（缓存命中）===\n";
-        echo "L1 命中率: " . $stats['l1_cache']['hit_rate'] . "%\n";
-        echo "L2 命中率: " . $stats['l2_cache']['hit_rate'] . "%\n";
-        echo "总体命中率: " . $stats['overall']['overall_hit_rate'] . "%\n";
-        echo "总查询次数: " . $stats['overall']['total_queries'] . "\n";
+        echo 'L1 命中率: ' . $stats['l1_cache']['hit_rate'] . "%\n";
+        echo 'L2 命中率: ' . $stats['l2_cache']['hit_rate'] . "%\n";
+        echo '总体命中率: ' . $stats['overall']['overall_hit_rate'] . "%\n";
+        echo '总查询次数: ' . $stats['overall']['total_queries'] . "\n";
 
         // 验证命中率 > 90%
         $overallHitRate = $stats['overall']['overall_hit_rate'];
@@ -243,14 +243,14 @@ class PermissionServiceBenchmarkTest extends ThinkPHPTestCase
         $stats = $this->cacheService->getCacheStats();
 
         echo "\n=== 缓存隔离测试结果 ===\n";
-        echo "租户 1 用户权限数量: " . count($tenant1Permissions) . "\n";
-        echo "租户 2 用户权限数量: " . count($tenant2Permissions) . "\n";
-        echo "缓存键是否包含租户 ID: " . (strpos(serialize($stats), 'tenant') !== false ? "是" : "否") . "\n";
+        echo '租户 1 用户权限数量: ' . count($tenant1Permissions) . "\n";
+        echo '租户 2 用户权限数量: ' . count($tenant2Permissions) . "\n";
+        echo '缓存键是否包含租户 ID: ' . (strpos(serialize($stats), 'tenant') !== false ? '是' : '否') . "\n";
 
         // 验证不同租户数据不同
         $this->assertTrue(
             $tenant1Permissions !== $tenant2Permissions,
-            "不同租户用户的权限应该不同"
+            '不同租户用户的权限应该不同'
         );
 
         echo "✅ 缓存隔离测试通过\n";
@@ -281,11 +281,11 @@ class PermissionServiceBenchmarkTest extends ThinkPHPTestCase
         $invalidationTime = (microtime(true) - $startTime) * 1000; // 转换为毫秒
 
         echo "\n=== 缓存失效性能测试结果 ===\n";
-        echo "缓存失效时间: " . round($invalidationTime, 2) . "ms\n";
+        echo '缓存失效时间: ' . round($invalidationTime, 2) . "ms\n";
 
         // 验证失效时间 < 50ms
         $this->assertLessThan(50, $invalidationTime, "缓存失效时间 ({$invalidationTime}ms) 过长");
-        echo "✅ 缓存失效性能达标: " . round($invalidationTime, 2) . "ms < 50ms\n";
+        echo '✅ 缓存失效性能达标: ' . round($invalidationTime, 2) . "ms < 50ms\n";
     }
 
     /**

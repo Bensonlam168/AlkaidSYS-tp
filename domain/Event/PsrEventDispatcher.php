@@ -6,7 +6,6 @@ namespace Domain\Event;
 
 use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\EventDispatcher\ListenerProviderInterface;
-use Psr\EventDispatcher\StoppableEventInterface;
 
 /**
  * PSR-14 兼容分发器，包装内部 EventService。

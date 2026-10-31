@@ -36,4 +36,3 @@ class RawSqlSafetyCheckTest extends TestCase
         $this->assertContains('tests/Fixtures/RawSql/RawSqlSample.php', $files);
     }
 }
-

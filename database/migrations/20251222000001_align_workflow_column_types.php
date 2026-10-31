@@ -513,9 +513,9 @@ class AlignWorkflowColumnTypes extends Migrator
     protected function hasForeignKeyOnColumn(string $tableName, string $column): bool
     {
         $rows = $this->fetchAll(sprintf(
-            "SELECT constraint_name FROM information_schema.key_column_usage"
+            'SELECT constraint_name FROM information_schema.key_column_usage'
             . " WHERE table_schema = DATABASE() AND table_name = '%s' AND column_name = '%s'"
-            . " AND referenced_table_name IS NOT NULL",
+            . ' AND referenced_table_name IS NOT NULL',
             str_replace("'", "''", $tableName),
             str_replace("'", "''", $column)
         ));

@@ -1,13 +1,14 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Infrastructure\Plugin\Enum;
 
 /**
  * 插件状态枚举 / Plugin status enumeration
- * 
+ *
  * 定义插件在系统中的各种状态 / Defines various states of plugins in the system
- * 
+ *
  * @package Infrastructure\Plugin\Enum
  */
 enum PluginStatus: string
@@ -16,42 +17,42 @@ enum PluginStatus: string
      * 未安装状态 / Uninstalled status
      */
     case UNINSTALLED = 'uninstalled';
-    
+
     /**
      * 已安装状态 / Installed status
      */
     case INSTALLED = 'installed';
-    
+
     /**
      * 已激活状态 / Enabled status
      */
     case ENABLED = 'enabled';
-    
+
     /**
      * 已停用状态 / Disabled status
      */
     case DISABLED = 'disabled';
-    
+
     /**
      * 错误状态 / Error status
      */
     case ERROR = 'error';
-    
+
     /**
      * 更新中状态 / Updating status
      */
     case UPDATING = 'updating';
-    
+
     /**
      * 安装中状态 / Installing status
      */
     case INSTALLING = 'installing';
-    
+
     /**
      * 卸载中状态 / Uninstalling status
      */
     case UNINSTALLING = 'uninstalling';
-    
+
     /**
      * 获取状态的中文名称 / Get Chinese name of status
      */
@@ -68,7 +69,7 @@ enum PluginStatus: string
             self::UNINSTALLING => '卸载中',
         };
     }
-    
+
     /**
      * 检查是否为活跃状态 / Check if status is active
      */
@@ -76,7 +77,7 @@ enum PluginStatus: string
     {
         return $this === self::ENABLED;
     }
-    
+
     /**
      * 检查是否为安装状态 / Check if status is installed
      */
@@ -87,7 +88,7 @@ enum PluginStatus: string
             default => false,
         };
     }
-    
+
     /**
      * 检查是否为过渡状态 / Check if status is transitional
      */
@@ -98,7 +99,7 @@ enum PluginStatus: string
             default => false,
         };
     }
-    
+
     /**
      * 获取可转换的状态 / Get transitionable statuses
      */

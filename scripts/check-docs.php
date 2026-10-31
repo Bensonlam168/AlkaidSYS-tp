@@ -340,7 +340,7 @@ $totalIssues += count($fenceIssues);
 
 // --- 检查 3：示例类引用 ---
 if ($skipRefs) {
-    echo "检查 3  示例代码类引用        " . colorize('SKIPPED', 'gray') . PHP_EOL;
+    echo '检查 3  示例代码类引用        ' . colorize('SKIPPED', 'gray') . PHP_EOL;
 } else {
     $refIssues = checkExampleClassRefs($files);
     printf("检查 3  示例代码类引用        %s\n", formatResult(count($refIssues)));

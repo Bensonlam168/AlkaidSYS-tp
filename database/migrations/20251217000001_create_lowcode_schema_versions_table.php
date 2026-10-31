@@ -1,7 +1,6 @@
 <?php
 
 use think\migration\Migrator;
-use think\migration\db\Column;
 
 /**
  * Create lowcode_schema_versions table and add schema version/hash columns.
@@ -96,7 +95,7 @@ class CreateLowcodeSchemaVersionsTable extends Migrator
         $collections->update();
         // 基于现有 schema 初始化哈希
         // 注意：schema 为关键字，需使用反引号；同时将 JSON/文本列显式参与 SHA2 计算
-        $this->execute("UPDATE lowcode_collections SET schema_version = 1, schema_hash = SHA2(`schema`, 256) WHERE schema_hash IS NULL");
+        $this->execute('UPDATE lowcode_collections SET schema_version = 1, schema_hash = SHA2(`schema`, 256) WHERE schema_hash IS NULL');
 
         // 3) 为 lowcode_forms 增加 schema_version/schema_hash
         if ($this->hasTable('lowcode_forms')) {
@@ -117,7 +116,7 @@ class CreateLowcodeSchemaVersionsTable extends Migrator
                 ]);
             }
             $forms->update();
-            $this->execute("UPDATE lowcode_forms SET schema_version = 1, schema_hash = SHA2(`schema`, 256) WHERE schema_hash IS NULL");
+            $this->execute('UPDATE lowcode_forms SET schema_version = 1, schema_hash = SHA2(`schema`, 256) WHERE schema_hash IS NULL');
         }
     }
 }

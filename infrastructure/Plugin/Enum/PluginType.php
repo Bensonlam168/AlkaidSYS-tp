@@ -1,13 +1,14 @@
 <?php
+
 declare(strict_types=1);
 
 namespace Infrastructure\Plugin\Enum;
 
 /**
  * 插件类型枚举 / Plugin type enumeration
- * 
+ *
  * 定义系统支持的三种插件类型 / Defines three types of plugins supported by the system
- * 
+ *
  * @package Infrastructure\Plugin\Enum
  */
 enum PluginType: string
@@ -17,19 +18,19 @@ enum PluginType: string
      * 通过钩子系统与核心功能交互 / Interacts with core functionality through hook system
      */
     case HOOK = 'hook';
-    
+
     /**
      * iframe插件类型 / Iframe plugin type
      * 通过iframe嵌入外部页面 / Embeds external pages through iframe
      */
     case IFRAME = 'iframe';
-    
+
     /**
      * 组件插件类型 / Component plugin type
      * 提供前端组件 / Provides frontend components
      */
     case COMPONENT = 'component';
-    
+
     /**
      * 获取类型的中文名称 / Get Chinese name of type
      */
@@ -41,7 +42,7 @@ enum PluginType: string
             self::COMPONENT => '组件插件',
         };
     }
-    
+
     /**
      * 获取类型的描述 / Get description of type
      */
@@ -53,7 +54,7 @@ enum PluginType: string
             self::COMPONENT => '提供前端组件的插件',
         };
     }
-    
+
     /**
      * 检查是否为钩子类型 / Check if type is hook
      */
@@ -61,7 +62,7 @@ enum PluginType: string
     {
         return $this === self::HOOK;
     }
-    
+
     /**
      * 检查是否为iframe类型 / Check if type is iframe
      */
@@ -69,7 +70,7 @@ enum PluginType: string
     {
         return $this === self::IFRAME;
     }
-    
+
     /**
      * 检查是否为组件类型 / Check if type is component
      */
@@ -77,7 +78,7 @@ enum PluginType: string
     {
         return $this === self::COMPONENT;
     }
-    
+
     /**
      * 获取该类型插件的主要文件 / Get main files for this plugin type
      */
@@ -89,7 +90,7 @@ enum PluginType: string
             self::COMPONENT => ['components', 'src/Components', 'vue/components'],
         };
     }
-    
+
     /**
      * 获取该类型插件的配置键 / Get configuration keys for this plugin type
      */

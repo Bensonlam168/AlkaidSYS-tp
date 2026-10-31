@@ -94,25 +94,31 @@ class WorkflowInstanceController extends ApiController
         // 不存在「全局实例」，原实现的 `|| (... ?? null) === null` 是死分支，
         // 却会让「缺少 tenant_id 的脏数据」对所有租户可见（fail-open）。
         // 注：`app\Request::tenantId()` 返回 int（恒 >= 1），故不再需要 null 包裹判断。
-        $allInstances = array_filter($allInstances, fn($inst) => ($inst['tenant_id'] ?? null) === $tenantId);
+        $allInstances = array_filter($allInstances, fn ($inst) => ($inst['tenant_id'] ?? null) === $tenantId);
 
         // Apply status filter
         if (!empty($params['status'])) {
-            $allInstances = array_filter($allInstances, fn($inst) =>
+            $allInstances = array_filter(
+                $allInstances,
+                fn ($inst) =>
                 $inst['status'] === $params['status']
             );
         }
 
         // Apply definition filter
         if (!empty($params['definition_id'])) {
-            $allInstances = array_filter($allInstances, fn($inst) =>
+            $allInstances = array_filter(
+                $allInstances,
+                fn ($inst) =>
                 $inst['definition_id'] === $params['definition_id']
             );
         }
 
         // Apply started_by filter
         if (!empty($params['started_by'])) {
-            $allInstances = array_filter($allInstances, fn($inst) =>
+            $allInstances = array_filter(
+                $allInstances,
+                fn ($inst) =>
                 $inst['started_by'] === $params['started_by']
             );
         }
@@ -120,20 +126,24 @@ class WorkflowInstanceController extends ApiController
         // Apply date filters
         if (!empty($params['date_from'])) {
             $dateFrom = strtotime($params['date_from']);
-            $allInstances = array_filter($allInstances, fn($inst) =>
+            $allInstances = array_filter(
+                $allInstances,
+                fn ($inst) =>
                 strtotime($inst['started_at']) >= $dateFrom
             );
         }
         if (!empty($params['date_to'])) {
             $dateTo = strtotime($params['date_to']);
-            $allInstances = array_filter($allInstances, fn($inst) =>
+            $allInstances = array_filter(
+                $allInstances,
+                fn ($inst) =>
                 strtotime($inst['started_at']) <= $dateTo
             );
         }
 
         // Re-index and sort by started_at desc
         $allInstances = array_values($allInstances);
-        usort($allInstances, fn($a, $b) => strtotime($b['started_at']) - strtotime($a['started_at']));
+        usort($allInstances, fn ($a, $b) => strtotime($b['started_at']) - strtotime($a['started_at']));
 
         $total = count($allInstances);
         $offset = ($page - 1) * $pageSize;

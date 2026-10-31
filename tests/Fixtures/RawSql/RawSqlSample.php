@@ -19,4 +19,3 @@ final class RawSqlSample
         Db::table('dummy_table')->where('tenant_id', 1)->select();
     }
 }
-

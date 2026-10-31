@@ -221,7 +221,7 @@ class PermissionServiceMultiTenantTest extends \Tests\ThinkPHPTestCase
     {
         // 使用反射或直接修改受保护属性来注入测试用的表名
         // 这里我们创建一个临时类来覆盖表名
-        $service = new class extends PermissionService {
+        $service = new class () extends PermissionService {
             protected string $usersTable = 'test_users';
             protected string $rolesTable = 'test_roles';
             protected string $permissionsTable = 'test_permissions';

@@ -41,4 +41,3 @@ class AdvancedFieldTypesTest extends TestCase
         $this->assertFalse($field->validate(['c1', ['nested']]));
     }
 }
-

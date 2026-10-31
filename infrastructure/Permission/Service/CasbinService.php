@@ -9,7 +9,6 @@ use Infrastructure\Permission\Casbin\DatabaseAdapter;
 use think\facade\Cache;
 use think\facade\Config;
 use think\facade\Log;
-use think\facade\Request;
 
 /**
  * Casbin 授权服务

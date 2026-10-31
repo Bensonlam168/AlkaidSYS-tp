@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Tests\Feature\Auth;
 
 use Firebase\JWT\JWT;
-use Firebase\JWT\Key;
 use Infrastructure\Auth\JwtService;
 use Tests\Factories\TestDataFactory;
 use Tests\ThinkPHPTestCase;

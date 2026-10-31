@@ -196,8 +196,8 @@ class FormValidatorGenerator
         $messages["{$field}.url"] = "{$title}格式不正确";
         $messages["{$field}.date"] = "{$title}格式不正确";
         $messages["{$field}.regex"] = "{$title}格式不正确";
-        $messages["{$field}.tenantMatch"] = "租户无权访问该数据（code 2002）";
-        $messages["{$field}.siteMatch"] = "站点无权访问该数据（code 2002）";
+        $messages["{$field}.tenantMatch"] = '租户无权访问该数据（code 2002）';
+        $messages["{$field}.siteMatch"] = '站点无权访问该数据（code 2002）';
 
         if (isset($config['minLength'])) {
             $messages["{$field}.min"] = "{$title}长度不能少于{$config['minLength']}个字符";

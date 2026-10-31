@@ -169,7 +169,7 @@ class FormDataControllerMultiTenantTest extends ThinkPHPTestCase
      */
     protected function bypassAuthAndPermission(): void
     {
-        $noop = new class {
+        $noop = new class () {
             public function handle($request, \Closure $next)
             {
                 return $next($request);

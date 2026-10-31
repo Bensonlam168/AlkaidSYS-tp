@@ -113,7 +113,7 @@ class ControllerGeneratorTest extends ThinkPHPTestCase
 
         // 确认排序字段与排序方向均做白名单校验，防止注入
         $this->assertStringContainsString('$allowedSortFields', $code);
-        $this->assertStringContainsString("in_array(\$sortBy", $code);
+        $this->assertStringContainsString('in_array($sortBy', $code);
         $this->assertStringContainsString("['asc', 'desc']", $code);
     }
 
