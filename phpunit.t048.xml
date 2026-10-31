@@ -19,15 +19,71 @@
         </testsuite>
     </testsuites>
     <php>
-        <env name="APP_ENV" value="dev"/>
+        <!--
+            ============================================================
+            A. 连接参数（DB_*）：刻意 **不加** force
+            ============================================================
+            PHPUnit 11 只在「空缺」时才写入（PhpHandler::handleEnvVariables）：
+                if ($force || getenv($name) === false) { putenv("{$name}={$value}"); }
+                if ($force || !isset($_ENV[$name]))    { $_ENV[$name] = $value; }
+            所以下面的值是「运行环境未提供时的默认值」，而不是「强制值」——
+            连接参数必须跟随运行环境：谁跑测试，就由谁决定连哪个库。
+
+            额外一层原因（已实测）：**.env 的优先级高于容器环境变量**。
+            think\Env 构造时先把 $_ENV 拷进 $data，随后 Env::load('.env') 调 Env::set()
+            **无条件覆盖** $data；env() 先读 $data，只有缺失时才回落 $_ENV / getenv('PHP_*')。
+            也就是说 .env 里写什么，DB_* 就真的是什么，compose 注入的值会被盖掉。
+            但这条兜底不属于本文件的契约 —— 不要把连接参数的正确性寄托在 .env 恰好存在上。
+
+            反例（已实测）：容器内 $_ENV['DB_HOST']='mysql'，而本文件默认值写的是 127.0.0.1，
+            且容器内连 127.0.0.1:3306 是 "SQLSTATE[HY000] [2002] Connection refused"。
+            一旦给 DB_HOST 加 force="true"，无 .env 的干净检出 / CLI 子进程就会连到不存在的库。
+            结论：连接类参数永远不要加 force。
+        -->
         <env name="DB_TYPE" value="mysql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
         <env name="DB_NAME" value="alkaid_sys"/>
         <env name="DB_USER" value="root"/>
         <env name="DB_PASS" value="root"/>
         <env name="DB_PORT" value="3306"/>
-        <!-- Allow runtime DDL in tests for SchemaBuilder -->
-        <env name="ALLOW_RUNTIME_DDL" value="true"/>
+
+        <!--
+            ============================================================
+            B. 测试语义固定的变量：必须加 force
+            ============================================================
+            这些值与「在哪台机器上跑」无关，只与「测试断言的前提」有关。
+            不加 force 时，shell 导出的同名变量会直接抢占它们（同上语义），
+            测试语义随环境漂移：本地通过、CI 或同事机器上随机失败。
+        -->
+
+        <!-- APP_ENV：鉴权类用例的前提是「非生产环境」。
+             不加 force 时导出 APP_ENV=production，C-5 的 JWT 强密钥校验
+             （infrastructure/Auth/JwtService.php:128、:170）会拒掉 .env 里的 dev 占位密钥，
+             JwtService 构造即抛 RuntimeException，鉴权类用例全线 500 而不是期望的 401。
+             实测（加 force 之前）：
+             docker exec -e APP_ENV=production ... -c phpunit.t048.xml tests/Feature/AuthMiddlewareTest.php
+             → Tests: 3, Assertions: 2, Errors: 1, Failures: 2（期望 OK (3 tests, 17 assertions)）。 -->
+        <env name="APP_ENV" value="dev" force="true"/>
+
+        <!-- ALLOW_RUNTIME_DDL：本 testsuite 含 tests/Unit/Schema，SchemaBuilder 相关用例
+             需要在测试库里执行运行时 DDL。闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）。
+             不加 force 时，导出 ALLOW_RUNTIME_DDL=false 会让 DDL 被拒
+             （SchemaBuilder.php 抛 HttpResponseException），Schema 系列用例成批报错。 -->
+        <env name="ALLOW_RUNTIME_DDL" value="true" force="true"/>
+
+        <!-- CACHE_FILE_PREFIX：R20 的隔离前提，与 phpunit.xml 保持一致。
+             （本文件原先没有这一项，等于 R20 的保护在这套配置下完全不存在。）
+             File 驱动的 clear() 实现为 rmdir(path . prefix)
+             （vendor/topthink/framework/src/think/cache/driver/File.php:246-253）。
+             prefix 来自 config/cache.php 的 env('CACHE_FILE_PREFIX', '')（默认空串），
+             而 tests/ThinkPHPTestCase.php 刻意不覆盖 stores.file.prefix（把这条契约交给 phpunit 配置），
+             所以缺了这一项时 Cache::clear() 会退化成 rmdir('runtime/cache/') **整目录删除**。
+             实测（加 force 之前，在 runtime/cache 根层放 SENTINEL.txt 后跑 SchemaParserTest）：
+             哨兵被删除、没有生成 test/ 子目录，缓存分片直接落在 runtime/cache/{hash}/
+             —— 即会误删并行跑 phpunit.xml 的进程写入的 runtime/cache/test/，导致 Casbin 系列伪失败。
+             不加 force 时，导出任意前缀同样会让清理作用域跑偏（清的不是 test/ 子树）。
+             生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变。 -->
+        <env name="CACHE_FILE_PREFIX" value="test" force="true"/>
     </php>
     <coverage includeUncoveredFiles="true"/>
     <source>
