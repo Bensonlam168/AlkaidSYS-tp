@@ -102,7 +102,15 @@ class RateLimitServiceTest extends ThinkPHPTestCase
     {
         $key = $this->registerTestKey('rl:test:user:test3:token_bucket');
         $capacity = 10;
-        $rate = 10.0; // 每秒补充 10 个令牌
+        // 补充速率必须远慢于「耗尽 10 个令牌」这个循环本身的耗时，否则下面的
+        // 「耗尽应拒绝」断言会变成时间敏感的 flaky：
+        // 原来取 10.0（=每 100ms 补 1 个），全量测试变慢后 10 次 allowRequest 一旦跨过
+        // 100ms，第 11 次就已被补充放行 → assertFalse 失败（实测在 2790 断言的负载下复现，
+        // 单独跑却 3/3 全绿）。
+        // 改成 1.0（=每秒补 1 个）：循环耗时是毫秒级，绝无可能在窗口内补充出 1 个令牌；
+        // 而「补充后可再次放行」的语义仍成立 —— 下方轮询最多等 5 秒，1 秒即会补充到位。
+        // 被验证的两条语义都没变：耗尽即拒绝；令牌随时间补充。
+        $rate = 1.0; // 每秒补充 1 个令牌
 
         // 消耗所有令牌
         for ($i = 0; $i < $capacity; $i++) {
