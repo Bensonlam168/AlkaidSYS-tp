@@ -5,9 +5,15 @@ declare(strict_types=1);
 namespace Tests;
 
 use PHPUnit\Framework\TestCase as BaseTestCase;
+use ReflectionObject;
+use ReflectionProperty;
 use RuntimeException;
 use think\App;
+use think\Container;
 use think\Env;
+use think\Middleware;
+use think\Request;
+use think\Response;
 
 /**
  * ThinkPHP Test Case | ThinkPHP测试用例基类
@@ -31,6 +37,37 @@ use think\Env;
  *
  * 注意：`phpunit.xml` 里的 DB_* 刻意**不加** `force`（见该文件 A 段注释），
  * 所以 shell 导出的 `DB_NAME` 会胜出 —— 若胜出值不含 `_test`，第 2 道防线会直接拒绝运行。
+ *
+ * ## 容器状态隔离（跨测试类 Mock 泄漏）
+ *
+ * 背景：`self::$app` 是 **static**，`app()` / `getContainerApp()` 返回的始终是同一个 `think\App`，
+ * 也就是同一个 `think\Container`。于是「某个测试类往容器里 bind 了 mock」这件事会**穿透到后续所有测试类**
+ * —— 只要后续类从容器 `make()` 同一个抽象，拿到的就是上一个类留下的 Mockery Mock。
+ * 实测受害：`Tests\Integration\Lowcode\LowcodeCliIntegrationTest`（21 条）与
+ * `Tests\E2E\MultiTenantIsolationTest`（3 条）本身一行 Mockery 都没写，却全部
+ * `Mockery_4_..._CollectionManager::create(), but no expectations were specified`。
+ *
+ * 修法：**在容器层面做「基线快照 / 还原」**，而不是给每个受害用例补 `shouldReceive`
+ * （那是掩盖：会让集成测试依赖一个假的 CollectionManager，失去集成价值）：
+ *   1. `setUpBeforeClass()` 建好 App、绑定 `app/provider.php` 之后，快照容器的 `bind` / `instances`；
+ *   2. 每个测试类结束时（`tearDownAfterClass()`）把「测试注入的替身」清掉、把基线放回去。
+ *
+ * 为什么快照只取 `bind` / `instances` 两个属性：`think\Container` 里承载绑定的就这两个数组
+ * （另有 `static $instance` 全局单例指针与 `invokeCallback` 解析回调，反射实证见 `snapshotContainerState()`）。
+ *
+ * 为什么**不能**整份还原 `bind`：框架服务在 `App::initialize()` 时会通过 `$service->bind` 注册
+ * `queue` / `queue.failer`(闭包) / `Faker\Generator`(闭包) / `think\migration\Factory`(闭包) 等，
+ * 它们不属于任何测试类；整份回滚会让后续类解析不到这些服务。因此只删「指向被丢弃替身」的绑定。
+ *
+ * 已知边界（**有意不做**，见验收报告的风险项）：
+ *   - 只做「跨测试类」还原，不做「同类内跨测试方法」还原。把 Request / Response 也按方法清理
+ *     能顺带修掉 `TraceIdCoverageTest` 在 `--order-by=random` 下的随机红（`app\Request`
+ *     的 `$traceId` 属性由 Trace 中间件写入后不自愈，且 `ApiController::getTraceId()` 优先读属性），
+ *     但会让 `CollectionControllerTest::testDeleteIgnoresTenantIdInBody` 变红 —— 它目前依赖
+ *     上一个方法留在容器里的 `Content-Type` 头才让 `Request::withInput()` 解析出 `put` 数据。
+ *     要同时修好，必须先让该用例自己 `withHeader(['Content-Type' => 'application/json'])`。
+ *   - `think\Route` 的路由规则、`think\Event` 的监听器、`think\Cache` 的缓存项仍是跨类共享的；
+ *     本次不动它们（动 Route 会让 `include_once route/*.php` 的用例注册不到路由）。
  */
 abstract class ThinkPHPTestCase extends BaseTestCase
 {
@@ -67,6 +104,20 @@ abstract class ThinkPHPTestCase extends BaseTestCase
      * 若不恢复会导致 PHPUnit 11 报告 Risky。
      */
     protected static bool $errorHandlersRestored = false;
+
+    /**
+     * 容器状态基线（跨测试类隔离的唯一依据）
+     *
+     * 只在首次 `setUpBeforeClass()` 里建立（App 建好、`app/provider.php` 绑定完成、
+     * 尚未执行任何用例），之后每个测试类结束时按它把容器还原。
+     *
+     * 结构 = `think\Container` 中承载绑定的两个属性：
+     *   - `bind`      : abstract => 具体类名（字符串别名）/ 闭包 / 实例
+     *   - `instances` : abstract => 已解析（或直接注入）的对象实例
+     *
+     * @var array{bind: array<string, mixed>, instances: array<string, mixed>}|null
+     */
+    private static ?array $containerBaseline = null;
 
     /**
      * Bootstrap ThinkPHP application | 启动ThinkPHP应用
@@ -210,7 +261,216 @@ abstract class ThinkPHPTestCase extends BaseTestCase
                     }
                 }
             }
+
+            // ---------------------------------------------------------------
+            // 第 5 步：快照容器状态，作为「跨测试类还原」的基线
+            //
+            // 取在这里的理由：App 已建好、DB/Cache/Log 覆盖配置已写入、
+            // provider.php 的绑定已生效，且**还没有任何一个用例跑过** —— 此刻容器里
+            // 只有框架自带的绑定与实例（`app` / `think\Container` / 隔离版 `env`），
+            // 不含任何测试注入的替身，正是干净的基线。
+            // ---------------------------------------------------------------
+            self::$containerBaseline = self::snapshotContainerState(self::$app);
         }
+    }
+
+    /**
+     * 每个测试类结束时还原容器状态 | Restore container state after each test class
+     *
+     * 与 `setUpBeforeClass()` 成对：把本测试类往容器里塞的东西清掉，
+     * 让下一个测试类拿到的是「干净基线 + 框架服务绑定」，而不是上个类留下的 mock。
+     *
+     * 注意：PHPUnit 10+ 里若 `setUpBeforeClass()` 抛异常，本方法不会被调用，
+     * 此时进程内的泄漏会残留 —— 但那种情况整轮测试已经失败，不再叠加误导。
+     */
+    public static function tearDownAfterClass(): void
+    {
+        self::restoreContainerState();
+
+        parent::tearDownAfterClass();
+    }
+
+    /**
+     * 快照容器状态 | Snapshot container state
+     *
+     * 反射实证（PHP 8.2 + think-container 3.x / think-framework 8.x）：
+     * `think\Container` 只声明了 4 个属性，其中承载「绑定」的只有后两个：
+     *   - protected static $instance        : 全局容器单例指针（`App::__construct` 里 `static::setInstance($this)`）
+     *   - protected        $instances       : abstract => 已解析实例（`make()` 末尾写入）
+     *   - protected        $bind            : abstract => 类名字符串 / 闭包
+     *   - protected        $invokeCallback  : `resolving()` 注册的解析回调
+     * 没有 `alias` / `resolved` 这类属性 —— 别名就是 `$bind` 里的字符串，`resolved` 由 `$instances` 承担。
+     *
+     * 因此快照只需 `bind` + `instances`。`invokeCallback` 不参与还原：
+     * 测试不注册解析回调，而它是框架/服务在 `initialize()` 期注册的，回滚反而会破坏服务。
+     *
+     * @return array{bind: array<string, mixed>, instances: array<string, mixed>}
+     */
+    private static function snapshotContainerState(App $app): array
+    {
+        return [
+            'bind' => self::readContainerArray($app, 'bind'),
+            'instances' => self::readContainerArray($app, 'instances'),
+        ];
+    }
+
+    /**
+     * 读取容器上的受保护数组属性 | Read a protected array property of the container
+     *
+     * ThinkPHP 没有提供「列出绑定 / 取消绑定」的公开 API（只有 `bind` / `instance` / `delete`），
+     * 因此还原只能走反射。属性声明在 `think\Container` 上，`App` 继承之。
+     *
+     * @return array<string, mixed>
+     */
+    private static function readContainerArray(App $app, string $name): array
+    {
+        $property = new ReflectionProperty(Container::class, $name);
+        $property->setAccessible(true);
+
+        $value = $property->getValue($app);
+
+        return is_array($value) ? $value : [];
+    }
+
+    /**
+     * 写入容器上的受保护数组属性 | Write a protected array property of the container
+     *
+     * @param array<string, mixed> $value
+     */
+    private static function writeContainerArray(App $app, string $name, array $value): void
+    {
+        $property = new ReflectionProperty(Container::class, $name);
+        $property->setAccessible(true);
+        $property->setValue($app, $value);
+    }
+
+    /**
+     * 还原容器状态 | Restore container state to the baseline
+     *
+     * 三条规则（顺序不能换）：
+     *   1. 丢弃「本测试类私有」的实例 —— 测试注入的替身（Mockery mock / 匿名类 / 闭包）
+     *      与「一个请求一个对象」的 Request / Response；
+     *   2. 把基线里的实例放回去（`env` 被换成别的 Env、`app` 被换掉时能纠正回来）；
+     *   3. 删除**指向被丢弃替身**的 `bind` 条目，再把基线里的绑定写回。
+     *      其余新增绑定一律保留 —— 它们是框架服务注册的（`queue` / `queue.failer` /
+     *      `Faker\Generator` / `think\migration\Factory` 等），删了会让后续测试类解析不到服务。
+     */
+    private static function restoreContainerState(): void
+    {
+        if (null === self::$app || null === self::$containerBaseline) {
+            return;
+        }
+
+        $app = self::$app;
+        $bind = self::readContainerArray($app, 'bind');
+        $instances = self::readContainerArray($app, 'instances');
+
+        // 第 1 步：丢弃本测试类留下的实例
+        $discarded = [];
+        foreach ($instances as $abstract => $instance) {
+            if (!self::isClassLocalInstance($instance)) {
+                continue;
+            }
+
+            unset($instances[$abstract]);
+            $discarded[(string) $abstract] = true;
+        }
+
+        // 第 2 步：基线实例归位（快照里的键一定以快照值为准）
+        foreach (self::$containerBaseline['instances'] as $abstract => $instance) {
+            $instances[$abstract] = $instance;
+        }
+
+        // 第 3 步：先删「指向替身」的绑定，再按基线写回基线绑定
+        //         闭包绑定必须删：`bind(X, fn () => $mock)` 不会进 `instances` 之外的痕迹，
+        //         只清 `instances` 时下一次 `make(X)` 会重新调用那个闭包、把 mock 再端出来。
+        foreach (array_keys($discarded) as $abstract) {
+            if (!array_key_exists($abstract, self::$containerBaseline['bind'])) {
+                unset($bind[$abstract]);
+            }
+        }
+        foreach (self::$containerBaseline['bind'] as $abstract => $concrete) {
+            $bind[$abstract] = $concrete;
+        }
+
+        self::writeContainerArray($app, 'instances', $instances);
+        self::writeContainerArray($app, 'bind', $bind);
+
+        // 第 4 步：兜底把全局容器单例指回测试 App
+        //         少数用例会 `new App()` 自建容器（`AppServiceEnvGuardTest` /
+        //         `ServiceProviderWiringTest`），正常路径会在 tearDown 里还原；
+        //         若用例在 setUp 中途失败，PHPUnit 不会调 tearDown，指针就会漂走，
+        //         导致后续所有门面（Facade）都从另一个容器解析。
+        if (Container::getInstance() !== $app) {
+            Container::setInstance($app);
+        }
+    }
+
+    /**
+     * 判定实例是否「属于单个测试类」——即必须随测试类结束一并丢弃
+     *
+     * 判据是「这个对象要么是测试塞进来的，要么本来就该按类重建」，因此丢弃不会影响后续类正常解析：
+     *   1. Mockery 替身：跨类残留正是本次要修的 24 条失败的根因；
+     *   2. 匿名类：测试里 `new class { public function handle($request, $next) {...} }`
+     *      顶掉 Auth / Permission 中间件的常见写法（它同样会绕过鉴权，属于「假绿」风险）；
+     *   3. 闭包：`instance('xxx', fn () => ...)` 形式的注入；
+     *   4. Request / Response：`think\Http::run()` 每次都用 `instance('request', $request)` 覆盖，
+     *      说明它们本就是「一个请求一个对象」；跨类存活会把上个用例的 header / tenant / trace_id
+     *      带给下一个用例（实测：`FormApiTest` 跑完后 `TraceIdCoverageTest` 的 4 条用例全部
+     *      读到了上一个用例的 `X-Trace-Id`，断言期望值对不上）；
+     *   5. `think\Middleware`：它的队列是**进程级累加**且框架从不清空
+     *      （`think\route\Dispatch::doRouteAfter()` → `$app->middleware->import($middleware, 'route')`）。
+     *      于是一个类跑过带路由中间件的路由（如 `v1/auth/me` 上的 `app\middleware\Auth`）之后，
+     *      后续类的**每个**请求都会再走一遍 Auth —— 实测 `AccessLogMiddlewareTest` 跑完后，
+     *      `AuthLoginRefreshTest` 的 `POST v1/auth/login` 被 Auth 拦成 401 + 2001。
+     *   6. 一切**非 `think\` 命名空间**的实例（业务/基础设施/测试命名空间）。
+     *      这一条不是「顺手清理」，而是必需的：容器会把 `make()` 解析结果缓存进 `instances`，
+     *      而 `app\middleware\Auth` 这类业务类并不在 `bind` 里（靠反射实例化），
+     *      于是 A 类跑过一次请求后 `instances['app\middleware\Auth']` 就有了**真实**的 Auth；
+     *      B 类再 `bind(app\middleware\Auth::class, fn () => $noop)` 时，`make()` 命中旧实例、
+     *      闭包根本不执行 → 鉴权照旧生效 → 断言 200 的用例拿到 401。
+     *      实测：`FormApiTest` → `FormDataControllerMultiTenantTest` 3 条用例 401/2001 就是这个原因。
+     *
+     * 反过来，**框架单例只保留 `think\` 命名空间**的：`think\Config` / `think\Db` / `think\Cache` /
+     * `think\Event` / `think\Log` / `think\Lang` / 隔离版 `think\Env` …（`think\Middleware` 是例外，
+     * 见第 5 条）。丢 `think\Config` 会连带丢掉本基类在 `setUpBeforeClass()` 里写入的
+     * database/cache/log 覆盖配置，丢 `think\Db` 会断开已建立的连接 ——
+     * 两者都会让「修好泄漏」变成「换一批失败」。
+     * 业务单例（`Infrastructure\*` / `app\*`）丢掉是可接受的：它们的 `bind` 仍在，下次 `make()` 会重建。
+     */
+    private static function isClassLocalInstance(mixed $instance): bool
+    {
+        if (!is_object($instance)) {
+            return true;
+        }
+
+        if ($instance instanceof \Mockery\MockInterface) {
+            return true;
+        }
+
+        if ((new ReflectionObject($instance))->isAnonymous()) {
+            return true;
+        }
+
+        if ($instance instanceof \Closure) {
+            return true;
+        }
+
+        if ($instance instanceof Request || $instance instanceof Response) {
+            return true;
+        }
+
+        // 5. `think\Middleware` 也必须丢：它的队列是**进程级累加**且框架从不清空
+        //    （`think\route\Dispatch::doRouteAfter()` → `$app->middleware->import($middleware, 'route')`）。
+        //    于是一个类跑过带路由中间件的路由（如 `v1/auth/me` 上的 `app\middleware\Auth`）之后，
+        //    后续类的**每个**请求都会再走一遍 Auth —— 实测 `AccessLogMiddlewareTest` 跑完后，
+        //    `AuthLoginRefreshTest` 的 `POST v1/auth/login` 被 Auth 拦成 401 + 2001。
+        //    丢掉它是安全的：全局中间件每次请求都会 `loadMiddleware()` 重新 import。
+        if ($instance instanceof Middleware) {
+            return true;
+        }
+
+        return !str_starts_with(get_class($instance), 'think\\');
     }
 
     /**
