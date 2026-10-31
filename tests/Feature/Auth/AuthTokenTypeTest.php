@@ -7,6 +7,7 @@ namespace Tests\Feature\Auth;
 use Infrastructure\Auth\JwtService;
 use Tests\Helpers\AuthHelper;
 use Tests\ThinkPHPTestCase;
+use Tests\Traits\DatabaseTransactions;
 
 /**
  * 认证中间件 Token 类型校验测试（缺陷 C-6）
@@ -17,9 +18,30 @@ use Tests\ThinkPHPTestCase;
  * 目标行为：
  * - Access Token 访问受保护接口 → 200
  * - Refresh Token 访问同一接口 → 401 + 业务码 2001
+ *
+ * ## 数据库隔离（ER-17）
+ *
+ * 与其余 4 个「写库但无清理」的测试不同，**本文件当前并不写 MySQL**：整条链路
+ * （全局中间件 + `Auth` 中间件 + `AuthController::me`）只读不写，access log 落文件、
+ * session 走 Redis。实测（连跑 2 次、比对测试库 33 张表的精确行数）**零变化**。
+ *
+ * 仍然挂 `DatabaseTransactions` 的两个理由：
+ *   1. **防回归**：`/v1/auth/me` 这类受保护接口一旦引入任何写库动作（如登录轨迹、最后登录时间），
+ *      没有事务就会重新变成「跑一次脏一次」，而这类残渣极难归因；
+ *   2. 它顺带钉住一件事：`#[After]` 的「事务是否被隐式提交」检测在 **HTTP 全链路**下也能通过
+ *      —— 说明 `http->run()` 没有把开始事务的连接换掉（见 traits/DatabaseTransactions.php 的检测 1）。
+ *
+ * 为什么**可以**用事务：本文件没有 DDL；`ThinkPHPTestCase::runHttp()` 与继承来的
+ * `Db` 用同一个默认连接，事务回滚能覆盖它。
+ *
+ * 说明：本类当前有 1 个 failure（`testAccessTokenIsAccepted` 得到 400）。
+ * 根因是测试库 `users` 表里没有 id=1 的种子用户，`AuthController::me` 返回「用户不存在」——
+ * **既有缺陷，与本改造无关，也不要靠改断言或 skip 掩盖**。
  */
 class AuthTokenTypeTest extends ThinkPHPTestCase
 {
+    use DatabaseTransactions;
+
     protected function setUp(): void
     {
         parent::setUp();

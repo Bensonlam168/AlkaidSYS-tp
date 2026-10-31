@@ -7,10 +7,33 @@ namespace Tests\Unit\Infrastructure\Lowcode\Collection\Repository;
 use Domain\Lowcode\Collection\Interfaces\CollectionInterface;
 use Infrastructure\Lowcode\Collection\Repository\CollectionRepository;
 use Tests\ThinkPHPTestCase;
+use Tests\Traits\DatabaseTransactions;
 use think\facade\Db;
 
+/**
+ * CollectionRepository 单元测试
+ *
+ * ## 数据库隔离（ER-17）
+ *
+ * 本类每个用例都往 `lowcode_collections` 插数据，原先只有「**下一个**用例的 setUp」会删
+ * `test_repo_%` —— 也就是**跑完最后一个用例后没有收尾**：实测每轮结束都会留下
+ * `test_repo_del_b`（tenant_id=1002）一行，长期驻留测试库。
+ *
+ * 现在挂 `DatabaseTransactions`：`#[Before]` 在 `setUp()` 之前开事务、`#[After]` 在
+ * `tearDown()` 之后回滚，用例内的 INSERT/UPDATE/DELETE 全部丢弃。
+ *
+ * 为什么**可以**用事务：本类只操作 `lowcode_collections` 的 DML，**没有 DDL**
+ * （`CollectionRepository::save()` 只写元数据，不建物理表 —— 建表在 `CollectionManager` 侧，
+ * 本类没有涉及）。
+ *
+ * 为什么**保留** `setUp()` 里的 `DELETE ... LIKE 'test_repo_%'`：它仍在事务内执行，
+ * 作用是把「历史遗留的同名前缀行」在本用例**可见范围内**清掉（对断言依然有效）；
+ * 回滚后这些历史行原样回到库里。本类的目标是**不再新增**残渣，历史残渣的一次性清理见交付报告。
+ */
 class CollectionRepositoryTest extends ThinkPHPTestCase
 {
+    use DatabaseTransactions;
+
     protected function setUp(): void
     {
         parent::setUp();

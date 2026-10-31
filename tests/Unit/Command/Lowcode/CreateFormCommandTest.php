@@ -6,6 +6,7 @@ namespace Tests\Unit\Command\Lowcode;
 
 use app\command\lowcode\CreateFormCommand;
 use Tests\ThinkPHPTestCase;
+use Tests\Traits\DatabaseTransactions;
 use think\console\Input;
 use think\console\Output;
 use think\facade\Db;
@@ -16,10 +17,32 @@ use think\facade\Db;
  * Tests for the lowcode:create-form command.
  * lowcode:create-form命令的测试。
  *
+ * ## 数据库隔离（ER-17）
+ *
+ * 本测试类会**真实写库**，且原先只有 `testExistingTenantStillCreatesForm()` 自己清理了
+ * `lowcode_forms`，实测每跑一次仍会留下 **`lowcode_schema_versions` 的一行**
+ * （`FormSchemaManager::create()` → `SchemaVersionService::recordForm()` 写的版本快照，
+ *  object_type=form / object_name=cmd_tenant_ok_*，从来没人删）。
+ *
+ * 这里用 `DatabaseTransactions` 把整个类罩进事务，`#[After]` 在 `tearDown()` 之后回滚，
+ * 所有写入（lowcode_forms + lowcode_schema_versions）都被丢弃。
+ *
+ * 为什么**可以**用事务：
+ *   1. 本类没有 DDL —— 用例不带 `--collection`，`FormSchemaManager` 只写元数据表，
+ *      不会走 `SchemaBuilder` 建物理表；
+ *   2. 命令是**同进程**直调（`$this->command->run(...)`），读写的都是同一个数据库连接，
+ *      事务内的未提交数据对它立即可见，所以 `assertSame(1, ...->count())` 这类断言仍然成立；
+ *      不存在「另开连接/子进程读不到未提交数据」的问题。
+ *
+ * 已有的 `finally` 清理**保留**：它在事务内执行、随后被回滚，行为等价于没写，
+ * 但能让本文件将来万一脱离 trait 时仍不留 `lowcode_forms` 残渣。
+ *
  * @package Tests\Unit\Command\Lowcode
  */
 class CreateFormCommandTest extends ThinkPHPTestCase
 {
+    use DatabaseTransactions;
+
     protected CreateFormCommand $command;
 
     /**
@@ -311,7 +334,10 @@ class CreateFormCommandTest extends ThinkPHPTestCase
                 '合法租户应真的写入一行 lowcode_forms'
             );
         } finally {
-            // 清理本用例写入的表单，避免污染其它用例
+            // 清理本用例写入的表单，避免污染其它用例。
+            // 注（ER-17）：本类已挂 DatabaseTransactions，这条 DELETE 实际是在事务内执行、
+            // 随后随回滚一并丢弃；保留它是为了「本文件脱离 trait 时也不留 lowcode_forms 残渣」。
+            // 事务回滚同时覆盖了原先没人清的 lowcode_schema_versions（版本快照）。
             Db::name('lowcode_forms')->where('name', $formName)->delete();
         }
     }
