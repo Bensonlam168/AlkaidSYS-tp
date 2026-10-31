@@ -11,6 +11,27 @@
 
 > **本报告的一手证据优先**。凡标注 `[实测]` 的结论，均为本会话实际执行命令的输出；标注 `[推断]` 的为读码推理；标注 `⚠️ 证据不足` 的未验证。
 
+> ⚠️ **2026-10-31 订正（后续复核推翻本报告 3 处结论）**
+>
+> 由 `docs/report/enterprise-production-restart-audit-2026-10-31.md` 提出质疑后逐条复验，确认本报告有 3 处错误，**以订正后的表述为准**：
+>
+> 1. **「四个 check 脚本一个都没接进 CI」——错误。** 四份工作流各跑一个脚本：
+>    `docs-check.yml` → `check-docs.php`；`migrations-check.yml` → `check-migrations.php`；
+>    `phpunit-config-check.yml` → `check-phpunit-config.php`；`env-check.yml` → `check-env-example.php`。
+>    （其中 `check-migrations` 在 CI 只跑 A/C 静态项，B/D/E/F 需 applied 状态故传 `--no-db`。）
+> 2. **「测试直接写开发库」——只对本地成立。** CI 的 `phpunit` job 用独立 service 库
+>    `alkaid_sys_test`（`MYSQL_DATABASE` + step 级 `DB_NAME`），隔离是正确的。
+>    污染发生在**本地** `phpunit.xml`（`DB_NAME=alkaid_sys`）。该问题已修（见阶段 A / ER-15）。
+> 3. **「空接口导致仓储无法实现」——技术表述不准确。** 空接口**可以**实现，
+>    缺的是**语义契约**（方法集合与错误语义未定义），不是语言层面的不可能。
+>
+> 另有两处口径需修正：
+> - 「25 条公告 / 10 包 / 2 High」是**全依赖**口径；生产口径（`--locked --no-dev`）为 **24 条 / 9 包 / 1 Critical + 3 High**。以后统一用生产口径。
+> - 「`$tasks` 永远为空所以任务 API 是死代码」——论据不足。任务通常由**引擎产生**而非手工创建；
+>   真实缺陷是「生成 → 执行 → 持久化」链路未接通，而非缺少 POST 端点。
+>
+> 本报告的就绪度百分比（36%）无统一权重、不可复现，**后续不再引用**。
+
 ---
 
 ## 零、一页摘要：五个必须知道的事实
