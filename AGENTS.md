@@ -57,6 +57,52 @@ Frontend:
 - Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`, `style`（`commitlint.config.js` 强制）。
 - PR 需包含清晰描述、关联 issue/任务、测试命令与结果；有 `frontend/` UI 变更需附截图。
 
+### 合并前必须通过的配置类门禁（required status checks）
+
+> 依据：R39。下表写的是**准确的 check 名称**，取自各工作流的 `jobs.<id>.name`
+> —— 不是 YAML 文件名，也不是 job id。GitHub 分支保护里能勾选的只有 `name:` 那一行。
+
+| 门禁 | 工作流文件 | 工作流 `name` | job id | **check 名称（`jobs.<id>.name`）** | 实际执行 |
+| --- | --- | --- | --- | --- | --- |
+| 文档一致性 | `.github/workflows/docs-check.yml` | `Docs Check` | `docs-check` | **Documentation Consistency** | `php scripts/check-docs.php --strict` |
+| PHPUnit 配置一致性 | `.github/workflows/phpunit-config-check.yml` | `PHPUnit Config Check` | `phpunit-config-check` | **PHPUnit Config Consistency** | `php scripts/check-phpunit-config.php --strict` |
+| `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict` |
+| 语言包一致性 | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `lang-check` | **Language Pack Consistency Check (i18n)** | `php think lang:check` |
+
+`check-migrations`（`scripts/check-migrations.php`）**目前没有任何工作流运行它**——
+`grep -l check-migrations .github/workflows/*.yml` 无匹配。所以它在 GitHub 上**不存在 check 名称，无法设为 required**，
+只能在本地 / 提交前自查。要让它成为真正的门禁，需先新增一个运行它的工作流（不在本次改动范围内）。
+
+**这些 check 必须被设为 required，否则只是「跑过」而不阻止合并。** 设置位置是**仓库设置**，代码侧无法强制：
+
+```
+Settings → Branches → Branch protection rule（或 Rulesets）
+  → Require status checks to pass before merging
+  → 搜索并勾选上表 4 个名称
+```
+
+⚠️ **把带 `paths:` 过滤的工作流直接设为 required 会卡住 PR**：上表三个配置类工作流都声明了 `paths:`，
+未改到这些路径的 PR **不会触发**该 check，GitHub 会一直显示 `Expected — Waiting for status to be reported`
+且不会自动结束，PR 反而无法合并。当前仓库的可行做法（三选一）：
+
+- **推荐**：去掉对应工作流的 `paths:` 过滤，让这三个 check 对每个 PR 都跑一遍——这样设 required 不会卡死（本次不改工作流，属后续动作）；
+- 或改用 **Rulesets** 的 required status checks，并**同样落地前实测**：开一条只改 `app/` 的 PR，确认未被 `paths:` 命中的 check 不会让 PR 停在 `Expected`；
+- 或暂不设 required，改为靠 `CODEOWNERS` + PR 模板人工把关。
+
+`.github/CODEOWNERS` 同样要仓库设置配合才生效：只有勾选 **Require review from Code Owners** 才阻止合并；
+且**唯一 owner 自己发起的 PR 无法自己 approve 自己**，单维护者仓库开启前需先加第二位有 write 权限的协作者
+（详见该文件头部注释）。
+
+#### 人工核对清单（改 CI / 分支策略后逐项确认）
+
+- [ ] `develop` 与 `main` **都**建了 branch protection rule（或 ruleset），不只默认分支
+- [ ] 已勾选 `Require status checks to pass before merging`
+- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`
+- [ ] 已处理 `paths:` 过滤与 required 的冲突（见上方 ⚠️），确认不会出现永久 `Expected`
+- [ ] 已勾选 `Require review from Code Owners`，且已排除「owner 本人无法合并」的单人瓶颈
+- [ ] `check-migrations` 是否已有工作流（当前**没有**，未补前不可能成为 required check）
+- [ ] 新增 / 重命名工作流的 job 后，回填上表的 check 名称（永远取自 `jobs.<id>.name`）
+
 ## Documentation Maintenance（文档维护约定）
 
 > 依据：`docs/report/doc-review-design-docs-2026-10-30.md` 的 22 项文档缺陷分析。
