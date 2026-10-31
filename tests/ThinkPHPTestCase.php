@@ -80,34 +80,31 @@ abstract class ThinkPHPTestCase extends BaseTestCase
             ];
 
             // Initialize Cache configuration | 初始化Cache配置
-            // Include Redis store for RateLimitService and other Redis-dependent services
-            // 包含 Redis store 以支持 RateLimitService 和其他依赖 Redis 的服务
-            $cacheConfig = [
-                'default' => 'file',
-                'stores' => [
-                    'file' => [
-                        'type' => 'File',
-                        'path' => $rootPath . '/runtime/cache/',
-                        // R20：测试基类覆盖 cache 配置时必须同样带上前缀，
-                        // 否则 Cache::clear()（File 驱动实现为 rmdir(path . prefix)）会删掉整个
-                        // runtime/cache 目录，误删并行跑测试的其他进程写入的缓存（Casbin 系列伪失败）。
-                        // 该驱动实例通常在 App::initialize() 之前就被创建并被容器缓存，之后不会重建，
-                        // 因此只在 config/cache.php 里加 prefix 对测试路径无效，必须在这里一并声明。
-                        // 用 env() 而非硬编码 'test'：生产/开发不设该变量时前缀为空，行为完全不变。
-                        'prefix' => env('CACHE_FILE_PREFIX', ''),
-                    ],
-                    'redis' => [
-                        'type' => 'Redis',
-                        'host' => getenv('REDIS_HOST') ?: 'redis',
-                        'port' => (int) (getenv('REDIS_PORT') ?: 6379),
-                        'password' => getenv('REDIS_PASSWORD') ?: '',
-                        'select' => (int) (getenv('REDIS_DB') ?: 0),
-                        'prefix' => 'alkaid:test:',
-                        'expire' => 0,
-                        'timeout' => 0,
-                    ],
-                ],
-            ];
+            // R26：派生自 config/cache.php，不再手抄整份 cache 数组，
+            // 避免 config/cache.php 演进时测试配置静默漂移（此前仅 3 处有意偏离，却复制了全部结构）。
+            // Redis store 必须保留：RateLimitService、Casbin 依赖 cache.stores.redis。
+            // 注意：必须在 App::initialize() 之前注入——多数测试在 initialize 之前就调用 Cache::clear()，
+            // 而 File 驱动实例一旦创建就被容器缓存、之后不会重建，仅改 config 文件对测试路径无效。
+            $cacheConfig = require $rootPath . '/config/cache.php';
+
+            // 偏离 1：默认驱动钉死为 file。
+            // 理由：测试不应依赖 Redis 可用性，也不应被运行环境导出的 CACHE_DRIVER 影响
+            // （容器内 php 的 variables_order 含 E，shell 导出的 CACHE_DRIVER 会进入 $_ENV 被 env() 读到，
+            // 而 config 在 APP_ENV=production 时还会强制 redis）。
+            $cacheConfig['default'] = 'file';
+
+            // 偏离 2：测试缓存键前缀与生产键区分，避免测试写入/清理污染生产键空间。
+            $cacheConfig['stores']['redis']['prefix'] = 'alkaid:test:';
+
+            // 不再覆盖 stores.file.path：config 中为 ''，由 File 驱动回落为
+            // App::getRuntimePath() . 'cache' 并补目录分隔符（vendor/topthink/framework/src/think/cache/driver/File.php:53-58），
+            // 即 $rootPath/runtime/cache/，与旧代码硬编码的绝对路径完全等价。
+            //
+            // 同时刻意不覆盖 stores.file.prefix（R20 依赖）：该前缀来自 config 的
+            // env('CACHE_FILE_PREFIX', '')，phpunit.xml 注入 CACHE_FILE_PREFIX=test，
+            // 使 Cache::clear()（File 驱动实现为 rmdir(path . prefix)）只清 runtime/cache/test/ 子树，
+            // 而不是整个 runtime/cache 目录（整目录删除会误删并行跑测试的进程写入的缓存，导致 Casbin 系列伪失败）。
+            // 若这条派生链断裂，R20 的整目录删除问题会回归。
 
             // Initialize Log configuration | 初始化Log配置
             $logConfig = [
