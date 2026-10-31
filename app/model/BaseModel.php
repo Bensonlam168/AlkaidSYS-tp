@@ -194,12 +194,25 @@ abstract class BaseModel extends Model
      * Returns tenant ID from request, with proper error handling.
      * 从请求中返回租户 ID，带有适当的错误处理。
      *
+     * 为什么用 `tenantIdOrNull()` 而不是 `tenantId()`：
+     * 全局作用域是**横切**的 —— 它跑在 ORM 层，可能出现在 CLI / 队列 / 未走中间件的
+     * 场景里。若这里用严格版 `tenantId()`，「拿不到租户」会抛出
+     * `TenantContextMissingException`，而本方法签名承诺「失败返回 null」，
+     * 调用方（`scopeTenant()`）只会在 `$tenantId !== null` 时才加过滤条件 ——
+     * 等于用异常做控制流，且异常类型与「作用域是否需要生效」无关。
+     * 因此这里显式声明「允许无租户」（返回 null = 不加租户过滤，
+     * 与 CLI 下 `areScopesEnabled() === false` 的既有语义一致）。
+     *
      * @return int|null
      */
     public static function getTenantContext(): ?int
     {
         try {
             $request = request();
+
+            if (method_exists($request, 'tenantIdOrNull')) {
+                return $request->tenantIdOrNull();
+            }
 
             if (method_exists($request, 'tenantId')) {
                 return $request->tenantId();

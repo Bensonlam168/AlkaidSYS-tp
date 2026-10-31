@@ -104,8 +104,14 @@ class CasbinController extends ApiController
         } catch (\Exception $e) {
             // 获取请求上下文（用于错误日志）
             // Get request context (for error logging)
+            //
+            // 用可空版本 tenantIdOrNull()：此处只为了给错误日志补一个审计维度。
+            // 原来写 `$this->request->tenantId() ?? null`，`?? null` 是死代码
+            //（tenantId() 返回 int）；而 tenantId() 改成 fail-closed 之后，
+            // 一旦租户上下文缺失，这里会抛出新异常并**顶掉**原本要记录的业务错误，
+            // 日志里就只剩「租户缺失」，真正的原因消失。
             $userId = $this->request->userId() ?? null;
-            $tenantId = $this->request->tenantId() ?? null;
+            $tenantId = $this->request->tenantIdOrNull();
             $traceId = $this->request->header('X-Trace-Id') ?: uniqid('casbin_reload_error_', true);
 
             // 记录错误日志

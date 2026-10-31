@@ -39,9 +39,11 @@ class RoleController extends ApiController
      */
     protected function getTenantId(): int
     {
-        // 租户上下文统一由 app\Request::tenantId() 解析
-        //（该方法已内置「认证上下文 → X-Tenant-ID 请求头 → 默认租户」降级），
-        // 控制器内不再重复降级，避免出现硬编码租户 1 的兜底分支。
+        // 租户上下文统一由 app\Request::tenantId() 解析（严格模式）：
+        // 已设值（TenantIdentify / Auth 中间件写入）→ X-Tenant-ID 请求头，
+        // 两者都没有时**抛 TenantContextMissingException**（fail-closed）。
+        // 「默认租户」只在 TenantIdentify 一处决定，且必须由 DEFAULT_TENANT_ID 显式配置；
+        // 控制器内不再重复降级，也不允许出现硬编码租户 1 的兜底分支。
         return $this->request->tenantId();
     }
 

@@ -6,6 +6,7 @@ namespace app\middleware;
 
 use app\constant\ErrorCode;
 use app\exception\ForbiddenException;
+use app\exception\TenantContextMissingException;
 use Domain\Tenant\Model\Tenant;
 use Infrastructure\Tenant\Repository\TenantRepository;
 use Closure;
@@ -19,7 +20,15 @@ use think\Request;
  * 职责：
  *   1. 从 `X-Tenant-ID` 请求头解析租户标识（**仅作为未认证场景的弱信号**）；
  *   2. 校验该租户是否真实存在、状态是否可用（安全修复 C-4 的纵深防御）；
- *   3. 将租户 ID 写入 Request，供后续中间件与业务层使用。
+ *   3. 将租户 ID 写入 Request，供后续中间件与业务层使用；
+ *   4. （**全项目唯一**）在请求未带 `X-Tenant-ID` 时决定「默认租户」，且该默认值
+ *      必须由 `DEFAULT_TENANT_ID` 显式配置 —— 未配置即抛异常（fail-closed）。
+ *
+ * 与 `app\Request::tenantId()` 的分工（TENANT-01 后续收敛）：
+ *   - `Request::tenantId()` **不再自带任何默认值**，解析不出就抛
+ *     `TenantContextMissingException`；
+ *   - 因此「无租户上下文」在 HTTP 链路上之所以还能工作，完全是因为本中间件
+ *     在情况 A 写入了一个**显式配置**的默认租户，并在日志里留下审计记录。
  *
  * 安全说明：
  *   - 本中间件**不授予任何租户归属权**。真正的租户归属以 JWT 中的 `tenant_id` 为准
@@ -45,15 +54,34 @@ class TenantIdentify
      * @param Closure $next Next middleware in the stack
      * @return mixed Response or next middleware result
      * @throws ForbiddenException 显式指定的租户不可用时抛出
+     * @throws TenantContextMissingException 未带请求头且 `DEFAULT_TENANT_ID` 未配置/非法时抛出
      */
     public function handle(Request $request, Closure $next)
     {
         // 读取原始请求头（不通过 $request->tenantId()，避免循环依赖）
         $rawHeader = $request->header('X-Tenant-ID');
 
-        // 情况 A：未显式提供请求头 → 使用服务端默认租户（保持既有行为）
+        // 情况 A：未显式提供请求头 → 使用服务端默认租户
+        //
+        // 注意（fail-closed）：默认租户**不再有代码内的隐式 1**，必须由
+        // `DEFAULT_TENANT_ID` 显式配置，否则 getDefaultTenantId() 会抛异常。
+        // 同时这里记一条审计日志 —— 「隐式落到默认租户」必须可观测：
+        // 否则线上出现「某接口的数据总是进租户 1」时，没人能从日志看出原因。
         if ($rawHeader === null || $rawHeader === '') {
             $tenantId = $this->getDefaultTenantId();
+
+            // 审计日志：租户 ID 直接写进**日志正文**，不只放 context 数组
+            // （ThinkPHP 8 的文件通道只输出 time/type/msg，context 不会落盘，
+            //  见 app/middleware/Auth.php 的 M7 说明）——否则「落到哪个租户」在日志里看不见。
+            Log::info('[TENANT_IDENTIFY_DEFAULT] 本次请求未带 X-Tenant-ID，已落到配置的默认租户 tenant_id=' . $tenantId, [
+                'tenant_id'      => $tenantId,
+                'default_source' => 'DEFAULT_TENANT_ID',
+                'ip'             => $request->ip(),
+                'path'           => $request->pathinfo(),
+                'method'         => $request->method(),
+                'trace_id'       => method_exists($request, 'getTraceId') ? $request->getTraceId() : null,
+            ]);
+
             if (method_exists($request, 'setTenantId')) {
                 $request->setTenantId($tenantId);
             }
@@ -128,15 +156,35 @@ class TenantIdentify
     }
 
     /**
-     * 服务端默认租户 ID
+     * 服务端默认租户 ID（**全项目唯一决定点**）
      *
-     * 可通过 `DEFAULT_TENANT_ID` 配置；默认 1（保持单租户部署的既有行为）。
+     * 调用前提：请求未携带 `X-Tenant-ID`（情况 A）。此时若不允许回落，
+     * 未登录/未选租户的请求（例如登录接口）将无租户上下文可用。
+     *
+     * 因此「默认租户」必须由 `DEFAULT_TENANT_ID` **显式配置**：
+     *   - 历史实现是 `Env::get('DEFAULT_TENANT_ID', 1)` + `?: 1` 双重隐式回退，
+     *     等于把「忘记配置」静默解释成「用租户 1」，属于典型 fail-open；
+     *   - 现在未配置或配成非正整数时直接抛异常（fail-closed），
+     *     让部署错误在第一个请求上就暴露，而不是悄悄把数据写进租户 1。
+     *
+     * @throws TenantContextMissingException `DEFAULT_TENANT_ID` 未配置或不是正整数
      */
     private function getDefaultTenantId(): int
     {
-        $configured = (int) Env::get('DEFAULT_TENANT_ID', 1);
+        $configured = Env::get('DEFAULT_TENANT_ID');
 
-        return $configured > 0 ? $configured : 1;
+        if ($configured === null || $configured === '') {
+            throw TenantContextMissingException::forUnconfiguredDefaultTenant();
+        }
+
+        // 非数字（如 "abc"）的 (int) 结果是 0，会落进下面的 <= 0 分支，同样 fail-closed
+        $tenantId = (int) $configured;
+
+        if ($tenantId <= 0) {
+            throw TenantContextMissingException::forUnconfiguredDefaultTenant();
+        }
+
+        return $tenantId;
     }
 
     /**

@@ -8,6 +8,7 @@ use think\exception\Handle;
 use think\exception\HttpException;
 use think\exception\HttpResponseException;
 use think\exception\ValidateException;
+use think\facade\Log;
 use think\Response;
 use Throwable;
 
@@ -28,6 +29,9 @@ class ExceptionHandle extends Handle
         ValidateException::class,
         // 业务层拒绝（如 C-4 注册租户不可用）已在业务侧记录 warning，避免重复记 error 日志
         \app\exception\ForbiddenException::class,
+        // 租户上下文缺失：由 render() 按「请求级/配置级」分别记 warning / error，
+        // 这里的报告交给 render()，避免同一条失败被打两条日志（且级别不同会互相干扰告警）
+        \app\exception\TenantContextMissingException::class,
     ];
 
     /**
@@ -95,6 +99,57 @@ class ExceptionHandle extends Handle
                 403,
                 $e->getMessage() ?: 'Forbidden | 禁止访问',
                 (int) $e->getCode() ?: 2002,
+                null,
+                $traceId,
+                $isDebug ? $e : null
+            );
+        }
+
+        // 2.6 Tenant context missing | 租户上下文缺失（fail-closed 的显式失败出口）
+        //
+        // 来源：`Request::tenantId()` 解析不出租户时（无已设值 + 无有效 `X-Tenant-ID`），
+        // 以及 `TenantIdentify::getDefaultTenantId()` 发现 `DEFAULT_TENANT_ID` 未配置时。
+        // 两者对外语义不同，必须分开映射：
+        //   - 请求级（REASON_REQUEST）：调用方没有提供租户上下文 → HTTP 400 + 业务码 1001
+        //     （PARAMETER_MISSING，缺少必需参数），提示补 `X-Tenant-ID`；
+        //   - 配置级（REASON_CONFIG）：服务端部署配错 → HTTP 500 + 业务码 5000（SERVER_ERROR）。
+        //     生产环境对外只给通用文案，可操作细节（怎么配 DEFAULT_TENANT_ID）只进日志，
+        //     避免向外部暴露部署内部信息；dev/local 环境直接返回完整信息便于定位。
+        if ($e instanceof \app\exception\TenantContextMissingException) {
+            $isConfigError = $e->getReason() === \app\exception\TenantContextMissingException::REASON_CONFIG;
+
+            $context = [
+                'reason'   => $e->getReason(),
+                'message'  => $e->getMessage(),
+                'path'     => method_exists($request, 'pathinfo') ? $request->pathinfo() : null,
+                'method'   => method_exists($request, 'method') ? $request->method() : null,
+                'trace_id' => $traceId,
+            ];
+
+            if ($isConfigError) {
+                // 配置错误必须能被值班看到：这是「服务端自己坏了」，不是调用方的问题
+                $this->safeLog(
+                    'error',
+                    '[TENANT_CONTEXT_MISSING_CONFIG] 租户上下文不可用：DEFAULT_TENANT_ID 未配置或非正整数，'
+                        . '且请求未携带 X-Tenant-ID header（path=' . ($context['path'] ?? '') . '）',
+                    $context
+                );
+            } else {
+                // 请求级缺失属于客户端可修正的问题，记 warning 即可，避免刷 error 栈
+                $this->safeLog(
+                    'warning',
+                    '[TENANT_CONTEXT_MISSING_REQUEST] 租户上下文不可用：既无已写入的租户 ID，也无有效的 '
+                        . 'X-Tenant-ID header（path=' . ($context['path'] ?? '') . '）',
+                    $context
+                );
+            }
+
+            return $this->buildJsonResponse(
+                $isConfigError ? 500 : 400,
+                ($isConfigError && !$isDebug)
+                    ? 'Tenant context unavailable | 租户上下文不可用（请联系管理员检查 DEFAULT_TENANT_ID 配置）'
+                    : $e->getMessage(),
+                (int) $e->getCode() ?: 5000,
                 null,
                 $traceId,
                 $isDebug ? $e : null
@@ -179,6 +234,26 @@ class ExceptionHandle extends Handle
         }
 
         return json($response, $httpCode);
+    }
+
+    /**
+     * 安全写日志 | Write log safely
+     *
+     * 异常处理器是最后的兜底路径：它自身再抛异常会变成「白屏 500」，
+     * 连统一响应结构都没有。因此这里的日志失败必须被吞掉（只失去可观测性，不影响响应）。
+     *
+     * @param string $level   error / warning
+     * @param string $message 日志正文（含机器可读 tag，便于 grep/告警）
+     * @param array  $context 结构化上下文
+     */
+    protected function safeLog(string $level, string $message, array $context): void
+    {
+        try {
+            Log::record($message, $level, $context);
+            Log::save();
+        } catch (Throwable) {
+            // 日志通道不可用时静默降级，避免异常处理器自己 500
+        }
     }
 
     /**

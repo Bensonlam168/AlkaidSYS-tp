@@ -84,6 +84,13 @@
              force="true"：避免 shell 里遗留的同名变量把标记关掉，反而绕过守卫。 -->
         <env name="ALKAID_TESTING" value="1" force="true"/>
 
+        <!-- DEFAULT_TENANT_ID：TenantIdentify 中间件在「请求未带 X-Tenant-ID」时落到的默认租户。
+             自本次改动起，代码里不再有隐式默认 1 —— 未配置时中间件直接抛
+             TenantContextMissingException（配置级 500），因此测试必须自带该值，
+             不能依赖本机 .env 是否恰好写了这一行（CI 也没有，只有 .env.example 有）。
+             force="true"：测试需要确定性的默认租户，不允许被 shell 导出值改变。 -->
+        <env name="DEFAULT_TENANT_ID" value="1" force="true"/>
+
         <!-- ALLOW_RUNTIME_DDL：SchemaBuilder 相关用例需要在测试库里执行运行时 DDL。
              闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）里。
              实测：不加 force 且导出 ALLOW_RUNTIME_DDL=false 时，

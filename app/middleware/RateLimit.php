@@ -320,7 +320,16 @@ class RateLimit
             case 'user':
                 return (string) (method_exists($request, 'userId') ? ($request->userId() ?? '') : '');
             case 'tenant':
-                return (string) (method_exists($request, 'tenantId') ? ($request->tenantId() ?? '') : '');
+                // 限流标识符本身容忍「无租户」（缺失时统一记为 ''，退化为不按租户细分），
+                // 因此用可空版本 tenantIdOrNull()：
+                // 原来写成 `$request->tenantId() ?? ''`，其中 `?? ''` 是死代码
+                // （tenantId() 返回 int），一旦租户上下文缺失还会抛异常把限流中间件打成 500 ——
+                // 限流不该因为「算不出 key」而阻断请求。
+                if (method_exists($request, 'tenantIdOrNull')) {
+                    return (string) ($request->tenantIdOrNull() ?? '');
+                }
+
+                return method_exists($request, 'tenantId') ? (string) ($request->tenantId() ?? '') : '';
             case 'ip':
                 return $this->resolveClientIp($request);
             case 'route':

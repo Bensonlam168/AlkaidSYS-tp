@@ -71,6 +71,10 @@
              「强制变量覆盖关系」检查会报不一致。 -->
         <env name="ALKAID_TESTING" value="1" force="true"/>
 
+        <!-- DEFAULT_TENANT_ID：与 phpunit.xml 保持一致（check-phpunit-config 的
+             「强制变量覆盖关系」要求变体不得新增/缺失强制变量）。 -->
+        <env name="DEFAULT_TENANT_ID" value="1" force="true"/>
+
         <!-- ALLOW_RUNTIME_DDL：本 testsuite 含 tests/Unit/Schema，SchemaBuilder 相关用例
              需要在测试库里执行运行时 DDL。闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）。
              不加 force 时，导出 ALLOW_RUNTIME_DDL=false 会让 DDL 被拒
