@@ -60,6 +60,15 @@ This directory contains the technical specifications and guidelines for the Alka
 - Commit Message Convention (Conventional Commits)
 - Merge Strategy & Protected Branches
 
+#### 10. Multi-tenant Safety Checklists
+- [Tenant Parameter Contract & fail-closed Convention (TENANT-01)](./multi-tenant/tenant-parameter-contract.md)
+  - Mandatory tenant parameters, no `?int $tenantId = null`
+  - fail-closed on missing tenant context, HTTP 404 without existence leak
+  - Explicitly named escape hatches (`findByIdUnscoped`) instead of `null` / `0`
+  - Static signature guard plus self-purging exemptions
+- [Raw SQL Multi-tenant Safety Checklist (RAWSQL-01)](./multi-tenant/rawsql-safety-checklist.md)
+  - Tenant filters, parameter binding, audit, static scan
+
 ### Related Documentation
 
 - [Deployment Guide](../other-docs/deployment-guide.md)
@@ -119,6 +128,15 @@ This directory contains the technical specifications and guidelines for the Alka
 - 分支模型（main/develop/feature/fix/hotfix/release）
 - 提交消息约定（Conventional Commits）
 - 合并策略与保护分支规则
+
+#### 10. 多租户安全清单
+- [租户参数契约与 fail-closed 约定（TENANT-01）](./multi-tenant/tenant-parameter-contract.md)
+  - 租户参数必须必填，禁止 `?int $tenantId = null`
+  - 缺少租户上下文必须显式失败，HTTP 层统一 404 且不泄露存在性
+  - 跨租户只能走显式命名的逃生口（`findByIdUnscoped`），禁止 `null` / `0` 当开关
+  - 静态签名守卫 + 会自净的豁免清单
+- [原生 SQL 多租户安全检查清单（RAWSQL-01）](./multi-tenant/rawsql-safety-checklist.md)
+  - 租户过滤、参数绑定、审计留痕、静态扫描
 
 ### 相关文档
 
