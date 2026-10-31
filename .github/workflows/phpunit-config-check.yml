@@ -1,0 +1,47 @@
+name: PHPUnit Config Check
+
+# phpunit 配置一致性门禁 | PHPUnit config consistency gate
+#
+# 检查三份 phpunit 配置的「测试语义变量」是否保持一致：
+#   1. phpunit.xml 的 force 项必须是 t048/t050 变体的子集（含取值一致）
+#   2. DB_* 一律不得 force（连接参数必须跟随运行环境）
+#   3. 变体不得 force 基线没有的变量
+#   4. 新增的 phpunit*.xml 必须登记，防止新变体绕过门禁
+#
+# 详情见 scripts/check-phpunit-config.php
+
+on:
+  pull_request:
+    paths:
+      # 用 phpunit*.xml 而不是逐个点名：新增变体配置（如 phpunit.t060.xml）也必须触发本门禁，
+      # 否则「新加一份变体 + 只改这份变体」就能完全不进 CI，等于绕过检查 D。
+      - 'phpunit*.xml'
+      - 'scripts/check-phpunit-config.php'
+      - '.github/workflows/phpunit-config-check.yml'
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - 'phpunit*.xml'
+      - 'scripts/check-phpunit-config.php'
+
+jobs:
+  phpunit-config-check:
+    name: PHPUnit Config Consistency
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Run phpunit config consistency check
+        # --strict：存在问题即返回非 0，阻止合并
+        run: php scripts/check-phpunit-config.php --strict

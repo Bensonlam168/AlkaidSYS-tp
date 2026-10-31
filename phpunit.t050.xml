@@ -62,6 +62,14 @@
              → Tests: 3, Assertions: 2, Errors: 1, Failures: 2（期望 OK (3 tests, 17 assertions)）。 -->
         <env name="APP_ENV" value="dev" force="true"/>
 
+        <!-- ALLOW_RUNTIME_DDL：与 phpunit.xml 对齐的强制项（R30 的一致性门禁会发现本文件原先缺这一项）。
+             本 testsuite 目前不直接触发 SchemaBuilder 的运行时 DDL 闸门，但两套配置跑在同一个
+             ThinkPHP 应用容器里，若同一进程先后加载不同配置，缺项会让 ALLOW_RUNTIME_DDL
+             回落成外部导出值 —— 一旦被导出成 false，SchemaBuilder::assertCanRunDDL 会抛
+             HttpResponseException，任何间接依赖 DDL 的用例都会成批报错。
+             这里只把它钉成 true（宽松方向），不会收紧任何现有用例的行为。 -->
+        <env name="ALLOW_RUNTIME_DDL" value="true" force="true"/>
+
         <!-- CACHE_FILE_PREFIX：R20 的隔离前提，与 phpunit.xml 保持一致。
              （本文件原先没有这一项，等于 R20 的保护在这套配置下完全不存在。）
              File 驱动的 clear() 实现为 rmdir(path . prefix)
@@ -77,6 +85,26 @@
              不加 force 时，导出任意前缀同样会让清理作用域跑偏（清的不是 test/ 子树）。
              生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变。 -->
         <env name="CACHE_FILE_PREFIX" value="test" force="true"/>
+
+        <!-- RATELIMIT_ENABLED：决定限流中间件是否生效（app/middleware/RateLimit.php:32）。
+             不加 force 时，运行环境导出 false 会让中间件全程 return $next($request) 直通，
+             「被限流 / 不被限流」两类断言都会变成静默空转（不报错、但也没测到东西）。
+             本配置虽只覆盖表单设计器单测，但用例同样跑在共享的 ThinkPHP 应用容器里，
+             必须与 phpunit.xml 保持同一取值，避免同一进程内语义漂移。 -->
+        <env name="RATELIMIT_ENABLED" value="true" force="true"/>
+
+        <!-- RATELIMIT_SCOPE_*：限流阈值必须可预期，否则外部导出值会让限流用例随机成败 ——
+             同一份用例在阈值被外部调小的机器上会撞 429（非限流用例被误伤），
+             在阈值被调大后又让「应该被限流」的断言永远不成立。
+             这里取与 phpunit.xml 完全一致的较高阈值（1000 次 / 60 秒），
+             让「本来不测限流」的用例不受影响；真正要精确造 429 的
+             tests/Feature/RateLimitMiddlewareTest.php 会用 config() 覆盖内存配置，不依赖这几个值。 -->
+        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
     </php>
     <coverage includeUncoveredFiles="true"/>
     <source>

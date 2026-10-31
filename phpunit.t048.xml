@@ -84,6 +84,26 @@
              不加 force 时，导出任意前缀同样会让清理作用域跑偏（清的不是 test/ 子树）。
              生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变。 -->
         <env name="CACHE_FILE_PREFIX" value="test" force="true"/>
+
+        <!-- RATELIMIT_ENABLED：决定限流中间件是否生效（app/middleware/RateLimit.php:32）。
+             不加 force 时，运行环境导出 false 会让中间件全程 return $next($request) 直通，
+             「被限流 / 不被限流」两类断言都会变成静默空转（不报错、但也没测到东西）。
+             本 testsuite 的 Integration/Lowcode 用例同样会走完整 HTTP 中间件链，
+             因此必须与 phpunit.xml 保持同一取值。 -->
+        <env name="RATELIMIT_ENABLED" value="true" force="true"/>
+
+        <!-- RATELIMIT_SCOPE_*：限流阈值必须可预期，否则外部导出值会让限流用例随机成败 ——
+             同一份用例在阈值被外部调小的机器上会撞 429（非限流用例被误伤），
+             在阈值被调大后又让「应该被限流」的断言永远不成立。
+             这里取与 phpunit.xml 完全一致的较高阈值（1000 次 / 60 秒），
+             让「本来不测限流」的用例不受影响；真正要精确造 429 的
+             tests/Feature/RateLimitMiddlewareTest.php 会用 config() 覆盖内存配置，不依赖这几个值。 -->
+        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
     </php>
     <coverage includeUncoveredFiles="true"/>
     <source>
