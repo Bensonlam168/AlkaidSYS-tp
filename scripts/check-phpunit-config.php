@@ -29,6 +29,8 @@ declare(strict_types=1);
  *      因为子目录里同名配置（如 plugins/xxx/phpunit.xml）与根层 phpunit.xml 不能混为一谈（R34）。
  *   E. 豁免必须带 review_by 到期日：缺失/格式非法/已过期一律报错，未到期则每次运行打印剩余天数
  *      （可见性，避免「设了豁免就再也不看」）（R35）。
+ *      同时做**反向**检查：豁免条目必须对应仓库内真实存在的配置，否则报 [EXEMPT-STALE]
+ *      （删除/改名/移走配置后豁免会变成僵尸条目，永远占着清单也不会有任何提示）（R38）。
  *
  * 缺失配置文件一律**报错**而不是跳过：漏掉一个变体就等于漏检。
  *
@@ -80,6 +82,9 @@ const SCAN_EXCLUDED_DIRS = ['vendor', 'node_modules', '.git', 'runtime'];
  *
  * review_by：豁免到期日（R35）。到期后检查 E 报错，强制重新复核 —— 否则「豁免」会变成
  * 永久的免检通道，某个豁免配置悄悄开始 force 变量也没人知道。
+ *
+ * 条目必须指向仓库内**真实存在**的配置（R38）：配置一旦删除/改名，豁免就会变成永远不会被
+ * 看见、也不会被提醒清理的僵尸条目，检查 E 用 [EXEMPT-STALE] 报错要求删除。
  */
 const EXEMPT_CONFIGS = [
     'phpunit.performance.xml' => [
@@ -473,14 +478,40 @@ foreach (EXEMPT_CONFIGS as $name => $meta) {
 }
 $errorCount += count($dIssues);
 
-// --- 检查 E：豁免复核到期（review_by 缺失 / 格式非法 / 已过期一律报错）（R35） ---
+// --- 检查 E：豁免元数据有效性（review_by 到期 + 陈旧条目反向检查）（R35 / R38） ---
 // 目的：豁免不是永久免检通道。到期后必须有人真的看一遍那份配置，
 // 要么续期（更新 review_by），要么移除豁免纳入门禁。
-// 错误用两种标签区分：EXEMPT-META（元数据缺失/格式非法，写的人的问题）
-// 与 EXEMPT-EXPIRED（真的到期了，需要复核决策），便于 CI 日志快速定位。
+// 错误用三种标签区分：EXEMPT-META（元数据缺失/格式非法，写的人的问题）
+// 与 EXEMPT-EXPIRED（真的到期了，需要复核决策）、EXEMPT-STALE（豁免指向的文件已不存在），
+// 便于 CI 日志快速定位。
 $eIssues = [];   // list<array{tag:string, msg:string}>
 $eNotices = [];
 $today = new DateTimeImmutable('today'); // 服务器当天零点，按日期粒度比较
+
+// 反向检查（R38）：豁免清单 → 真实文件。
+// 检查 D 只管「文件 → 登记表」这一个方向（发现未登记的配置），反方向过去是空的：
+// 某份被豁免的配置一旦被删除 / 改名 / 整体移走，条目会**静默**留在清单里 ——
+// A/B/C 都看不到它（它已不在 $configs 里），D 又因为「已登记」而不吭声，
+// 于是这条僵尸豁免会永远占着清单，且 review_by 续期时还会被当成一条「有效豁免」复核。
+// 判定基准是递归扫描结果 $discovered（与检查 D 同一个集合），保证「能豁免的」与「能触发 D 的」口径一致：
+// 扫描排除目录（vendor/node_modules/.git/runtime）里的文件本就不受门禁管辖，
+// 给它们登记豁免既无意义也不会生效，同样按陈旧处理。
+$staleExempts = [];   // list<string>：陈旧的豁免条目，后续不再打印有效期提示
+foreach (array_keys(EXEMPT_CONFIGS) as $name) {
+    if (in_array($name, $discovered, true)) {
+        continue;
+    }
+    $staleExempts[] = $name;
+    // 区分两种成因，报告措辞不同：文件真的没了 vs 文件在但不在扫描范围内（豁免从未生效）
+    $existsOnDisk = is_file(REPO_ROOT . '/' . $name);
+    $eIssues[] = [
+        'tag' => 'EXEMPT-STALE',
+        'msg' => $existsOnDisk
+            ? "{$name} 的豁免条目已失效（文件存在但不在递归扫描范围内：可能位于 vendor 等排除目录，"
+                . '或文件名不符合 phpunit*.xml），这条豁免从未生效，请删除该豁免'
+            : "{$name} 的豁免条目已失效（文件不存在），请删除该豁免",
+    ];
+}
 
 foreach (EXEMPT_CONFIGS as $name => $meta) {
     if (!is_array($meta)) {
@@ -528,10 +559,14 @@ foreach (EXEMPT_CONFIGS as $name => $meta) {
     }
 
     // 未到期：每次运行都打印，制造可见性（不然「设了就不管」）
-    $eNotices[] = "{$name} 豁免有效期至 {$reviewBy}，剩余 {$daysLeft} 天";
+    // 陈旧条目（文件已不存在）不打印这条：它的豁免已无对象，再写「剩余 N 天」会误导成「还在有效期内」，
+    // 上面已经有 EXEMPT-STALE 错误要求删除
+    if (!in_array($name, $staleExempts, true)) {
+        $eNotices[] = "{$name} 豁免有效期至 {$reviewBy}，剩余 {$daysLeft} 天";
+    }
 }
 
-printf("检查 E  豁免复核有效期          %s\n", formatResult(count($eIssues)));
+printf("检查 E  豁免条目有效性          %s\n", formatResult(count($eIssues)));
 foreach ($eIssues as $issue) {
     echo '   ' . colorize("[{$issue['tag']}]", 'red') . " {$issue['msg']}" . PHP_EOL;
 }
