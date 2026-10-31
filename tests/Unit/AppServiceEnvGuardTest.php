@@ -6,6 +6,7 @@ namespace Tests\Unit;
 
 use app\AppService;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\CliProcess;
 use think\App;
 use think\Container;
 
@@ -294,21 +295,13 @@ PHP;
 
         file_put_contents($scriptPath, str_replace('__AUTOLOAD__', var_export($autoload, true), $template));
 
-        $lines    = [];
-        $exitCode = 0;
-        exec(
-            sprintf(
-                '%s %s %s 2>&1',
-                escapeshellarg(PHP_BINARY),
-                escapeshellarg($scriptPath),
-                escapeshellarg($this->rootPath)
-            ),
-            $lines,
-            $exitCode
-        );
-        $output = implode("\n", $lines);
+        // 子进程统一走 Tests\Support\CliProcess：它用 PHP_ENV_NAME + 临时环境文件**替换**子进程的 `.env`，
+        // 并把 DB_* 强制指向测试库，保证「另一个 PHP 进程」不会读到开发库连接参数。
+        // 探针本身只调 guardEnvFile()，不碰数据库。
+        $result = CliProcess::phpScript($scriptPath, [$this->rootPath]);
+        $output = $result->output;
 
-        $this->assertSame(1, $exitCode, "坏 .env 必须以 1 退出（255 说明退出码修正失效），实际输出：\n{$output}");
+        $this->assertSame(1, $result->exitCode, "坏 .env 必须以 1 退出（255 说明退出码修正失效），实际输出：\n{$output}");
         $this->assertStringContainsString('无法解析', $output, "输出应保留可定位的守卫消息，实际输出：\n{$output}");
         $this->assertStringNotContainsString('GUARD_PASSED', $output, '守卫不得放行（否则等于静默降级）');
     }
@@ -387,11 +380,11 @@ PHP;
             escapeshellarg($this->envPath)
         );
 
-        $lines    = [];
-        $exitCode = 0;
-        exec($command . ' 2>&1', $lines, $exitCode);
+        // 统一走助手启动：它只做环境变量隔离（本命令不碰数据库），
+        // 顺带避免在各处重复写 exec() + 引用参数 + 手工拼接
+        $result = CliProcess::shell($command);
 
-        $this->assertSame(0, $exitCode, '外部进程改写临时 .env 失败：' . implode("\n", $lines));
+        $this->assertSame(0, $result->exitCode, '外部进程改写临时 .env 失败：' . $result->output);
     }
 
     /**

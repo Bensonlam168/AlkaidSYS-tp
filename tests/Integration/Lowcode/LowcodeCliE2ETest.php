@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Integration\Lowcode;
 
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
+use Tests\Support\CliProcess;
+use Tests\Support\CliProcessResult;
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
 
@@ -13,6 +15,10 @@ use think\facade\Db;
  *
  * 通过实际执行 php think lowcode:* 命令，验证关键 CLI 流程可以在
  * 项目目录中正确运行，用于支撑 T-057/T-070/T-071 的测试矩阵扩展。
+ *
+ * 注意：子进程统一走 Tests\Support\CliProcess —— 它会用临时环境文件把子进程
+ * 隔离到**测试库**。此前这里直接 exec()，子进程重新读 `.env` 连到开发库 alkaid_sys，
+ * 实测把 369 张表的基线写成了 371 张（详见该助手类头部说明）。
  *
  * @see T-057
  * @see T-070
@@ -50,21 +56,14 @@ class LowcodeCliE2ETest extends ThinkPHPTestCase
     }
 
     /**
-     * Execute a ThinkPHP CLI command within the project directory.
+     * 在「已隔离到测试库」的环境里执行一条 think 命令
      *
-     * @param string $args
-     * @param int    $exitCode
-     * @return string
+     * @param array<int, string> $args think 之后的参数（不含 php / think 本身）
+     * @return CliProcessResult
      */
-    private function runCli(string $args, int &$exitCode): string
+    private function runCli(array $args): CliProcessResult
     {
-        $command = sprintf('%s think %s', escapeshellarg(PHP_BINARY), $args);
-
-        $outputLines = [];
-        $exitCode = 0;
-        exec($command . ' 2>&1', $outputLines, $exitCode);
-
-        return implode("\n", $outputLines);
+        return CliProcess::think($args);
     }
 
     /**
@@ -78,17 +77,20 @@ class LowcodeCliE2ETest extends ThinkPHPTestCase
         $name = 'e2e_cli_' . time() . '_' . random_int(1000, 9999);
         $this->createdCollections[] = $name;
 
-        $args = sprintf(
-            'lowcode:create-model %s --fields=%s --tenant-id=%d --site-id=0 --force',
-            escapeshellarg($name),
-            escapeshellarg('title:string'),
-            self::TEST_TENANT_ID
+        $result = $this->runCli([
+            'lowcode:create-model',
+            $name,
+            '--fields=title:string',
+            '--tenant-id=' . self::TEST_TENANT_ID,
+            '--site-id=0',
+            '--force',
+        ]);
+
+        $this->assertSame(
+            0,
+            $result->exitCode,
+            "lowcode:create-model exit code should be 0. Output:\n" . $result->output
         );
-
-        $exitCode = 0;
-        $output = $this->runCli($args, $exitCode);
-
-        $this->assertSame(0, $exitCode, "lowcode:create-model exit code should be 0. Output:\n" . $output);
 
         $row = Db::table('lowcode_collections')
             ->where('name', $name)
@@ -113,28 +115,33 @@ class LowcodeCliE2ETest extends ThinkPHPTestCase
         $this->createdCollections[] = $name;
 
         // 先通过 CLI 创建一个 Collection，确保 DB 与 Schema 一致
-        $createArgs = sprintf(
-            'lowcode:create-model %s --fields=%s --tenant-id=%d --site-id=0 --force',
-            escapeshellarg($name),
-            escapeshellarg('title:string'),
-            self::TEST_TENANT_ID
+        $createResult = $this->runCli([
+            'lowcode:create-model',
+            $name,
+            '--fields=title:string',
+            '--tenant-id=' . self::TEST_TENANT_ID,
+            '--site-id=0',
+            '--force',
+        ]);
+        $this->assertSame(
+            0,
+            $createResult->exitCode,
+            "prepare collection failed. Output:\n" . $createResult->output
         );
-
-        $createExitCode = 0;
-        $createOutput = $this->runCli($createArgs, $createExitCode);
-        $this->assertSame(0, $createExitCode, "prepare collection failed. Output:\n" . $createOutput);
 
         // 对单个 Collection 执行 migration:diff --check
         // 注意：diff 必须携带 tenant/site 维度，否则会默认 tenant_id=0 导致找不到集合
-        $diffArgs = sprintf(
-            'lowcode:migration:diff %s --check --tenant-id=%d',
-            escapeshellarg($name),
-            self::TEST_TENANT_ID
+        $diffResult = $this->runCli([
+            'lowcode:migration:diff',
+            $name,
+            '--check',
+            '--tenant-id=' . self::TEST_TENANT_ID,
+        ]);
+
+        $this->assertSame(
+            0,
+            $diffResult->exitCode,
+            "lowcode:migration:diff --check exit code should be 0. Output:\n" . $diffResult->output
         );
-
-        $diffExitCode = 0;
-        $diffOutput = $this->runCli($diffArgs, $diffExitCode);
-
-        $this->assertSame(0, $diffExitCode, "lowcode:migration:diff --check exit code should be 0. Output:\n" . $diffOutput);
     }
 }

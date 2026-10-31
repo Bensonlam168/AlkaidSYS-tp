@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace app\command\base;
 
+use RuntimeException;
 use think\console\Command;
 use think\console\Input;
 use think\console\Output;
@@ -17,8 +18,121 @@ use think\console\Table;
  *
  * @package app\command\base
  */
-    abstract class LowcodeCommand extends Command
+abstract class LowcodeCommand extends Command
+{
+    /**
+     * 测试库名必须包含的标记（与 tests/ThinkPHPTestCase.php 的判据保持一致）
+     */
+    private const TEST_DB_MARKER = '_test';
+
+    /**
+     * 显式测试上下文标记（由 tests/Support/CliProcess 注入子进程）
+     */
+    private const TESTING_FLAG = 'ALKAID_TESTING';
+
+    /**
+     * 命令唯一入口：先做「测试上下文禁止写非测试库」的检查，再交给父类执行
+     *
+     * 为什么拦在 run() 而不是各命令的 execute()：
+     *   run() 是框架调用命令的**唯一入口**（think\Console::doRunCommand() → $command->run()），
+     *   在这里挡一道，新增的 lowcode 子命令会自动继承保护，不会因为「忘记加一行」而漏掉。
+     *
+     * @param Input  $input  Input instance | 输入实例
+     * @param Output $output Output instance | 输出实例
+     * @return int Exit code | 退出码
+     */
+    public function run(Input $input, Output $output): int
     {
+        $this->guardTestContextDatabase();
+
+        return parent::run($input, $output);
+    }
+
+    /**
+     * 测试上下文下的数据库 fail-closed 守卫（纵深防御）
+     *
+     * 背景（实测）：测试用例用 exec() 拉起 `php think lowcode:create-model` 时，子进程是全新 PHP 进程，
+     * 会重新 load `.env` → 连到**开发库 alkaid_sys**，把 369 张表的基线写成 371 张。
+     * 父进程的守卫（tests/ThinkPHPTestCase）保护不了另一个进程，所以命令侧必须再挡一道：
+     * 发现「处于测试上下文」且「实际要连的库名不含 _test」时直接抛异常，绝不下发任何 DDL/DML。
+     *
+     * 边界：只有显式标记 ALKAID_TESTING=1 才算测试上下文，因此**不影响**正常手工执行
+     * `php think lowcode:create-model ...`（没有该标记时直接放行）。
+     *
+     * @throws RuntimeException 测试上下文下解析出的库名不是测试库
+     */
+    protected function guardTestContextDatabase(): void
+    {
+        if (!self::isTestingContext()) {
+            // 手工执行（无测试标记）：保持既有行为不变
+            return;
+        }
+
+        $database = $this->resolveEffectiveDatabaseName();
+
+        if (str_contains($database, self::TEST_DB_MARKER)) {
+            return;
+        }
+
+        // 刻意抛异常，而不是「打警告 + return 1」：警告会被淹没，进程仍可能继续写库。
+        // think\Console::run() 会捕获 Exception、打印下面的文案并以非 0 退出码结束。
+        throw new RuntimeException(sprintf(
+            "拒绝在非测试库上执行 %s：解析出的数据库名「%s」不包含「%s」。\n"
+            . "当前处于测试上下文（%s=1），继续执行会写坏开发库。请按以下顺序处置：\n"
+            . "  1) 测试代码请改用 Tests\\Support\\CliProcess::think() 启动子进程（它会生成临时环境文件并指向测试库）；\n"
+            . "  2) 不要在测试里手工拼 exec('php think ...')：子进程会重新读 .env 并连到开发库；\n"
+            . "  3) 若确需手工验证，请确认没有设置 %s=1；\n"
+            . "  4) 冷启动测试库：PHP_ENV_NAME=test php think migrate:run。\n"
+            . '参考：ER-15 —— 测试默认库已切到 alkaid_sys_test，但子进程不受父进程守卫保护。',
+            $this->getName() ?: '(unknown)',
+            $database,
+            self::TEST_DB_MARKER,
+            self::TESTING_FLAG,
+            self::TESTING_FLAG
+        ));
+    }
+
+    /**
+     * 当前进程是否处于测试上下文
+     */
+    protected static function isTestingContext(): bool
+    {
+        $flag = getenv(self::TESTING_FLAG);
+
+        if (false === $flag) {
+            $flag = $_SERVER[self::TESTING_FLAG] ?? $_ENV[self::TESTING_FLAG] ?? '';
+        }
+
+        return in_array(strtolower((string) $flag), ['1', 'true', 'yes'], true);
+    }
+
+    /**
+     * 解析「实际生效」的数据库名
+     *
+     * 唯一可信来源是命令真正使用的连接配置（`App::initialize()` 从隔离后的 Env 生成）。
+     * 刻意**不优先**读 `getenv('DB_NAME')`：子进程的进程环境可能带着测试库名（助手做了双保险），
+     * 而真正生效的可能是被环境文件覆盖过的另一个库 —— 守卫必须看「实际要连的库」。
+     */
+    protected function resolveEffectiveDatabaseName(): string
+    {
+        if (null !== $this->app) {
+            $database = $this->app->config->get('database.connections.mysql.database');
+
+            if (is_string($database) && '' !== $database) {
+                return $database;
+            }
+
+            // 配置尚未加载时的兜底：直接问 Env（同样优先读已加载的环境文件数据）
+            $database = $this->app->env->get('DB_NAME');
+
+            if (is_string($database) && '' !== $database) {
+                return $database;
+            }
+        }
+
+        return (string) (getenv('DB_NAME') ?: '');
+    }
+
     /**
      * Output success message | 输出成功消息
      *
@@ -248,37 +362,37 @@ use think\console\Table;
         return $str;
     }
 
-        /**
-         * Handle command exception | 处理命令异常
-         *
-         * @param \Throwable $e Exception | 异常
-         * @return int Exit code | 退出码
-         */
-        protected function handleException(\Throwable $e): int
-        {
-            $format = $this->getOutputFormat();
+    /**
+     * Handle command exception | 处理命令异常
+     *
+     * @param \Throwable $e Exception | 异常
+     * @return int Exit code | 退出码
+     */
+    protected function handleException(\Throwable $e): int
+    {
+        $format = $this->getOutputFormat();
 
-            if ($format === 'json') {
-                $this->writeStructuredOutput(
-                    ['exception' => [
-                        'class' => $e::class,
-                        'message' => $e->getMessage(),
-                    ]],
-                    1,
-                    'Command execution failed'
-                );
-            } else {
-                $this->error($e->getMessage());
+        if ($format === 'json') {
+            $this->writeStructuredOutput(
+                ['exception' => [
+                    'class' => $e::class,
+                    'message' => $e->getMessage(),
+                ]],
+                1,
+                'Command execution failed'
+            );
+        } else {
+            $this->error($e->getMessage());
 
-                if ($this->output->isVerbose()) {
-                    $this->output->writeln('');
-                    $this->output->writeln('<comment>Stack trace:</comment>');
-                    $this->output->writeln($e->getTraceAsString());
-                }
+            if ($this->output->isVerbose()) {
+                $this->output->writeln('');
+                $this->output->writeln('<comment>Stack trace:</comment>');
+                $this->output->writeln($e->getTraceAsString());
             }
-
-            return 1;
         }
+
+        return 1;
+    }
 
     /**
      * Validate required options | 验证必需选项

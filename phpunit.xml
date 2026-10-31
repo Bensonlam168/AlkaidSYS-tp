@@ -75,6 +75,15 @@
              → 1 error + 2 failures（期望 3 passed）。 -->
         <env name="APP_ENV" value="dev" force="true"/>
 
+        <!-- ALKAID_TESTING：显式声明「当前进程是测试进程」，供 CLI 命令侧做 fail-closed 守卫。
+             为什么需要它：测试里 exec('php think lowcode:create-model ...') 拉起的是**全新 PHP 进程**，
+             它会重新 load .env → 连到开发库 alkaid_sys。父进程的 ThinkPHPTestCase 守卫管不到另一个进程，
+             所以命令侧（app/command/base/LowcodeCommand.php::guardTestContextDatabase）要靠这个标记
+             判断「我在测试上下文里」，一旦发现库名不含 _test 就抛异常拒绝执行。
+             正常手工执行 php think 时没有该标记，行为完全不变。
+             force="true"：避免 shell 里遗留的同名变量把标记关掉，反而绕过守卫。 -->
+        <env name="ALKAID_TESTING" value="1" force="true"/>
+
         <!-- ALLOW_RUNTIME_DDL：SchemaBuilder 相关用例需要在测试库里执行运行时 DDL。
              闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）里。
              实测：不加 force 且导出 ALLOW_RUNTIME_DDL=false 时，

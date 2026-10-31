@@ -62,6 +62,12 @@
              → Tests: 3, Assertions: 2, Errors: 1, Failures: 2（期望 OK (3 tests, 17 assertions)）。 -->
         <env name="APP_ENV" value="dev" force="true"/>
 
+        <!-- ALKAID_TESTING：测试上下文标记，供 CLI 命令的 fail-closed 守卫识别
+             （见 app/command/base/LowcodeCommand.php::guardTestContextDatabase）。
+             必须与 phpunit.xml 保持同值同 force，否则 check-phpunit-config 的
+             「强制变量覆盖关系」检查会报不一致。 -->
+        <env name="ALKAID_TESTING" value="1" force="true"/>
+
         <!-- ALLOW_RUNTIME_DDL：与 phpunit.xml 对齐的强制项（R30 的一致性门禁会发现本文件原先缺这一项）。
              本 testsuite 目前不直接触发 SchemaBuilder 的运行时 DDL 闸门，但两套配置跑在同一个
              ThinkPHP 应用容器里，若同一进程先后加载不同配置，缺项会让 ALLOW_RUNTIME_DDL

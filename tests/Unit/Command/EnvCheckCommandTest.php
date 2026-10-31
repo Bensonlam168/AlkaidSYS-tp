@@ -6,6 +6,7 @@ namespace Tests\Unit\Command;
 
 use app\AppService;
 use app\command\EnvCheckCommand;
+use Tests\Support\CliProcess;
 use Tests\ThinkPHPTestCase;
 use think\console\Input;
 use think\console\Output;
@@ -88,7 +89,7 @@ class EnvCheckCommandTest extends ThinkPHPTestCase
 
         $hashBefore = hash_file('sha256', $this->envPath);
 
-        [$exitCode, $output] = $this->runCli('env:check');
+        [$exitCode, $output] = $this->runCli(['env:check']);
 
         $this->assertSame(0, $exitCode, "正常 .env 下 env:check 应以 0 退出，实际输出：\n{$output}");
         $this->assertStringContainsString('✓ .env parsed', $output, "应输出 .env 解析通过，实际输出：\n{$output}");
@@ -125,7 +126,7 @@ class EnvCheckCommandTest extends ThinkPHPTestCase
             file_put_contents($this->envPath, $original . "\n" . $badLine . "\n");
             clearstatcache(true, $this->envPath);
 
-            [$exitCode, $output] = $this->runCli('env:check');
+            [$exitCode, $output] = $this->runCli(['env:check']);
 
             $this->assertSame(1, $exitCode, "解析失败时 env:check 应以 1 退出，实际输出：\n{$output}");
             $this->assertStringContainsString('✗ .env', $output, "应报 .env 解析失败，实际输出：\n{$output}");
@@ -181,7 +182,7 @@ class EnvCheckCommandTest extends ThinkPHPTestCase
             // 1) 命令：跳过文件解析检查，而不是报错
             // 注意：不在这里断言退出码 —— 没有 .env 时逐变量检查会因为 DB_NAME 等变量缺失而
             // 以 1 退出，那是既有行为，与本用例要钉的「文件不存在不是解析错误」无关。
-            [$envCheckExit, $output] = $this->runCli('env:check');
+            [$envCheckExit, $output] = $this->runCli(['env:check']);
             $this->assertStringContainsString(
                 '未找到 .env，跳过文件解析检查',
                 $output,
@@ -199,7 +200,7 @@ class EnvCheckCommandTest extends ThinkPHPTestCase
             );
 
             // 2) 运行期守卫：必须放行（否则任何只用环境变量的容器都起不来）
-            [$listExit, $listOutput] = $this->runCli('list');
+            [$listExit, $listOutput] = $this->runCli(['list']);
             $this->assertSame(0, $listExit, "没有 .env 时运行期守卫必须放行，实际输出：\n{$listOutput}");
             $this->assertStringNotContainsString(
                 '.env 文件存在但无法解析',
@@ -427,17 +428,17 @@ class EnvCheckCommandTest extends ThinkPHPTestCase
      * （App::initialize → Env::load('.env') → AppService::boot 守卫 → 命令执行），
      * 进程内跑会被 PHPUnit 进程里已经初始化过的 Env / 静态缓存遮蔽。
      *
-     * @param string $args think 之后的参数（如 `env:check`）
+     * 子进程统一走 Tests\Support\CliProcess：该助手会生成临时环境文件把子进程隔离到测试库。
+     * 这里的断言对象仍是「仓库根 .env」的解析结论（env:check 直接读该文件），
+     * 隔离只影响变量取值，不影响被测行为。
+     *
+     * @param array<int, string> $args think 之后的参数（如 `['env:check']`）
      * @return array{0: int, 1: string} [退出码, 合并 stderr 后的输出]
      */
-    private function runCli(string $args): array
+    private function runCli(array $args): array
     {
-        $command     = sprintf('%s think %s', escapeshellarg(PHP_BINARY), $args);
-        $outputLines = [];
-        $exitCode    = 0;
+        $result = CliProcess::think($args);
 
-        exec($command . ' 2>&1', $outputLines, $exitCode);
-
-        return [$exitCode, implode("\n", $outputLines)];
+        return [$result->exitCode, $result->output];
     }
 }
