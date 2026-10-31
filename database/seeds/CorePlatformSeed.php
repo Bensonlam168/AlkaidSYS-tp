@@ -1,5 +1,6 @@
 <?php
 
+use Infrastructure\Permission\Service\PermissionCacheService;
 use think\migration\Seeder;
 
 /**
@@ -17,10 +18,12 @@ use think\migration\Seeder;
  *        - 迁移创建的是系统权限：casbin.manage / tenant.* / role.* / permission.* /
  *          user.*（单数）/ dept.* / menu.*，共 19 条；
  *        - 本 seeder 创建的是业务权限：forms.* / form_data.* / collections.* /
- *          users.*（复数）/ roles.*（复数），共 20 条。
+ *          users.*（复数）/ roles.*（复数），共 20 条；R50 又补了 lowcode.* 3 条，现共 23 条。
  *      删掉本方法会让 forms.* / form_data.* / collections.* 等 12 个权限在任何环境都不存在，
  *      并让 assignPermissionsToRoles() 里给普通用户的那 3 条只读授权变成匹配 0 行的死代码。
- *      现改为逐条 INSERT ... WHERE NOT EXISTS(slug)，主键交给 AUTO_INCREMENT。
+ *      现改为逐条 INSERT ... WHERE NOT EXISTS(slug)；
+ *      主键自 **R50** 起不再无条件交给 AUTO_INCREMENT（那会让测试库里的行撞进别的用例的清理区间），
+ *      改为「能钉 1001..1023 就钉，钉不上才退回自增」——理由见下面 R50 第 1 点。
  *   2. createDefaultTenant / createRoles / createDefaultUser 原先都写死主键且无判重，
  *      第二遍执行必撞主键；现均改为「存在即跳过」，重复执行不产生任何新行。
  *      其中**租户段与站点段是两段独立幂等**：迁移 20251219000003 会先建出租户 1，
@@ -39,6 +42,26 @@ use think\migration\Seeder;
  *   权限的 name/slug/resource/action/description 全部来自本文件内的代码常量，**本无注入面**；
  *   改成参数绑定不是为了修安全漏洞，而是消除「值里出现半角单引号就会破 SQL / 被静默截断」
  *   这类脆弱性（属于健壮性改进）。
+ *
+ * 【R50：业务权限改为带显式 id，并补上 lowcode.* 三条路由级权限】
+ *   1. 显式 id（1001..1023）解决的是**跨用例数据破坏**，而不是风格问题：
+ *      测试库里 `permissions` 的 AUTO_INCREMENT 会被 `tests/Unit/Infrastructure/Permission/**`
+ *      那些 7xxx/8xxx/9xxx/99xxx 夹具一路撑到 ~99 万，于是本 seeder 插入的业务权限会拿到
+ *      99xxxx 的 id；而同一批测试的清理语句是按 id 区间删的 ——
+ *      `PermissionServiceIntegrationTest:107` 删 `id >= 7000`、`CasbinServiceTest:116` 删
+ *      `id >= 8000`、`DatabaseAdapterTest:128` 删 `id >= 9000`。
+ *      实测后果：`seed:run` 刚建好的 23 条权限，会在同一轮 phpunit 里被别的用例顺手删光
+ *      （39 → 19 行），依赖它们的用例全部退化成「缺种子数据」的红 —— 与 seeder 本身无关。
+ *      把 id 钉在 1001..1023（低于工作流夹具 6000-6999 区间，也低于 7000+ 的各清理阈值）
+ *      后，这些清理语句再也碰不到它们，seed 结果在同一轮测试里稳定存活。
+ *      id 只是「插入时的建议值」：已存在（按 slug 判）就保留原 id 不动；建议 id 被别的行占用时
+ *      退回 AUTO_INCREMENT，绝不为了凑 id 去覆盖别人的行。
+ *   2. `lowcode.read` / `lowcode.write` / `lowcode.delete` 是 `route/lowcode.php` 里
+ *      21 处 Permission 中间件**硬依赖**的内部 slug（见 docs/technical-specs/api/route-reference.md）。
+ *      迁移链和旧的 20 条业务权限都没有它们，因此任何用户在低代码接口上恒返回 403；
+ *      这属于「权限数据缺口」，和表单/集合权限一样应由本 seeder 负责。
+ *   3. run() 末尾清除受影响用户的权限缓存：权限行变了而缓存还在（L2 TTL 300s），
+ *      下一次读取会拿到旧集合 —— 「seed 之后仍然 403」的另一种成因。
  */
 class CorePlatformSeed extends Seeder
 {
@@ -75,15 +98,16 @@ class CorePlatformSeed extends Seeder
         $this->createRoles();
 
         // 3. Create permissions | 创建权限
-        //    创建迁移链**没有覆盖**的 20 条业务权限（forms.* / form_data.* / collections.* /
-        //    users.* / roles.*）。它们与迁移创建的 user.* / role.*（单数）等系统权限是
+        //    创建迁移链**没有覆盖**的业务权限（forms.* / form_data.* / collections.* /
+        //    users.* / roles.* 共 20 条，R50 起再加 lowcode.read/write/delete 共 23 条）。
+        //    它们与迁移创建的 user.* / role.*（单数）等系统权限是
         //    两套不同的 slug，**不是重复数据**，详见类注释第 1 点。
         //
         //    【为什么这一步不再是「唯一」创建权限的地方（R48）】
         //    assignPermissionsToRoles() 开头也会调用一次 ensurePermissions()，
         //    使授权逻辑**不依赖 run() 的步骤顺序**（把 4 调到 3 之前也仍然成立）。
         //    两处调用都是幂等的（按 slug 判存在的 INSERT ... WHERE NOT EXISTS），
-        //    重复执行的代价只是 20 条「插 0 行」的 SQL，没有副作用。
+        //    重复执行的代价只是 23 条「插 0 行」的 SQL，没有副作用。
         //    这里保留独立一步，是因为它负责把「本次新增 N 条」这件事打印出来；
         //    assign 内部那次是**静默**确保，避免同一行输出刷两次。
         $this->createPermissions();
@@ -93,6 +117,53 @@ class CorePlatformSeed extends Seeder
 
         // 5. Create default admin user | 创建默认管理员用户
         $this->createDefaultUser();
+
+        // 6. Invalidate permission caches | 清除受影响的权限缓存（R50）
+        //
+        // 为什么放在 seeder 里：本 seeder 会新增权限行、并给角色补授权。而 PermissionService
+        // 走 PermissionCacheService 的两级缓存（L2 TTL 默认 300s），键是「租户 + 用户」，
+        // 不随 role_permissions 变化而失效。于是「刚 seed 完仍然 403」会出现，
+        // 且看起来像「seed 没生效」，排查成本很高。
+        // 这里只清「确实拥有角色」的用户的缓存 —— 不调用 clearAllCache()，
+        // 避免把与权限无关的缓存（限流、配置、业务查询）一并清掉。
+        $this->clearPermissionCaches();
+    }
+
+    /**
+     * 清除受影响的权限缓存 | Clear permission caches affected by this seed
+     *
+     * 清的是「当前 user_roles 里出现过的用户」—— 只有这些用户的权限集合可能因本次 seed 改变。
+     * 失败只提示、不终止：数据已经落库，缓存也会按 TTL 自然过期，把 seed 弄失败反而更糟。
+     */
+    private function clearPermissionCaches(): void
+    {
+        try {
+            $statement = $this->query(
+                'SELECT DISTINCT `ur`.`user_id` AS `user_id`, `u`.`tenant_id` AS `tenant_id`
+                 FROM `user_roles` `ur`
+                 JOIN `users` `u` ON `u`.`id` = `ur`.`user_id`'
+            );
+
+            if (!($statement instanceof PDOStatement)) {
+                return;
+            }
+
+            $rows = $statement->fetchAll(PDO::FETCH_ASSOC);
+            if ($rows === []) {
+                return;
+            }
+
+            $cacheService = new PermissionCacheService();
+            foreach ($rows as $row) {
+                $cacheService->clearUserCache((int) $row['user_id'], (int) $row['tenant_id']);
+            }
+
+            $this->writeLine(sprintf('  缓存：已清除 %d 个用户的权限缓存', count($rows)));
+        } catch (Throwable $e) {
+            // Throwable 而不是 Exception：缓存驱动（Redis/文件）缺失时可能抛 \Error。
+            // 这类问题与「数据是否补齐」无关，不该让 seed 以非 0 退出。
+            $this->writeLine('  [提示] 权限缓存清理失败（数据已写入，不影响后续读取）：' . $e->getMessage());
+        }
     }
 
     /**
@@ -108,8 +179,11 @@ class CorePlatformSeed extends Seeder
      *
      * 因此这里做一次兜底：有注入的 output 就用它，没有就直接 echo（CLI 下 output_buffering 为 0，
      * 顺序与 think 的 Output 一致）。
+     *
+     * 可见性由 private 放宽为 protected（R50）：子类 TestPlatformSeed 需要复用同一套输出兜底，
+     * 否则它只能自己再抄一份，两处实现迟早漂移。
      */
-    private function writeLine(string $message): void
+    protected function writeLine(string $message): void
     {
         if (!empty($this->output)) {
             $this->output->writeln($message);
@@ -270,12 +344,14 @@ class CorePlatformSeed extends Seeder
     /**
      * Create permissions | 创建权限
      *
-     * 创建的是**业务权限**：forms.* / form_data.* / collections.* / users.* / roles.* 各 4 条，共 20 条。
+     * 创建的是**业务权限**：forms.* / form_data.* / collections.* / users.* / roles.* 各 4 条（共 20 条），
+     * 外加 R50 补齐的 lowcode.read / lowcode.write / lowcode.delete（3 条路由级权限），合计 23 条。
      *
      * 【这套权限与迁移创建的权限是两套不同的 slug，不是重复数据 —— 不要「去重」删掉】
      *   - 迁移链创建的是系统权限（19 条）：casbin.manage、tenant.*、role.*、permission.*、
      *     user.*（单数）、dept.*、menu.*；
-     *   - 本方法创建的是业务权限（20 条）：users.*（复数）、roles.*（复数）以及表单/集合权限。
+     *   - 本方法创建的是业务权限（23 条）：users.*（复数）、roles.*（复数）、表单/集合权限
+     *     以及 lowcode.*；
      *   两套 slug 完全不重叠（`user.read` 与 `users.view` 是两个不同的权限）。
      *   删掉本方法的后果：全新库上 forms.* / form_data.* / collections.* 等 12 个权限永久缺失，
      *   且 assignPermissionsToRoles() 里给普通用户的那 3 条只读授权会变成匹配 0 行的死代码。
@@ -283,8 +359,9 @@ class CorePlatformSeed extends Seeder
      * 【幂等：不再写死主键】原实现用 `'id' => $index + 1` 强制指定主键 1..20，
      * 而迁移链已占用 id 1..19，于是重复执行 / 在已迁移的库上执行必然报
      * `Duplicate entry '1' for key 'permissions.PRIMARY'` —— 这是**主键**冲突，不是 slug 冲突。
-     * 现改为逐条 INSERT ... WHERE NOT EXISTS(slug)，主键交给 AUTO_INCREMENT；
+     * 现改为逐条 INSERT ... WHERE NOT EXISTS(slug)；
      * 判重键用 slug 是因为 permissions.slug 上有唯一索引（UNI），它才是权限的业务标识。
+     * R50 起主键改为「优先钉 1001..1023，占用了才退回 AUTO_INCREMENT」，理由见类注释 R50 第 1 点。
      */
     protected function createPermissions(): void
     {
@@ -315,30 +392,54 @@ class CorePlatformSeed extends Seeder
 
         $created = 0;
         foreach ($this->permissionDefinitions() as $permission) {
-            // 逐条 INSERT ... WHERE NOT EXISTS(slug)：已存在则插 0 行，天然幂等。
-            // 同样必须带 FROM DUAL —— MySQL 对「没有 FROM 的 SELECT」可能把 WHERE 优化掉。
+            // 【R50 第 1 步：按 slug 判存在，已存在就整行不动】
+            // 保留历史 id / name / description，绝不把人工维护过的权限改号或覆盖。
+            if ($this->permissionIdBySlug($permission['slug']) !== null) {
+                continue;
+            }
+
             // description 沿用原实现的值（等于 name），保持与历史数据一致。
             //
             // 【R49：改用参数绑定，不再用 sprintf 拼字面量】
             // 这些值全部来自本文件内的代码常量，**本无注入面**；改参数化的目的不是修安全漏洞，
             // 而是消除「值里含半角单引号就会破 SQL / 被静默截断」这类脆弱性（健壮性改进）。
             // 例：name 若写成 'View O\'Brien Forms'，旧写法会拼出语法错误的 SQL，新写法原样入库。
+            $values = [
+                $permission['name'],
+                $permission['slug'],
+                $permission['resource'],
+                $permission['action'],
+                $permission['name'],
+                $now,
+                $now,
+                $permission['slug'],
+            ];
+
+            // 【R50 第 2 步：能钉 id 就钉 id，钉不上就退回自增】
+            // 钉 id 的理由见类注释 R50 第 1 点（躲开其它测试按 id 区间做的清理）。
+            // 仍必须带 WHERE NOT EXISTS(slug) 与 FROM DUAL：
+            //   - NOT EXISTS 保留原有的「并发/重复执行插 0 行」幂等性；
+            //   - FROM DUAL 是因为 MySQL 对「没有 FROM 的 SELECT」可能把 WHERE 优化掉。
+            if ($this->isPermissionIdAvailable($permission['id'])) {
+                $created += $this->execute(
+                    'INSERT INTO `permissions`
+                        (`id`, `name`, `slug`, `resource`, `action`, `description`, `created_at`, `updated_at`)
+                     SELECT ?, ?, ?, ?, ?, ?, ?, ?
+                     FROM DUAL
+                     WHERE NOT EXISTS (SELECT 1 FROM `permissions` WHERE `slug` = ?)',
+                    array_merge([$permission['id']], $values)
+                );
+
+                continue;
+            }
+
             $created += $this->execute(
                 'INSERT INTO `permissions`
                     (`name`, `slug`, `resource`, `action`, `description`, `created_at`, `updated_at`)
                  SELECT ?, ?, ?, ?, ?, ?, ?
                  FROM DUAL
                  WHERE NOT EXISTS (SELECT 1 FROM `permissions` WHERE `slug` = ?)',
-                [
-                    $permission['name'],
-                    $permission['slug'],
-                    $permission['resource'],
-                    $permission['action'],
-                    $permission['name'],
-                    $now,
-                    $now,
-                    $permission['slug'],
-                ]
+                $values
             );
         }
 
@@ -346,44 +447,115 @@ class CorePlatformSeed extends Seeder
     }
 
     /**
+     * 按 slug 查权限 id | Resolve a permission id by slug
+     *
+     * @param string $slug 权限 slug（内部格式 resource.action）
+     * @return int|null 已存在时返回其 id，不存在返回 null
+     */
+    private function permissionIdBySlug(string $slug): ?int
+    {
+        $row = $this->fetchOne('SELECT `id` FROM `permissions` WHERE `slug` = ? LIMIT 1', [$slug]);
+
+        return $row === null ? null : (int) $row['id'];
+    }
+
+    /**
+     * 判断建议 id 是否可用 | Check whether the suggested id is free
+     *
+     * 「不可用」只代表不能钉 id，不代表要跳过这条权限 —— 调用方会退回 AUTO_INCREMENT。
+     * 典型场景：老库里正好有别的行占着 1001。
+     *
+     * @param int $id 建议主键
+     */
+    private function isPermissionIdAvailable(int $id): bool
+    {
+        return $this->fetchOne('SELECT `id` FROM `permissions` WHERE `id` = ? LIMIT 1', [$id]) === null;
+    }
+
+    /**
+     * 查询单行（带参数绑定）| Fetch a single row with bound parameters
+     *
+     * 【为什么不用 $this->fetchRow()】
+     * Phinx 的 AbstractSeed::fetchRow(string $sql) **不接受参数绑定**，
+     * 只能把值拼进 SQL —— 正是 R49 要去掉的做法。这里统一走 query() + PDO 预处理。
+     *
+     * @param string $sql    带 ? 占位符的 SQL
+     * @param array<int, mixed> $params 绑定参数
+     * @return array<string, mixed>|null 无结果时返回 null
+     */
+    private function fetchOne(string $sql, array $params = []): ?array
+    {
+        $statement = $this->query($sql, $params);
+
+        // query() 正常返回 PDOStatement（已实测）；接口签名允许返回 false，
+        // 这里显式挡一下，避免 "fetch() on false" 变成看不懂的 \Error。
+        if (!($statement instanceof PDOStatement)) {
+            throw new RuntimeException('权限查询失败：permissions 表查询没有返回结果集。');
+        }
+
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+        return $row === false ? null : $row;
+    }
+
+    /**
      * 业务权限定义 | Business permission definitions
      *
      * 单独抽成方法，是为了让「创建」与「打印条数」两处共用同一份清单，避免两边条数对不上。
      *
-     * @return array<int, array{name: string, slug: string, resource: string, action: string}>
+     * 【R50：每条都带 id】
+     *   id 取 1001..1023 这个**保留区间**，理由见类注释 R50 第 1 点：
+     *   低于工作流夹具 6000-6999 与各测试 7xxx/8xxx/9xxx/10xxx 的清理阈值。
+     *   新增条目请继续往后排，不要把区间打散成孤立数字 —— 连续区间才好一眼看出「这是种子段」。
+     *
+     * @return array<int, array{id: int, name: string, slug: string, resource: string, action: string}>
      */
     private function permissionDefinitions(): array
     {
         return [
             // Form Designer permissions | 表单设计器权限
-            ['name' => 'View Forms', 'slug' => 'forms.view', 'resource' => 'forms', 'action' => 'view'],
-            ['name' => 'Create Forms', 'slug' => 'forms.create', 'resource' => 'forms', 'action' => 'create'],
-            ['name' => 'Update Forms', 'slug' => 'forms.update', 'resource' => 'forms', 'action' => 'update'],
-            ['name' => 'Delete Forms', 'slug' => 'forms.delete', 'resource' => 'forms', 'action' => 'delete'],
+            ['id' => 1001, 'name' => 'View Forms', 'slug' => 'forms.view', 'resource' => 'forms', 'action' => 'view'],
+            ['id' => 1002, 'name' => 'Create Forms', 'slug' => 'forms.create', 'resource' => 'forms', 'action' => 'create'],
+            ['id' => 1003, 'name' => 'Update Forms', 'slug' => 'forms.update', 'resource' => 'forms', 'action' => 'update'],
+            ['id' => 1004, 'name' => 'Delete Forms', 'slug' => 'forms.delete', 'resource' => 'forms', 'action' => 'delete'],
 
             // Form Data permissions | 表单数据权限
-            ['name' => 'View Form Data', 'slug' => 'form_data.view', 'resource' => 'form_data', 'action' => 'view'],
-            ['name' => 'Create Form Data', 'slug' => 'form_data.create', 'resource' => 'form_data', 'action' => 'create'],
-            ['name' => 'Update Form Data', 'slug' => 'form_data.update', 'resource' => 'form_data', 'action' => 'update'],
-            ['name' => 'Delete Form Data', 'slug' => 'form_data.delete', 'resource' => 'form_data', 'action' => 'delete'],
+            ['id' => 1005, 'name' => 'View Form Data', 'slug' => 'form_data.view', 'resource' => 'form_data', 'action' => 'view'],
+            ['id' => 1006, 'name' => 'Create Form Data', 'slug' => 'form_data.create', 'resource' => 'form_data', 'action' => 'create'],
+            ['id' => 1007, 'name' => 'Update Form Data', 'slug' => 'form_data.update', 'resource' => 'form_data', 'action' => 'update'],
+            ['id' => 1008, 'name' => 'Delete Form Data', 'slug' => 'form_data.delete', 'resource' => 'form_data', 'action' => 'delete'],
 
             // Collection permissions | 集合权限
-            ['name' => 'View Collections', 'slug' => 'collections.view', 'resource' => 'collections', 'action' => 'view'],
-            ['name' => 'Create Collections', 'slug' => 'collections.create', 'resource' => 'collections', 'action' => 'create'],
-            ['name' => 'Update Collections', 'slug' => 'collections.update', 'resource' => 'collections', 'action' => 'update'],
-            ['name' => 'Delete Collections', 'slug' => 'collections.delete', 'resource' => 'collections', 'action' => 'delete'],
+            ['id' => 1009, 'name' => 'View Collections', 'slug' => 'collections.view', 'resource' => 'collections', 'action' => 'view'],
+            ['id' => 1010, 'name' => 'Create Collections', 'slug' => 'collections.create', 'resource' => 'collections', 'action' => 'create'],
+            ['id' => 1011, 'name' => 'Update Collections', 'slug' => 'collections.update', 'resource' => 'collections', 'action' => 'update'],
+            ['id' => 1012, 'name' => 'Delete Collections', 'slug' => 'collections.delete', 'resource' => 'collections', 'action' => 'delete'],
 
             // User management permissions | 用户管理权限
-            ['name' => 'View Users', 'slug' => 'users.view', 'resource' => 'users', 'action' => 'view'],
-            ['name' => 'Create Users', 'slug' => 'users.create', 'resource' => 'users', 'action' => 'create'],
-            ['name' => 'Update Users', 'slug' => 'users.update', 'resource' => 'users', 'action' => 'update'],
-            ['name' => 'Delete Users', 'slug' => 'users.delete', 'resource' => 'users', 'action' => 'delete'],
+            ['id' => 1013, 'name' => 'View Users', 'slug' => 'users.view', 'resource' => 'users', 'action' => 'view'],
+            ['id' => 1014, 'name' => 'Create Users', 'slug' => 'users.create', 'resource' => 'users', 'action' => 'create'],
+            ['id' => 1015, 'name' => 'Update Users', 'slug' => 'users.update', 'resource' => 'users', 'action' => 'update'],
+            ['id' => 1016, 'name' => 'Delete Users', 'slug' => 'users.delete', 'resource' => 'users', 'action' => 'delete'],
 
             // Role management permissions | 角色管理权限
-            ['name' => 'View Roles', 'slug' => 'roles.view', 'resource' => 'roles', 'action' => 'view'],
-            ['name' => 'Create Roles', 'slug' => 'roles.create', 'resource' => 'roles', 'action' => 'create'],
-            ['name' => 'Update Roles', 'slug' => 'roles.update', 'resource' => 'roles', 'action' => 'update'],
-            ['name' => 'Delete Roles', 'slug' => 'roles.delete', 'resource' => 'roles', 'action' => 'delete'],
+            ['id' => 1017, 'name' => 'View Roles', 'slug' => 'roles.view', 'resource' => 'roles', 'action' => 'view'],
+            ['id' => 1018, 'name' => 'Create Roles', 'slug' => 'roles.create', 'resource' => 'roles', 'action' => 'create'],
+            ['id' => 1019, 'name' => 'Update Roles', 'slug' => 'roles.update', 'resource' => 'roles', 'action' => 'update'],
+            ['id' => 1020, 'name' => 'Delete Roles', 'slug' => 'roles.delete', 'resource' => 'roles', 'action' => 'delete'],
+
+            // Lowcode API permissions | 低代码接口权限（R50 新增）
+            //
+            // 【不是「重复的 collections.*」—— 它们守的是另一层】
+            // route/lowcode.php 里 21 处 Permission 中间件写的是 lowcode.read / lowcode.write /
+            // lowcode.delete（内部 slug，点号），覆盖集合、字段、关系、表单、表单数据全部低代码路由；
+            // 而 collections.* / forms.* / form_data.* 目前没有任何路由在用（属前端/后端权限码约定）。
+            // 缺这三条的实际后果：**所有低代码接口对任何用户恒 403**（admin 也一样），
+            // 依赖 HTTP 链路的低代码用例因此整片失败。
+            // 注意 slug 必须用**点号**：`:read` 形式是历史脏数据，路由层规范见
+            // docs/technical-specs/api/route-reference.md 与 security-guidelines.md（内部 slug = resource.action）。
+            ['id' => 1021, 'name' => 'Read Lowcode Resources', 'slug' => 'lowcode.read', 'resource' => 'lowcode', 'action' => 'read'],
+            ['id' => 1022, 'name' => 'Write Lowcode Resources', 'slug' => 'lowcode.write', 'resource' => 'lowcode', 'action' => 'write'],
+            ['id' => 1023, 'name' => 'Delete Lowcode Resources', 'slug' => 'lowcode.delete', 'resource' => 'lowcode', 'action' => 'delete'],
         ];
     }
 

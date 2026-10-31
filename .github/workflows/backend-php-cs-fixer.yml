@@ -189,6 +189,21 @@ jobs:
       - name: Run database migrations
         run: php think migrate:run
 
+      # 迁移只建 schema 与 19 条系统权限，**不建**角色 / 系统用户 / 业务权限（R50）。
+      # 冷启动后若直接跑测试，状态是 permissions=19 / roles=0 / users=0 / sites=0，
+      # 而 tests/Helpers/AuthHelper 硬编码了 userId=1（admin），于是所有「以 admin 身份
+      # 访问受保护接口」的用例都以「缺种子数据」失败（实测 554 用例里 20+ 条）。
+      # 这些是**数据**不是 schema，按「数据归 seeder、schema 归迁移」的分工放在 seeder 里；
+      # 这里用 -s 只跑测试专用 seeder：
+      #   1. 创建 id=1 的系统用户，口令字段是随机不可用哈希（测试只校验 JWT，不需要口令），
+      #      因此本步骤**不需要** ADMIN_INIT_PASSWORD 之类的口令环境变量；
+      #   2. 创建 roles 1/2、业务权限 23 条（显式 id 1001..1023）、角色授权、默认站点；
+      #   3. 幂等：重复执行插 0 行，不覆盖已有数据。
+      # 为什么不用 `php think seed:run`（不带 -s）：那会连 CorePlatformSeed 一起跑，
+      # 而它按设计要求显式提供 ADMIN_INIT_PASSWORD，缺失即失败（R43 的口令策略，不该为 CI 放宽）。
+      - name: Seed test fixtures
+        run: php think seed:run -s TestPlatformSeed
+
       # Unit 与 Feature 拆成两个 step（而不是 --testsuite=Unit 再跟 Feature）：
       # app/command/TestCommand.php:184 的 --testsuite 是单值选项，不支持重复传参，
       # 拆开还能让失败定位到具体是哪个套件。

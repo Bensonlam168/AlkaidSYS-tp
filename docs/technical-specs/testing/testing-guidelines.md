@@ -26,6 +26,44 @@ This document defines mandatory testing practices for the AlkaidSYS project. It 
 - Test cases **SHOULD** reset database state between tests using transactions or truncation helpers.
 - When a migration introduces destructive changes, tests **MUST** cover both pre- and post-migration data shapes where relevant.
 
+### 4.1 Test database bootstrap: `migrate:run` is NOT enough (R50)
+
+Cold start has **two** steps. `migrate:run` only creates schema plus the 19 system permissions
+(`tenant.*`, `role.*`, `user.*`, `dept.*`, `menu.*`, `casbin.manage`); it deliberately creates
+**no roles, no users and no business permissions**. Tests, however, hard-code
+`userId: 1, tenantId: 1, siteId: 0` (`tests/Helpers/AuthHelper::generateTestToken`), so a
+schema-only database makes every "admin accesses a protected endpoint" test fail as
+*missing seed data* — not as a real regression.
+
+```bash
+# 1) schema (creates alkaid_sys_test)
+docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think migrate:run'
+
+# 2) seed: roles 1/2, 23 business permissions (explicit ids 1001..1023),
+#    role-permission bindings, default site, and the id=1 system user.
+docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think seed:run -s TestPlatformSeed'
+```
+
+Division of responsibility (do not move data into migrations): **schema belongs to migrations,
+seed data belongs to seeders**. `TestPlatformSeed` is the test-only seeder — it is a subclass of
+`CorePlatformSeed` whose single difference is that the `id = 1` system user gets a *random,
+unusable* password hash, because tests authenticate with a JWT and never need a password.
+It therefore requires **no** `ADMIN_INIT_PASSWORD` (unlike `CorePlatformSeed`, whose fail-closed
+policy for real environments stays intact).
+
+Both steps are idempotent: running them twice inserts no new rows and does not overwrite data.
+
+**Aged local test databases**: the explicit permission ids matter. When `permissions` already
+contains business rows created by an older seeder (ids in the 99xxxx range, inherited from
+AUTO_INCREMENT), several unit tests legitimately clean up their own fixtures with
+`DELETE FROM permissions WHERE id >= 7000` / `>= 8000` / `>= 9000` and will sweep those rows away
+mid-run. Rebuild the test database once so the seed lands on the reserved ids:
+
+```bash
+docker exec alkaid-mysql mysql -uroot -proot -e 'DROP DATABASE IF EXISTS alkaid_sys_test; CREATE DATABASE alkaid_sys_test CHARACTER SET utf8mb4;'
+# then repeat steps 1) and 2) above
+```
+
 ## 5. Security and Permissions Testing
 
 - All secured endpoints **MUST** have tests that cover:

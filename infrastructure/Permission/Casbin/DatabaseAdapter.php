@@ -296,6 +296,16 @@ class DatabaseAdapter implements Adapter
             $roleAssignmentsQuery->where('u.tenant_id', $tenantFilter);
         }
 
+        // 【确定性加载顺序（R50）】必须显式 ORDER BY，不能依赖「数据库碰巧按索引顺序返回」。
+        // 本查询没有 ORDER BY 时，返回顺序由优化器选的执行计划决定 —— 表里的数据量一变
+        // （例如种子数据补齐后 role_permissions 从 0 行变成 45 行），计划就可能从
+        // 「按 user_roles 主键扫描」换成「按 users 索引驱动」，同一批策略的先后顺序随之改变。
+        // 实测：`DatabaseAdapterTest::testLoadPermissionAssignments` 的
+        // `$testPolicies[0]` 断言就是这样从绿翻红的 —— 断言本身依赖顺序，但顺序从未被保证。
+        // 本仓的 casbin-model.conf 没有优先级（policy_effect 只用 allow-override），
+        // 顺序对 enforce 结果无语义影响，因此显式排序是纯粹的稳定性改进。
+        $roleAssignmentsQuery->order(['ur.user_id' => 'asc', 'ur.role_id' => 'asc']);
+
         $roleAssignments = $roleAssignmentsQuery
             ->select()
             ->toArray();
@@ -375,6 +385,12 @@ class DatabaseAdapter implements Adapter
         if ($tenantFilter > 0) {
             $permissionAssignmentsQuery->where('r.tenant_id', $tenantFilter);
         }
+
+        // 【确定性加载顺序（R50）】理由同 loadRoleAssignments()：
+        // 无 ORDER BY 时行序随执行计划漂移。这里按 (role_id, permission_id) 升序固定下来，
+        // 使「同一角色的权限」始终按权限 id 排列 —— 与 role_permissions 复合主键
+        // (role_id, permission_id) 的自然顺序一致，也便于日志比对。
+        $permissionAssignmentsQuery->order(['rp.role_id' => 'asc', 'rp.permission_id' => 'asc']);
 
         $permissionAssignments = $permissionAssignmentsQuery
             ->select()

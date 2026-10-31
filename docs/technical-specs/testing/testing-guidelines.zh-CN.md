@@ -26,6 +26,40 @@
 - 测试用例 **应当** 通过事务回滚或截断工具在用例之间重置数据库状态。
 - 引入破坏性变更的迁移 **必须** 在测试中覆盖变更前后关键数据形态。
 
+### 4.1 测试库初始化：只跑 `migrate:run` 不够（R50）
+
+冷启动是**两步**。`migrate:run` 只建表结构与 19 条系统权限
+（`tenant.*`、`role.*`、`user.*`、`dept.*`、`menu.*`、`casbin.manage`），
+**刻意不建**任何角色、用户与业务权限。而测试硬编码了 `userId: 1, tenantId: 1, siteId: 0`
+（`tests/Helpers/AuthHelper::generateTestToken`），于是「只有表结构」的库会让所有
+「admin 访问受保护接口」的用例以**缺种子数据**的形式失败，看起来像业务代码坏了。
+
+```bash
+# 1) 建表（同时创建 alkaid_sys_test）
+docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think migrate:run'
+
+# 2) 种子：角色 1/2、23 条业务权限（显式 id 1001..1023）、角色授权、
+#    默认站点，以及 id=1 的系统用户
+docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think seed:run -s TestPlatformSeed'
+```
+
+职责划分（不要把数据塞回迁移链）：**表结构归迁移、种子数据归 seeder**。
+`TestPlatformSeed` 是测试专用 seeder，继承 `CorePlatformSeed`，唯一差别是
+`id = 1` 的系统用户使用**随机且不可用**的口令哈希 —— 测试通过 JWT 认证，不需要任何口令，
+因此它**不需要** `ADMIN_INIT_PASSWORD`（`CorePlatformSeed` 对真实环境的 fail-closed 口令策略保持不变）。
+
+两步都是幂等的：重复执行不产生新行、不覆盖已有数据。
+
+**历史遗留的本地测试库**：显式权限 id 是有意义的。若 `permissions` 里已存在由旧 seeder
+创建的业务权限（id 落在 99xxxx，继承自 AUTO_INCREMENT），若干单元测试会按自己的清理口径
+（`DELETE FROM permissions WHERE id >= 7000` / `>= 8000` / `>= 9000`）在**同一轮**运行中
+把这些行删掉。请先重建一次测试库，让种子落在保留 id 段：
+
+```bash
+docker exec alkaid-mysql mysql -uroot -proot -e 'DROP DATABASE IF EXISTS alkaid_sys_test; CREATE DATABASE alkaid_sys_test CHARACTER SET utf8mb4;'
+# 然后重新执行上面的 1) 与 2)
+```
+
 ## 5. 安全与权限测试
 
 - 所有受保护接口 **必须** 至少包含以下场景的测试：
