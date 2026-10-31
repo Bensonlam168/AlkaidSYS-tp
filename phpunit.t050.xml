@@ -39,7 +39,7 @@
         -->
         <env name="DB_TYPE" value="mysql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
-        <env name="DB_NAME" value="alkaid_sys"/>
+        <env name="DB_NAME" value="alkaid_sys_test"/>
         <env name="DB_USER" value="root"/>
         <env name="DB_PASS" value="root"/>
         <env name="DB_PORT" value="3306"/>

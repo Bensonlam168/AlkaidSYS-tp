@@ -46,7 +46,14 @@
         -->
         <env name="DB_TYPE" value="mysql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
-        <env name="DB_NAME" value="alkaid_sys"/>
+        <!--
+            ER-15：DB_NAME 必须指向**测试库**（此前后台测试直接写开发库 alkaid_sys）。
+            测试库 alkaid_sys_test 由 `.env.test` 冷启动建立：
+                PHP_ENV_NAME=test php think migrate:run
+            tests/ThinkPHPTestCase.php 还有一道 fail-closed 断言：解析出的库名不含 `_test`
+            就抛异常终止（不会再「打个警告继续跑」）。若这里被改回 alkaid_sys，测试会立即失败。
+        -->
+        <env name="DB_NAME" value="alkaid_sys_test"/>
         <env name="DB_USER" value="root"/>
         <env name="DB_PASS" value="root"/>
         <env name="DB_PORT" value="3306"/>
