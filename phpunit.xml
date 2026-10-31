@@ -30,6 +30,9 @@
         <env name="DB_PORT" value="3306"/>
         <!-- Allow runtime DDL in tests for SchemaBuilder -->
         <env name="ALLOW_RUNTIME_DDL" value="true"/>
+        <!-- R20：让测试里的 Cache::clear() 只清 runtime/cache/test/ 子树，而不是整个 runtime/cache -->
+        <!-- 生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变 -->
+        <env name="CACHE_FILE_PREFIX" value="test"/>
         <!-- Enable RateLimit middleware in tests | 在测试中启用限流中间件 -->
         <env name="RATELIMIT_ENABLED" value="true"/>
         <!-- Set high rate limit for testing to avoid interference | 设置较高的限流阈值避免干扰测试 -->

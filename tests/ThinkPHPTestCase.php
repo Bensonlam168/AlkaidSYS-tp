@@ -88,6 +88,13 @@ abstract class ThinkPHPTestCase extends BaseTestCase
                     'file' => [
                         'type' => 'File',
                         'path' => $rootPath . '/runtime/cache/',
+                        // R20：测试基类覆盖 cache 配置时必须同样带上前缀，
+                        // 否则 Cache::clear()（File 驱动实现为 rmdir(path . prefix)）会删掉整个
+                        // runtime/cache 目录，误删并行跑测试的其他进程写入的缓存（Casbin 系列伪失败）。
+                        // 该驱动实例通常在 App::initialize() 之前就被创建并被容器缓存，之后不会重建，
+                        // 因此只在 config/cache.php 里加 prefix 对测试路径无效，必须在这里一并声明。
+                        // 用 env() 而非硬编码 'test'：生产/开发不设该变量时前缀为空，行为完全不变。
+                        'prefix' => env('CACHE_FILE_PREFIX', ''),
                     ],
                     'redis' => [
                         'type' => 'Redis',
