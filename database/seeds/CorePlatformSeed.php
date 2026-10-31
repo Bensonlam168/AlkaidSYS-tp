@@ -27,6 +27,18 @@ use think\migration\Seeder;
  *      若站点插入跟在租户段的「已存在就 return」之后，全新库的 sites 会永远停在 0。
  *   3. 管理员初始口令不再硬编码（原先是 password_hash('admin123')），改为读取环境变量
  *      ADMIN_INIT_PASSWORD；缺失或为空时**明确报错并终止**，绝不静默创建弱口令。
+ *
+ * 【R48：普通用户的 3 条只读授权改为「确保 → 断言 → 按 id 插入」】
+ *   旧写法是一条 `INSERT ... SELECT ... WHERE p.slug IN ('forms.view', ...)`，有两个静默失败模式：
+ *     ① createPermissions() 没执行/提前 return → 匹配 0 行，不报错，role 2 空授权；
+ *     ② 某个 slug 被改名或打错 → 同样匹配 0 行，不报错。
+ *   现改为在 assignPermissionsToRoles() 内先确保权限存在，再用 slug 查出真实 id 并**断言齐全**，
+ *   最后按 id 参数化插入。缺任何一个 slug 都会抛 RuntimeException 让 seed:run 以非 0 退出。
+ *
+ * 【R49：createPermissions() 改用参数绑定】
+ *   权限的 name/slug/resource/action/description 全部来自本文件内的代码常量，**本无注入面**；
+ *   改成参数绑定不是为了修安全漏洞，而是消除「值里出现半角单引号就会破 SQL / 被静默截断」
+ *   这类脆弱性（属于健壮性改进）。
  */
 class CorePlatformSeed extends Seeder
 {
@@ -36,6 +48,20 @@ class CorePlatformSeed extends Seeder
      * 刻意不在代码里给出任何默认值：默认口令一旦落进仓库，就等于全网公开的后门。
      */
     private const ADMIN_PASSWORD_ENV = 'ADMIN_INIT_PASSWORD';
+
+    /**
+     * 普通用户（role_id = 2）默认可读的权限 slug
+     *
+     * 这三个 slug 由本 seeder 的 ensurePermissions() 负责创建（不是迁移链创建的），
+     * 是「普通用户只能看、不能改」这条业务规则在权限层的表达。
+     * 一旦它们不存在，role_permissions 里 role 2 的行数就会不声不响地变成 0，
+     * 因此 assignPermissionsToRoles() 会用本常量做**齐全性断言**（见 R48）。
+     */
+    private const USER_READONLY_PERMISSION_SLUGS = [
+        'forms.view',
+        'form_data.view',
+        'collections.view',
+    ];
 
     /**
      * Run seed | 执行填充
@@ -52,6 +78,14 @@ class CorePlatformSeed extends Seeder
         //    创建迁移链**没有覆盖**的 20 条业务权限（forms.* / form_data.* / collections.* /
         //    users.* / roles.*）。它们与迁移创建的 user.* / role.*（单数）等系统权限是
         //    两套不同的 slug，**不是重复数据**，详见类注释第 1 点。
+        //
+        //    【为什么这一步不再是「唯一」创建权限的地方（R48）】
+        //    assignPermissionsToRoles() 开头也会调用一次 ensurePermissions()，
+        //    使授权逻辑**不依赖 run() 的步骤顺序**（把 4 调到 3 之前也仍然成立）。
+        //    两处调用都是幂等的（按 slug 判存在的 INSERT ... WHERE NOT EXISTS），
+        //    重复执行的代价只是 20 条「插 0 行」的 SQL，没有副作用。
+        //    这里保留独立一步，是因为它负责把「本次新增 N 条」这件事打印出来；
+        //    assign 内部那次是**静默**确保，避免同一行输出刷两次。
         $this->createPermissions();
 
         // 4. Assign permissions to roles | 分配权限给角色
@@ -254,9 +288,73 @@ class CorePlatformSeed extends Seeder
      */
     protected function createPermissions(): void
     {
+        // 真正的创建逻辑在 ensurePermissions() 里，此处只负责把它「本次新增 N 条」的结果打印出来。
+        // 拆成两个方法的原因见 run() 步骤 3 的注释：assign 内部需要静默地再确保一次，
+        // 若直接调用本方法，同一条「权限：确保 …（本次新增 0 条）」会被打印两遍，看着像 bug。
+        $permissions = $this->permissionDefinitions();
+        $created     = $this->ensurePermissions();
+
+        $this->writeLine(sprintf(
+            '  权限：确保 %d 条业务权限存在（本次新增 %d 条）',
+            count($permissions),
+            $created
+        ));
+    }
+
+    /**
+     * 确保业务权限存在 | Ensure business permissions exist（幂等，静默）
+     *
+     * 之所以从 createPermissions() 里拆出来，是为了让 assignPermissionsToRoles()
+     * 能在**不产生额外输出**的前提下复用它 —— 这样授权逻辑不再依赖 run() 的步骤顺序（R48）。
+     *
+     * @return int 本次真正插入的行数（重复执行时为 0）
+     */
+    private function ensurePermissions(): int
+    {
         $now = date('Y-m-d H:i:s');
 
-        $permissions = [
+        $created = 0;
+        foreach ($this->permissionDefinitions() as $permission) {
+            // 逐条 INSERT ... WHERE NOT EXISTS(slug)：已存在则插 0 行，天然幂等。
+            // 同样必须带 FROM DUAL —— MySQL 对「没有 FROM 的 SELECT」可能把 WHERE 优化掉。
+            // description 沿用原实现的值（等于 name），保持与历史数据一致。
+            //
+            // 【R49：改用参数绑定，不再用 sprintf 拼字面量】
+            // 这些值全部来自本文件内的代码常量，**本无注入面**；改参数化的目的不是修安全漏洞，
+            // 而是消除「值里含半角单引号就会破 SQL / 被静默截断」这类脆弱性（健壮性改进）。
+            // 例：name 若写成 'View O\'Brien Forms'，旧写法会拼出语法错误的 SQL，新写法原样入库。
+            $created += $this->execute(
+                "INSERT INTO `permissions`
+                    (`name`, `slug`, `resource`, `action`, `description`, `created_at`, `updated_at`)
+                 SELECT ?, ?, ?, ?, ?, ?, ?
+                 FROM DUAL
+                 WHERE NOT EXISTS (SELECT 1 FROM `permissions` WHERE `slug` = ?)",
+                [
+                    $permission['name'],
+                    $permission['slug'],
+                    $permission['resource'],
+                    $permission['action'],
+                    $permission['name'],
+                    $now,
+                    $now,
+                    $permission['slug'],
+                ]
+            );
+        }
+
+        return $created;
+    }
+
+    /**
+     * 业务权限定义 | Business permission definitions
+     *
+     * 单独抽成方法，是为了让「创建」与「打印条数」两处共用同一份清单，避免两边条数对不上。
+     *
+     * @return array<int, array{name: string, slug: string, resource: string, action: string}>
+     */
+    private function permissionDefinitions(): array
+    {
+        return [
             // Form Designer permissions | 表单设计器权限
             ['name' => 'View Forms', 'slug' => 'forms.view', 'resource' => 'forms', 'action' => 'view'],
             ['name' => 'Create Forms', 'slug' => 'forms.create', 'resource' => 'forms', 'action' => 'create'],
@@ -287,41 +385,28 @@ class CorePlatformSeed extends Seeder
             ['name' => 'Update Roles', 'slug' => 'roles.update', 'resource' => 'roles', 'action' => 'update'],
             ['name' => 'Delete Roles', 'slug' => 'roles.delete', 'resource' => 'roles', 'action' => 'delete'],
         ];
-
-        $created = 0;
-        foreach ($permissions as $permission) {
-            // 逐条 INSERT ... WHERE NOT EXISTS(slug)：已存在则插 0 行，天然幂等。
-            // 同样必须带 FROM DUAL —— MySQL 对「没有 FROM 的 SELECT」可能把 WHERE 优化掉。
-            // description 沿用原实现的值（等于 name），保持与历史数据一致。
-            $created += (int) $this->execute(sprintf(
-                "INSERT INTO `permissions`
-                    (`name`, `slug`, `resource`, `action`, `description`, `created_at`, `updated_at`)
-                 SELECT '%s', '%s', '%s', '%s', '%s', '%s', '%s'
-                 FROM DUAL
-                 WHERE NOT EXISTS (SELECT 1 FROM `permissions` WHERE `slug` = '%s')",
-                $permission['name'],
-                $permission['slug'],
-                $permission['resource'],
-                $permission['action'],
-                $permission['name'],
-                $now,
-                $now,
-                $permission['slug']
-            ));
-        }
-
-        $this->writeLine(sprintf(
-            '  权限：确保 %d 条业务权限存在（本次新增 %d 条）',
-            count($permissions),
-            $created
-        ));
     }
 
     /**
      * Assign permissions to roles | 分配权限给角色
+     *
+     * 【R48：本方法整体分三步 —— 确保 → 断言 → 按 id 插入，每一步各防一类静默失败】
+     *   第 0 步「确保」   ：在方法开头静默地跑一次 ensurePermissions()，防的是「调用方忘了先建权限」
+     *                      （即 run() 的步骤顺序被人调换），让授权逻辑自给自足。
+     *   第 1 步「断言」   ：按 slug 查出真实 id 并核对齐全性，缺任何一个就抛 RuntimeException。
+     *                      防的是「slug 被改名/打错 → 匹配 0 行 → 普通用户静默变成无权限」。
+     *   第 2 步「按 id 插入」：用断言得到的 id 参数化插入，防的是「拿字符串拼 slug 进 SQL」以及
+     *                      「WHERE slug IN (...) 与表里实际 slug 脱钩」这两类问题。
      */
     protected function assignPermissionsToRoles(): void
     {
+        // ---------- 第 0 步：确保（R48）----------
+        // 直接复用幂等的 ensurePermissions()，而不是依赖 run() 里先调用 createPermissions()。
+        // 正常情况下（run() 按 3 → 4 顺序执行）这里是 20 条「插 0 行」的 no-op；
+        // 若有人在 run() 里把本方法调到 createPermissions() 之前，这一步会把权限补齐，
+        // 结果与正常顺序完全一致 —— 这正是「顺序无关」的含义。
+        $this->ensurePermissions();
+
         // Admin gets all permissions | 管理员获得所有权限
         //
         // 【为什么不能硬编码权限 ID（R43 修复）】
@@ -346,20 +431,96 @@ class CorePlatformSeed extends Seeder
         ");
 
         // Regular user gets view permissions only | 普通用户只有查看权限
-        // 同样不再硬编码 ID：原写法写死 1 / 5 / 9，与「谁先插入权限」的物理顺序强耦合；
-        // 而 slug 才是 permissions 表的唯一键（idx_slug），按 slug 取 ID 是稳定契约。
-        // 这三个 slug 由本 seeder 的 createPermissions() 负责创建（不是迁移），
-        // 因此本语句必须在 createPermissions() 之后执行（见 run() 的步骤 3 → 4 顺序）。
-        $this->execute("
-            INSERT INTO role_permissions (role_id, permission_id, created_at)
-            SELECT 2, p.id, NOW()
-            FROM permissions p
-            WHERE p.slug IN ('forms.view', 'form_data.view', 'collections.view')
-            AND NOT EXISTS (
-                SELECT 1 FROM role_permissions rp
-                WHERE rp.role_id = 2 AND rp.permission_id = p.id
-            )
-        ");
+        //
+        // 【R48 第 1 步：断言，不再「匹配不到就悄悄算完」】
+        // 旧写法是一条 `INSERT ... WHERE p.slug IN ('forms.view', ...)`：
+        // 只要 slug 有任何偏差（改名、打错、或权限压根没创建），语句就会匹配 0 行，
+        // **既不报错也不提示**，表现是「普通用户登录后所有页面都是 403」，极难定位。
+        // 现在先把 3 个 slug 的真实 id 查出来并核对齐全性，缺一个就抛异常终止 seed。
+        $readonlyPermissionIds = $this->resolvePermissionIds(self::USER_READONLY_PERMISSION_SLUGS);
+
+        // 【R48 第 2 步：按 id 参数化插入】
+        // 用上一步断言过的真实 id 逐条插入（每条只插 1 行），不再在 SQL 里重复写 slug 字面量：
+        //   - 参数化：id 通过占位符传入，语句本身不含任何用户/配置侧拼接；
+        //   - NOT EXISTS：保持幂等，重复执行不会撞 (role_id, permission_id) 复合主键；
+        //   - FROM DUAL：同 createRoles()，MySQL 对「没有 FROM 的 SELECT」可能把 WHERE 优化掉。
+        $assigned = 0;
+        foreach ($readonlyPermissionIds as $permissionId) {
+            $assigned += $this->execute(
+                "INSERT INTO `role_permissions` (`role_id`, `permission_id`, `created_at`)
+                 SELECT 2, ?, NOW()
+                 FROM DUAL
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM `role_permissions`
+                     WHERE `role_id` = 2 AND `permission_id` = ?
+                 )",
+                [$permissionId, $permissionId]
+            );
+        }
+
+        $this->writeLine(sprintf(
+            '  授权：普通用户可读权限 %d 条（本次新增 %d 条）',
+            count($readonlyPermissionIds),
+            $assigned
+        ));
+    }
+
+    /**
+     * 按 slug 解析权限 id（缺任何一个即抛异常）| Resolve permission ids by slug, fail loudly
+     *
+     * 【为什么必须抛异常而不是返回空数组】
+     * 调用方要拿这些 id 去授权。若某个 slug 缺失却只返回部分 id（或空数组），
+     * 授权语句会照常执行并「成功」—— 结果是那个角色少拿权限，且日志里一片正常。
+     * 这类「静默缺权限」比直接失败难排查得多，所以这里选择**响亮失败**。
+     *
+     * 抛 RuntimeException（属于 \Exception）而不是 \Error：
+     * think\Console::run 只捕获 \Exception，命中后会把退出码修正为 1，
+     * CI / 运维脚本才能真正感知到失败。
+     *
+     * @param array<int, string> $slugs 期望存在的权限 slug 清单
+     *
+     * @return array<int, int> 与 $slugs **同序**的权限 id 列表
+     */
+    private function resolvePermissionIds(array $slugs): array
+    {
+        // 占位符个数由清单长度决定（清单是代码内常量，不是外部输入）；
+        // 注意不能用 fetchAll()：它不接受参数绑定，只能拼字符串，正是本次要去掉的做法。
+        $placeholders = implode(', ', array_fill(0, count($slugs), '?'));
+
+        $statement = $this->query(
+            "SELECT `slug`, `id` FROM `permissions` WHERE `slug` IN ({$placeholders})",
+            array_values($slugs)
+        );
+
+        // query() 正常返回 PDOStatement（已实测）；执行失败时 PDO 会抛 PDOException，
+        // 但接口签名允许返回 false，这里显式挡一下，避免 "fetchAll() on false" 变成看不懂的 \Error。
+        if (!($statement instanceof PDOStatement)) {
+            throw new RuntimeException(sprintf(
+                '权限断言失败，种子终止：按 slug 查询 permissions 表没有得到结果集（期望清单：%s）。',
+                implode(', ', $slugs)
+            ));
+        }
+
+        $idBySlug = [];
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $idBySlug[(string) $row['slug']] = (int) $row['id'];
+        }
+
+        // array_diff 保留第一个数组的顺序，因此报错信息里的缺失清单顺序稳定、便于比对
+        $missing = array_values(array_diff($slugs, array_keys($idBySlug)));
+        if ($missing !== []) {
+            throw new RuntimeException(sprintf(
+                '权限断言失败，种子终止：以下权限 slug 在 permissions 表中不存在 —— %s。'
+                . '期望清单：%s。'
+                . '这通常意味着 ensurePermissions() 里的 slug 被改名或打错了（也可能权限被人工删除）。'
+                . '继续执行会让普通用户的只读授权静默变成 0 行，因此这里显式失败。',
+                implode(', ', $missing),
+                implode(', ', $slugs)
+            ));
+        }
+
+        // 按入参顺序返回，保证「打印条数 / 插入顺序」稳定可预期
+        return array_map(static fn (string $slug): int => $idBySlug[$slug], $slugs);
     }
 
     /**
