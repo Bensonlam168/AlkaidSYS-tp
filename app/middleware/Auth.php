@@ -23,6 +23,8 @@ use think\facade\Log;
  * - token_expired: Token has expired
  * - token_revoked: Token has been revoked
  * - decode_error: Failed to decode token payload
+ * - invalid_tenant_scope: Token payload carries non-positive user_id/tenant_id
+ *   令牌中的 user_id / tenant_id 非正数（存量或伪造 token），对外仍返回 401 + 2001
  *
  * @package app\middleware
  */
@@ -41,7 +43,7 @@ class Auth
      * Log authentication failure with detailed context | 记录认证失败及详细上下文
      *
      * @param Request $request Request instance
-     * @param string $reason Failure reason (token_missing|token_invalid|token_expired|token_revoked|decode_error)
+     * @param string $reason Failure reason (token_missing|token_invalid|token_expired|token_revoked|decode_error|invalid_tenant_scope)
      * @param array $context Additional context
      * @return void
      */
@@ -90,7 +92,16 @@ class Auth
 
         $path = '/' . ltrim($request->pathinfo(), '/');
 
-        Log::warning('Authentication failed', array_merge([
+        // M7：把 reason 写进**日志正文**（而不只是 context 数组）
+        //
+        // ThinkPHP 8 的 Channel::record() 对第二个参数只做 `{key}` 字符串插值
+        // （见 vendor/topthink/framework/src/think/log/Channel.php），
+        // 文件驱动 File::save() 最终只输出 time/type/msg 三个字段，
+        // 因此原先写在 context 里的 reason/trace_id/tenant_id 等**根本不会落盘**：
+        // 日志里只剩一句 "Authentication failed"，任何失败原因都不可见。
+        // 这里用 `{reason}` 占位符让归类结果真正出现在日志正文里，
+        // 其余 context 字段保留（便于将来换用支持结构化 context 的通道）。
+        Log::warning('Authentication failed: {reason}', array_merge([
             'reason'     => $reason,
             'trace_id'   => $traceId,
             'tenant_id'  => $tenantId,
@@ -174,6 +185,18 @@ class Auth
                 $errorMessage = $this->langService->trans('error.token_revoked');
             } elseif (strpos($exceptionMessage, 'decode') !== false || strpos($exceptionMessage, 'Decode') !== false) {
                 $reason = 'decode_error';
+            } elseif (strpos($exceptionMessage, 'INVALID_TENANT_SCOPE') !== false) {
+                // M7：租户/用户上下文非法（user_id 或 tenant_id 非正数）单独归类
+                //
+                // 这类异常来自 JwtService::validateAccessToken() 的校验侧兜底（缺陷 R19）：
+                // 覆盖「改造前签发的存量 token」与「持同一密钥的伪造 token」——它们都不经过签发侧。
+                // 原先落进兜底分支被记成 token_invalid，日志里与「令牌格式错误/签名失败」无法区分，
+                // 排查时看不出「token 合法但租户上下文为 0」这一独立故障形态。
+                //
+                // 注意：本分支只改**日志 reason**，不改对外响应——
+                // errorCode / errorMessage / HTTP 状态仍保持 ErrorCode::UNAUTHORIZED(2001) + error.token_invalid + 401。
+                // 分支顺序：该消息不包含 expired/revoked/decode，放在兜底之前即可，不会与其他分支冲突。
+                $reason = 'invalid_tenant_scope';
             }
 
             // Log authentication failure with exception details | 记录认证失败及异常详情
