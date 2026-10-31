@@ -21,27 +21,89 @@
         </testsuite>
     </testsuites>
     <php>
-        <env name="APP_ENV" value="dev"/>
+        <!--
+            ============================================================
+            A. 连接参数（DB_*）：刻意 **不加** force，必须跟随运行环境
+            ============================================================
+            PHPUnit 11 处理 <env> 的语义是（PhpHandler::handleEnvVariables）：
+                if ($force || getenv($name) === false) { putenv("{$name}={$value}"); }
+                if ($force || !isset($_ENV[$name]))    { $_ENV[$name] = $value; }
+            也就是说：**不加 force 时，已存在的 $_ENV / getenv 值胜出**。
+
+            这正是连接参数想要的行为：下面的值是「运行环境未提供时的默认值」，
+            而不是「强制值」。谁运行测试，就由谁决定连哪个库。
+
+            具体反例（实测）：容器 alkaid-backend 内 $_ENV['DB_HOST']='mysql'，而这里默认写 127.0.0.1。
+            一旦给 DB_HOST 加 force="true"：
+              - env('DB_HOST') / $_ENV['DB_HOST'] 立刻变成 127.0.0.1（实测已确认）；
+              - 而容器内 127.0.0.1:3306 是 "SQLSTATE[HY000] [2002] Connection refused"（实测已确认）；
+              - 于是任何信任 env() 的路径（config/database.php、无 .env 的干净检出、CLI 子进程）
+                都会连到不存在的库。
+            当前之所以还有一层兜底，是因为 .env 里写了 DB_HOST = mysql，ThinkPHP 加载 .env 时
+            会再覆盖一次（Env::set 无条件覆盖）。这条兜底不属于 phpunit.xml 的契约 ——
+            不要把连接参数的正确性寄托在 .env 恰好存在上。
+            结论：连接类参数永远不要加 force。
+        -->
         <env name="DB_TYPE" value="mysql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
         <env name="DB_NAME" value="alkaid_sys"/>
         <env name="DB_USER" value="root"/>
         <env name="DB_PASS" value="root"/>
         <env name="DB_PORT" value="3306"/>
-        <!-- Allow runtime DDL in tests for SchemaBuilder -->
-        <env name="ALLOW_RUNTIME_DDL" value="true"/>
-        <!-- R20：让测试里的 Cache::clear() 只清 runtime/cache/test/ 子树，而不是整个 runtime/cache -->
-        <!-- 生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变 -->
-        <env name="CACHE_FILE_PREFIX" value="test"/>
-        <!-- Enable RateLimit middleware in tests | 在测试中启用限流中间件 -->
-        <env name="RATELIMIT_ENABLED" value="true"/>
-        <!-- Set high rate limit for testing to avoid interference | 设置较高的限流阈值避免干扰测试 -->
-        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000"/>
-        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60"/>
-        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000"/>
-        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60"/>
-        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000"/>
-        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60"/>
+
+        <!--
+            ============================================================
+            B. 测试语义固定的变量：必须加 force
+            ============================================================
+            这些值与「在哪台机器上跑」无关，只与「测试断言的前提」有关。
+            若不加 force，shell 导出的同名变量会直接抢占它们（同上 PhpHandler 语义），
+            导致测试语义随环境漂移：本地通过、CI 或同事机器上随机失败。
+        -->
+
+        <!-- APP_ENV：鉴权用例的前提是「非生产环境」。
+             不加 force 时，shell 里导出 APP_ENV=production 会让 C-5 的 JWT 强密钥校验
+             （infrastructure/Auth/JwtService.php:127-130）拒掉 .env 里的 dev 占位密钥，
+             JwtService 构造即抛 RuntimeException，鉴权类用例全线 500 而不是期望的 401。
+             实测：导出 APP_ENV=production 跑 tests/Feature/AuthMiddlewareTest.php
+             → 1 error + 2 failures（期望 3 passed）。 -->
+        <env name="APP_ENV" value="dev" force="true"/>
+
+        <!-- ALLOW_RUNTIME_DDL：SchemaBuilder 相关用例需要在测试库里执行运行时 DDL。
+             闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）里。
+             实测：不加 force 且导出 ALLOW_RUNTIME_DDL=false 时，
+             tests/Unit/Schema/SchemaBuilderTest.php 的 9 个用例里 7 个报错
+             （SchemaBuilder.php:368 抛 HttpResponseException，即 DDL 被拒）。 -->
+        <env name="ALLOW_RUNTIME_DDL" value="true" force="true"/>
+
+        <!-- CACHE_FILE_PREFIX：R20 的修复前提是「测试缓存有独立前缀」。
+             File 驱动的 clear() 实现为 rmdir(path . prefix)
+             （vendor/topthink/framework/src/think/cache/driver/File.php:246-253）。
+             不加 force 时，运行环境导出任意前缀都会让作用域失效：
+             Cache::clear() 清的不再是 runtime/cache/test/，而是导出的那个目录。
+             实测（导出 CACHE_FILE_PREFIX=evil 跑 SchemaParserTest）：
+             runtime/cache/evil/ 被清空，runtime/cache/test/ 与根层哨兵完好无损 —— 作用域跑偏。
+             （若导出空前缀，按上式会退化为 rmdir('runtime/cache/') 整目录删除，
+             误删并行进程的缓存 → Casbin 系列伪失败。）
+             生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变。 -->
+        <env name="CACHE_FILE_PREFIX" value="test" force="true"/>
+
+        <!-- RATELIMIT_ENABLED：决定限流中间件是否生效（app/middleware/RateLimit.php:32）。
+             不加 force 时，运行环境导出 false 会让中间件全程 return $next($request) 直通，
+             「被限流 / 不被限流」两类断言都会失去意义（静默空转，而不是报错）。 -->
+        <env name="RATELIMIT_ENABLED" value="true" force="true"/>
+
+        <!-- RATELIMIT_SCOPE_*：限流阈值（config/ratelimit.php 的 scopes.*）必须可预期。
+             不加 force 时，同一份用例在阈值被外部调小的机器上会撞 429、在调大后又让
+             「应该被限流」的断言失效 —— 结果随机器漂移。
+             这里取较高的阈值，避免非限流用例被误伤。
+             注：tests/Feature/RateLimitMiddlewareTest.php 自身用 config() 覆盖内存配置来精确造 429，
+             所以它感知不到 env 漂移；真正会被误伤的是「没打算测限流」的其余用例。 -->
+        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
     </php>
     <coverage includeUncoveredFiles="true"/>
     <source>
