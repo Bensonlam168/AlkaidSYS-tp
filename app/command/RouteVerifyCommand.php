@@ -149,7 +149,12 @@ class RouteVerifyCommand extends Command
 
         // Match table rows | 匹配表格行
         // Format: | METHOD | `path` | Controller | Middleware |
-        preg_match_all('/\|\s*(\w+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+)\s*\|/', $content, $matches, PREG_SET_ORDER);
+        //
+        // 方法列必须允许 `*`：Route::any() 注册的路由在 getRuleList() 里 method 为 `*`
+        // （本仓库的 /v1/workflow/triggers/webhook/<key> 就是这种）。
+        // 原先用 \w+ 匹配方法列，`*` 不是 \w，导致该行永远解析不出来，
+        // 表现为「文档里明明有这条路由，verify 却一直报 missing」。
+        preg_match_all('/\|\s*([A-Za-z*]+)\s*\|\s*`([^`]+)`\s*\|\s*([^|]+)\s*\|/', $content, $matches, PREG_SET_ORDER);
 
         foreach ($matches as $match) {
             $method = strtoupper(trim($match[1]));
