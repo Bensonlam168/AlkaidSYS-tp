@@ -13,15 +13,31 @@ use Infrastructure\Plugin\PluginManager;
 class AppService extends Service
 {
     /**
-     * R37：`.env` 解析结论缓存（null 表示本次运行尚未检查）
+     * R37：`.env` 解析结论缓存（null 表示本进程尚未检查过）
      *
-     * 同一进程（一次请求 / 一条命令）只解析一次 .env，避免 boot() 被多次触发时重复读盘。
-     * 解析结论在同一进程内不会变化，缓存不会掩盖「运行中有人改了 .env」这类场景 ——
-     * 那种场景下 ThinkPHP 自己也只在启动时读一次 .env。
+     * 只在「文件签名未变」时复用；签名变了就重新检查 —— 见 $envFileSignature。
      *
      * @var array{path: string, exists: bool, parsed: bool, line: int|null, raw: string|null, error: string|null}|null
      */
     protected static ?array $envFileReport = null;
+
+    /**
+     * R42：`.env` 的文件签名（形如 `/path/.env|1761900000|1234`，即 path|mtime|size）
+     *
+     * 为什么需要签名（自愈）：
+     * R37 最初的缓存注释写的是「同一进程只检查一次（结论不会变）」，这句话是**错的** ——
+     * `.env` 是可以被修好的。长驻进程（Swoole worker、常驻 CLI daemon）一旦缓存了「坏」结论，
+     * 运维按异常提示把 `.env` 修好之后，进程仍会继续抛同样的异常，直到重启。
+     * 那是一个真实的运维死锁：错误信息让人去修 `.env`，修完了却必须重启才生效。
+     * 加上签名后：文件没变 → 复用上次结论（代价只有 stat，零 parse_ini_file）；
+     * 文件变了 → 重新检查并覆盖缓存，于是「修好 .env 即恢复」，不必重启。
+     *
+     * 为什么签名必须包含 path：静态缓存跨实例共享，测试 / 多环境共用同一进程时，
+     * A 文件的结论绝不能被当成 B 文件的结论复用。
+     *
+     * @var string|null
+     */
+    protected static ?string $envFileSignature = null;
 
     public function register()
     {
@@ -90,9 +106,19 @@ class AppService extends Service
             return;
         }
 
-        // 同一进程只检查一次（结论不会变）
-        if (self::$envFileReport === null) {
-            self::$envFileReport = self::inspectEnvFile($this->app->getRootPath() . '.env');
+        // R42：签名感知缓存 —— 先算签名，签名未变就**直接复用**上次结论（不做任何 parse_ini_file），
+        // 签名变了才重新检查。这样既保住「同一进程不重复读盘」，又让修好 .env 后无需重启即可自愈。
+        $path      = $this->app->getRootPath() . '.env';
+        $signature = static::buildEnvFileSignature($path);
+
+        if (self::$envFileReport === null || self::$envFileSignature !== $signature) {
+            // 注意顺序：签名必须在 inspectEnvFile() **之前**取。
+            // 若反过来（先解析、后取签名），一旦文件在两步之间被修好，就会得到
+            // 「解析到旧内容（坏） + 记下新签名（好）」的组合，之后所有调用都因为签名一致
+            // 而复用那份「坏」结论 —— 正好是 R42 要消灭的死锁。
+            // 现在的顺序最坏只是多解析一次（stat 与 parse 之间文件被改），永远不会把错误结论钉死。
+            self::$envFileReport    = $this->inspectEnvFileForGuard($path);
+            self::$envFileSignature = $signature;
         }
 
         $report = self::$envFileReport;
@@ -164,6 +190,51 @@ class AppService extends Service
             . "后果：think\\Env::load() 会静默兜底为空数组（?: []），.env 中所有键都会失效\n"
             . '修复：请在 .env 注释里使用全角括号，见 AGENTS.md Configuration & Security'
         );
+    }
+
+    /**
+     * R42：计算 `.env` 的文件签名（`path|mtime|size`）
+     *
+     * 为什么第一件事必须是 clearstatcache(true, $path)：
+     * PHP 会把 filemtime() / filesize() / is_file() 的结果缓存在 stat 缓存里，而这份缓存
+     * **不会**因为别的进程（运维编辑器、docker exec、配置管理工具）改了文件而失效。
+     * 长驻进程里后果很严重：磁盘上的 `.env` 已经修好，我们这边 filemtime() 还是旧值、
+     * 签名永远不变，于是「签名未变 → 复用坏结论」会一直成立，自愈彻底失效。
+     * 实测（PHP 8.2，容器内由外部进程改写文件）：
+     *   不调 clearstatcache → filemtime()/filesize() 仍返回改写前的旧值；
+     *   调 clearstatcache(true, $path) 后 → 返回新值。
+     * 只清这一个文件（第二个参数），代价是两次 stat，可以忽略。
+     *
+     * @param string $path `.env` 绝对路径
+     * @return string 形状固定的签名字符串
+     */
+    protected static function buildEnvFileSignature(string $path): string
+    {
+        clearstatcache(true, $path);
+
+        // 取不到（文件不存在 / 权限不足）时统一用 -1 哨兵：
+        // 让「不存在」也成为一种**稳定**签名，否则每次都拿到 false，会退化成每次调用都重新检查。
+        $mtime = @filemtime($path);
+        $size  = @filesize($path);
+
+        return $path
+            . '|' . ($mtime === false ? '-1' : (string) $mtime)
+            . '|' . ($size === false ? '-1' : (string) $size);
+    }
+
+    /**
+     * R42：守卫专用的解析入口（测试接缝）
+     *
+     * 单开一个 protected 方法而不是直接调 self::inspectEnvFile()，是为了让测试能用子类
+     * 统计「到底解析了几次」—— 「零解析」是 R42 的验收点，不能拿「耗时变短」当证据
+     * （容器 bind mount 的 IO 抖动足以淹没这点差异）。
+     *
+     * @param string $path `.env` 绝对路径
+     * @return array{path: string, exists: bool, parsed: bool, line: int|null, raw: string|null, error: string|null}
+     */
+    protected function inspectEnvFileForGuard(string $path): array
+    {
+        return self::inspectEnvFile($path);
     }
 
     /**
