@@ -29,6 +29,8 @@ use think\facade\Db;
  */
 class WorkflowInstanceHistoryTypeTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /** 测试用户 ID（6401 段避开既有 61xx/62xx/63xx 占用） */
     private int $userId = 6401;
 
@@ -140,71 +142,65 @@ class WorkflowInstanceHistoryTypeTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种用户 / 角色 / 权限与关联（幂等：先清理再插入）
+     * 播种用户 / 角色 / 权限与关联（清理与幂等性见 WorkflowFixtureIsolation）
      */
     private function seedFixtures(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        $this->cleanupFixtures();
+            // 权限：PermissionService 以 `resource:action` 拼接权限码，
+            // 因此 resource=workflow + action=instance:write 才匹配中间件的 workflow.instance.write
+            Db::table('permissions')->insert([
+                'id' => $this->permissionId,
+                'name' => 'workflow.instance.write',
+                'slug' => 'workflow.instance.write',
+                'resource' => 'workflow',
+                'action' => 'instance:write',
+                'description' => 'C-7 回归测试权限',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        // 权限：PermissionService 以 `resource:action` 拼接权限码，
-        // 因此 resource=workflow + action=instance:write 才匹配中间件的 workflow.instance.write
-        Db::table('permissions')->insert([
-            'id' => $this->permissionId,
-            'name' => 'workflow.instance.write',
-            'slug' => 'workflow.instance.write',
-            'resource' => 'workflow',
-            'action' => 'instance:write',
-            'description' => 'C-7 回归测试权限',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('users')->insert([
+                'id' => $this->userId,
+                'tenant_id' => 1,
+                'username' => 'wf_instance_type_user',
+                'email' => 'wf_instance_type_user@workflow-type.test',
+                'password' => password_hash('password', PASSWORD_DEFAULT),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('users')->insert([
-            'id' => $this->userId,
-            'tenant_id' => 1,
-            'username' => 'wf_instance_type_user',
-            'email' => 'wf_instance_type_user@workflow-type.test',
-            'password' => password_hash('password', PASSWORD_DEFAULT),
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('roles')->insert([
+                'id' => $this->roleId,
+                'tenant_id' => 1,
+                'name' => 'wf_instance_type_role',
+                'slug' => 'wf_instance_type_role',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('roles')->insert([
-            'id' => $this->roleId,
-            'tenant_id' => 1,
-            'name' => 'wf_instance_type_role',
-            'slug' => 'wf_instance_type_role',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('user_roles')->insert([
+                'user_id' => $this->userId,
+                'role_id' => $this->roleId,
+                'created_at' => $now,
+            ]);
 
-        Db::table('user_roles')->insert([
-            'user_id' => $this->userId,
-            'role_id' => $this->roleId,
-            'created_at' => $now,
-        ]);
-
-        Db::table('role_permissions')->insert([
-            'role_id' => $this->roleId,
-            'permission_id' => $this->permissionId,
-            'created_at' => $now,
-        ]);
+            Db::table('role_permissions')->insert([
+                'role_id' => $this->roleId,
+                'permission_id' => $this->permissionId,
+                'created_at' => $now,
+            ]);
+        });
     }
 
     /**
-     * 清理本用例植入的数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupFixtures(): void
     {
-        $this->clearPermissionCache();
-
-        Db::table('role_permissions')->where('role_id', $this->roleId)->delete();
-        Db::table('user_roles')->where('user_id', $this->userId)->delete();
-        Db::table('roles')->where('id', $this->roleId)->delete();
-        Db::table('users')->where('id', $this->userId)->delete();
-        Db::table('permissions')->where('id', $this->permissionId)->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**

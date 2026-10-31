@@ -26,6 +26,8 @@ use think\facade\Db;
  */
 class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /** 测试用户 ID（6501 段避开既有 61xx/62xx/63xx/64xx 占用） */
     private int $userId = 6501;
 
@@ -160,69 +162,63 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种用户 / 角色 / 权限与关联（幂等：先清理再插入）
+     * 播种用户 / 角色 / 权限与关联（清理与幂等性见 WorkflowFixtureIsolation）
      */
     private function seedFixtures(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        $this->cleanupFixtures();
+            Db::table('permissions')->insert([
+                'id' => $this->permissionId,
+                'name' => 'workflow.trigger.write',
+                'slug' => 'workflow.trigger.write',
+                'resource' => 'workflow',
+                'action' => 'trigger:write',
+                'description' => 'C-7 回归测试权限（触发器）',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('permissions')->insert([
-            'id' => $this->permissionId,
-            'name' => 'workflow.trigger.write',
-            'slug' => 'workflow.trigger.write',
-            'resource' => 'workflow',
-            'action' => 'trigger:write',
-            'description' => 'C-7 回归测试权限（触发器）',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('users')->insert([
+                'id' => $this->userId,
+                'tenant_id' => 1,
+                'username' => 'wf_trigger_type_user',
+                'email' => 'wf_trigger_type_user@workflow-type.test',
+                'password' => password_hash('password', PASSWORD_DEFAULT),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('users')->insert([
-            'id' => $this->userId,
-            'tenant_id' => 1,
-            'username' => 'wf_trigger_type_user',
-            'email' => 'wf_trigger_type_user@workflow-type.test',
-            'password' => password_hash('password', PASSWORD_DEFAULT),
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('roles')->insert([
+                'id' => $this->roleId,
+                'tenant_id' => 1,
+                'name' => 'wf_trigger_type_role',
+                'slug' => 'wf_trigger_type_role',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('roles')->insert([
-            'id' => $this->roleId,
-            'tenant_id' => 1,
-            'name' => 'wf_trigger_type_role',
-            'slug' => 'wf_trigger_type_role',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('user_roles')->insert([
+                'user_id' => $this->userId,
+                'role_id' => $this->roleId,
+                'created_at' => $now,
+            ]);
 
-        Db::table('user_roles')->insert([
-            'user_id' => $this->userId,
-            'role_id' => $this->roleId,
-            'created_at' => $now,
-        ]);
-
-        Db::table('role_permissions')->insert([
-            'role_id' => $this->roleId,
-            'permission_id' => $this->permissionId,
-            'created_at' => $now,
-        ]);
+            Db::table('role_permissions')->insert([
+                'role_id' => $this->roleId,
+                'permission_id' => $this->permissionId,
+                'created_at' => $now,
+            ]);
+        });
     }
 
     /**
-     * 清理本用例植入的数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupFixtures(): void
     {
-        $this->clearPermissionCache();
-
-        Db::table('role_permissions')->where('role_id', $this->roleId)->delete();
-        Db::table('user_roles')->where('user_id', $this->userId)->delete();
-        Db::table('roles')->where('id', $this->roleId)->delete();
-        Db::table('users')->where('id', $this->userId)->delete();
-        Db::table('permissions')->where('id', $this->permissionId)->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**

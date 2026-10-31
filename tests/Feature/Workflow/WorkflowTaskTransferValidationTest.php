@@ -38,6 +38,8 @@ use think\facade\Db;
  */
 class WorkflowTaskTransferValidationTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /**
      * 测试用户 ID
      *
@@ -449,107 +451,99 @@ class WorkflowTaskTransferValidationTest extends ThinkPHPTestCase
     /**
      * 播种测试夹具（用户 / 角色 / 权限 / 关联）
      *
-     * 采用「先清理残留 → 再插入」的幂等策略，避免上一次异常中断留下的同 ID 记录撞唯一索引。
+     * 清理与幂等性由 WorkflowFixtureIsolation 负责：按「ID 区间 OR 自然键」清理，
+     * 可清掉其他测试类用不同 ID 写入的同 slug 行；播种抛异常时也会自行清理。
      */
     private function seedFixtures(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        $this->cleanupFixtures();
+            // 权限：PermissionService 以 `resource:action` 拼接权限码，
+            // 因此 resource=workflow + action=task:write 才能匹配中间件的 workflow.task.write
+            Db::table('permissions')->insertAll([
+                [
+                    'id' => $this->readPermissionId,
+                    'name' => 'workflow.task.read',
+                    'slug' => 'workflow.task.read',
+                    'resource' => 'workflow',
+                    'action' => 'task:read',
+                    'description' => 'P2 workflow task transfer validation test permission',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->writePermissionId,
+                    'name' => 'workflow.task.write',
+                    'slug' => 'workflow.task.write',
+                    'resource' => 'workflow',
+                    'action' => 'task:write',
+                    'description' => 'P2 workflow task transfer validation test permission',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 权限：PermissionService 以 `resource:action` 拼接权限码，
-        // 因此 resource=workflow + action=task:write 才能匹配中间件的 workflow.task.write
-        Db::table('permissions')->insertAll([
-            [
-                'id' => $this->readPermissionId,
-                'name' => 'workflow.task.read',
-                'slug' => 'workflow.task.read',
-                'resource' => 'workflow',
-                'action' => 'task:read',
-                'description' => 'P2 workflow task transfer validation test permission',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->writePermissionId,
-                'name' => 'workflow.task.write',
-                'slug' => 'workflow.task.write',
-                'resource' => 'workflow',
-                'action' => 'task:write',
-                'description' => 'P2 workflow task transfer validation test permission',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            // 用户：同租户两个（操作用户 + 合法目标用户），另一个租户一个（跨租户目标用户）
+            Db::table('users')->insertAll([
+                [
+                    'id' => $this->actorUserId,
+                    'tenant_id' => 1,
+                    'username' => 'wf_transfer_actor',
+                    'email' => 'wf_transfer_actor@workflow-transfer.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->validTargetUserId,
+                    'tenant_id' => 1,
+                    'username' => 'wf_transfer_target',
+                    'email' => 'wf_transfer_target@workflow-transfer.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->otherTenantUserId,
+                    'tenant_id' => 2,
+                    'username' => 'wf_transfer_other_tenant',
+                    'email' => 'wf_transfer_other_tenant@workflow-transfer.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 用户：同租户两个（操作用户 + 合法目标用户），另一个租户一个（跨租户目标用户）
-        Db::table('users')->insertAll([
-            [
-                'id' => $this->actorUserId,
+            // 角色：操作用户需要 workflow.task.write 权限
+            Db::table('roles')->insert([
+                'id' => $this->roleId,
                 'tenant_id' => 1,
-                'username' => 'wf_transfer_actor',
-                'email' => 'wf_transfer_actor@workflow-transfer.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
+                'name' => 'wf_transfer_role',
+                'slug' => 'wf_transfer_role',
                 'created_at' => $now,
                 'updated_at' => $now,
-            ],
-            [
-                'id' => $this->validTargetUserId,
-                'tenant_id' => 1,
-                'username' => 'wf_transfer_target',
-                'email' => 'wf_transfer_target@workflow-transfer.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
+            ]);
+
+            Db::table('user_roles')->insert([
+                'user_id' => $this->actorUserId,
+                'role_id' => $this->roleId,
                 'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->otherTenantUserId,
-                'tenant_id' => 2,
-                'username' => 'wf_transfer_other_tenant',
-                'email' => 'wf_transfer_other_tenant@workflow-transfer.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            ]);
 
-        // 角色：操作用户需要 workflow.task.write 权限
-        Db::table('roles')->insert([
-            'id' => $this->roleId,
-            'tenant_id' => 1,
-            'name' => 'wf_transfer_role',
-            'slug' => 'wf_transfer_role',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
-
-        Db::table('user_roles')->insert([
-            'user_id' => $this->actorUserId,
-            'role_id' => $this->roleId,
-            'created_at' => $now,
-        ]);
-
-        Db::table('role_permissions')->insertAll([
-            ['role_id' => $this->roleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
-            ['role_id' => $this->roleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
-        ]);
+            Db::table('role_permissions')->insertAll([
+                ['role_id' => $this->roleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
+                ['role_id' => $this->roleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
+            ]);
+        });
     }
 
     /**
-     * 清理本用例植入的夹具数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupFixtures(): void
     {
-        $userIds = [$this->actorUserId, $this->validTargetUserId, $this->otherTenantUserId];
-        $permissionIds = [$this->readPermissionId, $this->writePermissionId];
-
-        $this->clearPermissionCache();
-
-        Db::table('role_permissions')->where('role_id', $this->roleId)->delete();
-        Db::table('user_roles')->whereIn('user_id', $userIds)->delete();
-        Db::table('roles')->where('id', $this->roleId)->delete();
-        Db::table('users')->whereIn('id', $userIds)->delete();
-        Db::table('permissions')->whereIn('id', $permissionIds)->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**

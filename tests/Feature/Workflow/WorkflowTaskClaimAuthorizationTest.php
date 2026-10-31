@@ -40,6 +40,8 @@ use think\facade\Db;
  */
 class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /**
      * 测试用户 ID
      *
@@ -530,123 +532,112 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
     /**
      * 播种授权测试所需数据（用户 / 角色 / 权限 / 关联）
      *
-     * 采用「先清理残留 → 再插入」的幂等策略，避免上一次异常中断留下的同 ID 记录撞唯一索引。
+     * 清理与幂等性由 WorkflowFixtureIsolation 负责：按「ID 区间 OR 自然键」清理，
+     * 可清掉其他测试类用不同 ID 写入的同 slug 行；播种抛异常时也会自行清理。
      */
     private function seedAuthorizationFixtures(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        $this->cleanupAuthorizationFixtures();
+            // 权限：PermissionService 以 `resource:action` 拼接权限码，
+            // 因此 resource=workflow + action=task:read 才能匹配中间件的 workflow.task.read
+            Db::table('permissions')->insertAll([
+                [
+                    'id' => $this->readPermissionId,
+                    'name' => 'workflow.task.read',
+                    'slug' => 'workflow.task.read',
+                    'resource' => 'workflow',
+                    'action' => 'task:read',
+                    'description' => 'R1 workflow task claim authorization test permission',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->writePermissionId,
+                    'name' => 'workflow.task.write',
+                    'slug' => 'workflow.task.write',
+                    'resource' => 'workflow',
+                    'action' => 'task:write',
+                    'description' => 'R1 workflow task claim authorization test permission',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 权限：PermissionService 以 `resource:action` 拼接权限码，
-        // 因此 resource=workflow + action=task:read 才能匹配中间件的 workflow.task.read
-        Db::table('permissions')->insertAll([
-            [
-                'id' => $this->readPermissionId,
-                'name' => 'workflow.task.read',
-                'slug' => 'workflow.task.read',
-                'resource' => 'workflow',
-                'action' => 'task:read',
-                'description' => 'R1 workflow task claim authorization test permission',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->writePermissionId,
-                'name' => 'workflow.task.write',
-                'slug' => 'workflow.task.write',
-                'resource' => 'workflow',
-                'action' => 'task:write',
-                'description' => 'R1 workflow task claim authorization test permission',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            // 用户
+            Db::table('users')->insertAll([
+                [
+                    'id' => $this->plainUserId,
+                    'tenant_id' => 1,
+                    'username' => 'wf_claim_plain_user',
+                    'email' => 'wf_claim_plain_user@workflow-claim.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->groupUserId,
+                    'tenant_id' => 1,
+                    'username' => 'wf_claim_group_user',
+                    'email' => 'wf_claim_group_user@workflow-claim.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->noRoleUserId,
+                    'tenant_id' => 1,
+                    'username' => 'wf_claim_no_role_user',
+                    'email' => 'wf_claim_no_role_user@workflow-claim.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 用户
-        Db::table('users')->insertAll([
-            [
-                'id' => $this->plainUserId,
-                'tenant_id' => 1,
-                'username' => 'wf_claim_plain_user',
-                'email' => 'wf_claim_plain_user@workflow-claim.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->groupUserId,
-                'tenant_id' => 1,
-                'username' => 'wf_claim_group_user',
-                'email' => 'wf_claim_group_user@workflow-claim.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->noRoleUserId,
-                'tenant_id' => 1,
-                'username' => 'wf_claim_no_role_user',
-                'email' => 'wf_claim_no_role_user@workflow-claim.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            // 角色：一个与候选组不匹配，一个与候选组匹配
+            Db::table('roles')->insertAll([
+                [
+                    'id' => $this->plainRoleId,
+                    'tenant_id' => 1,
+                    'name' => $this->nonMemberGroupSlug,
+                    'slug' => $this->nonMemberGroupSlug,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->groupRoleId,
+                    'tenant_id' => 1,
+                    'name' => $this->groupSlug,
+                    'slug' => $this->groupSlug,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 角色：一个与候选组不匹配，一个与候选组匹配
-        Db::table('roles')->insertAll([
-            [
-                'id' => $this->plainRoleId,
-                'tenant_id' => 1,
-                'name' => $this->nonMemberGroupSlug,
-                'slug' => $this->nonMemberGroupSlug,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->groupRoleId,
-                'tenant_id' => 1,
-                'name' => $this->groupSlug,
-                'slug' => $this->groupSlug,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            // 用户 → 角色（noRoleUser 不分配角色）
+            Db::table('user_roles')->insertAll([
+                ['user_id' => $this->plainUserId, 'role_id' => $this->plainRoleId, 'created_at' => $now],
+                ['user_id' => $this->groupUserId, 'role_id' => $this->groupRoleId, 'created_at' => $now],
+            ]);
 
-        // 用户 → 角色（noRoleUser 不分配角色）
-        Db::table('user_roles')->insertAll([
-            ['user_id' => $this->plainUserId, 'role_id' => $this->plainRoleId, 'created_at' => $now],
-            ['user_id' => $this->groupUserId, 'role_id' => $this->groupRoleId, 'created_at' => $now],
-        ]);
-
-        // 角色 → 权限（两个角色都授予任务读写，确保 403 来自控制器授权判断而非权限中间件）
-        Db::table('role_permissions')->insertAll([
-            ['role_id' => $this->plainRoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
-            ['role_id' => $this->plainRoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
-            ['role_id' => $this->groupRoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
-            ['role_id' => $this->groupRoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
-        ]);
+            // 角色 → 权限（两个角色都授予任务读写，确保 403 来自控制器授权判断而非权限中间件）
+            Db::table('role_permissions')->insertAll([
+                ['role_id' => $this->plainRoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
+                ['role_id' => $this->plainRoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
+                ['role_id' => $this->groupRoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
+                ['role_id' => $this->groupRoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
+            ]);
+        });
     }
 
     /**
-     * 清理本用例植入的授权数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupAuthorizationFixtures(): void
     {
-        $userIds = [$this->plainUserId, $this->groupUserId, $this->noRoleUserId];
-        $roleIds = [$this->plainRoleId, $this->groupRoleId];
-        $permissionIds = [$this->readPermissionId, $this->writePermissionId];
-
-        // 先清缓存再删用户，避免残留缓存导致下一次运行误判
-        $this->clearPermissionCache();
-
-        Db::table('role_permissions')->whereIn('role_id', $roleIds)->delete();
-        Db::table('role_permissions')->whereIn('permission_id', $permissionIds)->delete();
-        Db::table('user_roles')->whereIn('user_id', $userIds)->delete();
-        Db::table('roles')->whereIn('id', $roleIds)->delete();
-        Db::table('users')->whereIn('id', $userIds)->delete();
-        Db::table('permissions')->whereIn('id', $permissionIds)->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**

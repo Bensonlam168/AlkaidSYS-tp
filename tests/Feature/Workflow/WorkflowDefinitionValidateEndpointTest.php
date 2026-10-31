@@ -33,6 +33,8 @@ use think\facade\Db;
  */
 class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /**
      * 测试用户 ID（租户 1）
      * 使用高位 ID，避免与既有测试数据或种子数据冲突
@@ -255,69 +257,67 @@ class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
     }
 
     /**
-     * 授予测试用户工作流定义读权限（幂等：先清理残留再插入）
+     * 授予测试用户工作流定义读权限
+     *
+     * 清理与幂等性由 WorkflowFixtureIsolation 负责（按「ID 区间 OR 自然键」清理）。
      */
     private function seedPermissions(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        $this->cleanupPermissions();
+            // 说明：PermissionService 以 `resource:action` 拼接权限码，
+            // 因此 resource=workflow + action=definition:read 才能匹配中间件的 workflow.definition.read
+            Db::table('permissions')->insert([
+                'id'          => $this->readPermissionId,
+                'name'        => 'workflow.definition.read',
+                'slug'        => 'workflow.definition.read',
+                'resource'    => 'workflow',
+                'action'      => 'definition:read',
+                'description' => 'workflow validate endpoint test permission',
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            ]);
 
-        // 说明：PermissionService 以 `resource:action` 拼接权限码，
-        // 因此 resource=workflow + action=definition:read 才能匹配中间件的 workflow.definition.read
-        Db::table('permissions')->insert([
-            'id'          => $this->readPermissionId,
-            'name'        => 'workflow.definition.read',
-            'slug'        => 'workflow.definition.read',
-            'resource'    => 'workflow',
-            'action'      => 'definition:read',
-            'description' => 'workflow validate endpoint test permission',
-            'created_at'  => $now,
-            'updated_at'  => $now,
-        ]);
+            Db::table('users')->insert([
+                'id'         => $this->userId,
+                'tenant_id'  => 1,
+                'username'   => 'workflow_validate_user',
+                'email'      => 'workflow_validate_user@workflow-validate.test',
+                'password'   => password_hash('password', PASSWORD_DEFAULT),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('users')->insert([
-            'id'         => $this->userId,
-            'tenant_id'  => 1,
-            'username'   => 'workflow_validate_user',
-            'email'      => 'workflow_validate_user@workflow-validate.test',
-            'password'   => password_hash('password', PASSWORD_DEFAULT),
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('roles')->insert([
+                'id'         => $this->roleId,
+                'tenant_id'  => 1,
+                'name'       => 'workflow_validate_role',
+                'slug'       => 'workflow_validate_role',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
 
-        Db::table('roles')->insert([
-            'id'         => $this->roleId,
-            'tenant_id'  => 1,
-            'name'       => 'workflow_validate_role',
-            'slug'       => 'workflow_validate_role',
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+            Db::table('user_roles')->insert([
+                'user_id'    => $this->userId,
+                'role_id'    => $this->roleId,
+                'created_at' => $now,
+            ]);
 
-        Db::table('user_roles')->insert([
-            'user_id'    => $this->userId,
-            'role_id'    => $this->roleId,
-            'created_at' => $now,
-        ]);
-
-        Db::table('role_permissions')->insert([
-            'role_id'       => $this->roleId,
-            'permission_id' => $this->readPermissionId,
-            'created_at'    => $now,
-        ]);
+            Db::table('role_permissions')->insert([
+                'role_id'       => $this->roleId,
+                'permission_id' => $this->readPermissionId,
+                'created_at'    => $now,
+            ]);
+        });
     }
 
     /**
-     * 清理本用例植入的权限数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupPermissions(): void
     {
-        Db::table('role_permissions')->where('role_id', $this->roleId)->delete();
-        Db::table('user_roles')->where('user_id', $this->userId)->delete();
-        Db::table('roles')->where('id', $this->roleId)->delete();
-        Db::table('users')->where('id', $this->userId)->delete();
-        Db::table('permissions')->where('id', $this->readPermissionId)->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**

@@ -32,6 +32,8 @@ use think\facade\Db;
  */
 class WorkflowTenantIsolationTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /**
      * 测试用户 ID（租户 1 / 租户 2）
      * 使用高位 ID，避免与既有测试数据（<= 101050）或种子数据冲突
@@ -328,119 +330,105 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
     /**
      * 授予测试用户工作流定义读写权限（走真实 RBAC 校验链路）
      *
-     * 采用「先清理残留 → 再线性插入」的幂等策略：
-     * 上一次运行若被异常中断可能留下同 ID 的记录，直接插入会撞唯一索引/外键，
-     * 因此这里先按固定 ID 清理，再插入。
+     * 清理与幂等性由 WorkflowFixtureIsolation 负责：按「ID 区间 OR 自然键」清理，
+     * 可清掉其他测试类留下的同 slug 行（避免撞 permissions.idx_slug 唯一索引）。
      */
     private function seedPermissions(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        // 清理上一次异常中断留下的残留数据
-        $this->cleanupPermissions();
+            // 清理上一次异常中断留下的残留数据
 
-        // 权限：workflow.definition.read / write
-        // 说明：PermissionService 以 `resource:action` 拼接权限码，
-        // 因此 resource=workflow + action=definition:read 才能匹配中间件的 workflow.definition.read
-        Db::table('permissions')->insertAll([
-            [
-                'id' => $this->readPermissionId,
-                'name' => 'workflow.definition.read',
-                'slug' => 'workflow.definition.read',
-                'resource' => 'workflow',
-                'action' => 'definition:read',
-                'description' => 'C-7 workflow tenant isolation test permission',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->writePermissionId,
-                'name' => 'workflow.definition.write',
-                'slug' => 'workflow.definition.write',
-                'resource' => 'workflow',
-                'action' => 'definition:write',
-                'description' => 'C-7 workflow tenant isolation test permission',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            // 权限：workflow.definition.read / write
+            // 说明：PermissionService 以 `resource:action` 拼接权限码，
+            // 因此 resource=workflow + action=definition:read 才能匹配中间件的 workflow.definition.read
+            Db::table('permissions')->insertAll([
+                [
+                    'id' => $this->readPermissionId,
+                    'name' => 'workflow.definition.read',
+                    'slug' => 'workflow.definition.read',
+                    'resource' => 'workflow',
+                    'action' => 'definition:read',
+                    'description' => 'C-7 workflow tenant isolation test permission',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->writePermissionId,
+                    'name' => 'workflow.definition.write',
+                    'slug' => 'workflow.definition.write',
+                    'resource' => 'workflow',
+                    'action' => 'definition:write',
+                    'description' => 'C-7 workflow tenant isolation test permission',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 租户 1 / 租户 2 各一个用户与角色
-        Db::table('users')->insertAll([
-            [
-                'id' => $this->tenant1UserId,
-                'tenant_id' => 1,
-                'username' => 'workflow_iso_tenant1',
-                'email' => 'workflow_iso_tenant1@workflow-iso.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->tenant2UserId,
-                'tenant_id' => 2,
-                'username' => 'workflow_iso_tenant2',
-                'email' => 'workflow_iso_tenant2@workflow-iso.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            // 租户 1 / 租户 2 各一个用户与角色
+            Db::table('users')->insertAll([
+                [
+                    'id' => $this->tenant1UserId,
+                    'tenant_id' => 1,
+                    'username' => 'workflow_iso_tenant1',
+                    'email' => 'workflow_iso_tenant1@workflow-iso.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->tenant2UserId,
+                    'tenant_id' => 2,
+                    'username' => 'workflow_iso_tenant2',
+                    'email' => 'workflow_iso_tenant2@workflow-iso.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        Db::table('roles')->insertAll([
-            [
-                'id' => $this->tenant1RoleId,
-                'tenant_id' => 1,
-                'name' => 'workflow_iso_role_1',
-                'slug' => 'workflow_iso_role_1',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->tenant2RoleId,
-                'tenant_id' => 2,
-                'name' => 'workflow_iso_role_2',
-                'slug' => 'workflow_iso_role_2',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
+            Db::table('roles')->insertAll([
+                [
+                    'id' => $this->tenant1RoleId,
+                    'tenant_id' => 1,
+                    'name' => 'workflow_iso_role_1',
+                    'slug' => 'workflow_iso_role_1',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->tenant2RoleId,
+                    'tenant_id' => 2,
+                    'name' => 'workflow_iso_role_2',
+                    'slug' => 'workflow_iso_role_2',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
 
-        // 用户 → 角色
-        Db::table('user_roles')->insertAll([
-            ['user_id' => $this->tenant1UserId, 'role_id' => $this->tenant1RoleId, 'created_at' => $now],
-            ['user_id' => $this->tenant2UserId, 'role_id' => $this->tenant2RoleId, 'created_at' => $now],
-        ]);
+            // 用户 → 角色
+            Db::table('user_roles')->insertAll([
+                ['user_id' => $this->tenant1UserId, 'role_id' => $this->tenant1RoleId, 'created_at' => $now],
+                ['user_id' => $this->tenant2UserId, 'role_id' => $this->tenant2RoleId, 'created_at' => $now],
+            ]);
 
-        // 角色 → 权限
-        Db::table('role_permissions')->insertAll([
-            ['role_id' => $this->tenant1RoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
-            ['role_id' => $this->tenant1RoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
-            ['role_id' => $this->tenant2RoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
-            ['role_id' => $this->tenant2RoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
-        ]);
+            // 角色 → 权限
+            Db::table('role_permissions')->insertAll([
+                ['role_id' => $this->tenant1RoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
+                ['role_id' => $this->tenant1RoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
+                ['role_id' => $this->tenant2RoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
+                ['role_id' => $this->tenant2RoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
+            ]);
+        });
     }
 
     /**
-     * 清理本用例植入的权限数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupPermissions(): void
     {
-        Db::table('role_permissions')
-            ->whereIn('role_id', [$this->tenant1RoleId, $this->tenant2RoleId])
-            ->delete();
-        Db::table('user_roles')
-            ->whereIn('user_id', [$this->tenant1UserId, $this->tenant2UserId])
-            ->delete();
-        Db::table('roles')
-            ->whereIn('id', [$this->tenant1RoleId, $this->tenant2RoleId])
-            ->delete();
-        Db::table('users')
-            ->whereIn('id', [$this->tenant1UserId, $this->tenant2UserId])
-            ->delete();
-        Db::table('permissions')
-            ->whereIn('id', [$this->readPermissionId, $this->writePermissionId])
-            ->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**

@@ -50,6 +50,8 @@ use think\Response;
  */
 class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowFixtureIsolation;
+
     /**
      * 测试用户 ID（租户 1 / 租户 2）
      *
@@ -1026,209 +1028,188 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     /**
      * 播种测试夹具（用户 / 角色 / 权限 / 关联）
      *
-     * 采用「先清理残留 → 再插入」的幂等策略，避免上一次异常中断留下的同 ID 记录撞唯一索引。
+     * 清理与幂等性由 WorkflowFixtureIsolation 负责：按「ID 区间 OR 自然键」清理，
+     * 可清掉其他测试类用不同 ID 写入的同 slug 行；播种抛异常时也会自行清理。
      */
     private function seedFixtures(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $this->seedWorkflowFixtures(function (): void {
+            $now = date('Y-m-d H:i:s');
 
-        $this->cleanupFixtures();
-
-        // 权限：slug 唯一，resource/action 拼接成中间件校验的权限码
-        Db::table('permissions')->insertAll([
-            [
-                'id' => $this->definitionReadPermissionId,
-                'name' => 'workflow.definition.read',
-                'slug' => 'workflow.definition.read',
-                'resource' => 'workflow',
-                'action' => 'definition:read',
-                'description' => 'R13 工作流租户归属测试权限（定义读）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->definitionDeletePermissionId,
-                'name' => 'workflow.definition.delete',
-                'slug' => 'workflow.definition.delete',
-                'resource' => 'workflow',
-                'action' => 'definition:delete',
-                'description' => 'R13 工作流租户归属测试权限（定义删）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->definitionWritePermissionId,
-                'name' => 'workflow.definition.write',
-                'slug' => 'workflow.definition.write',
-                'resource' => 'workflow',
-                'action' => 'definition:write',
-                'description' => 'R13 工作流租户归属测试权限（定义写）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->taskReadPermissionId,
-                'name' => 'workflow.task.read',
-                'slug' => 'workflow.task.read',
-                'resource' => 'workflow',
-                'action' => 'task:read',
-                'description' => 'R13 工作流租户归属测试权限（任务读）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->taskWritePermissionId,
-                'name' => 'workflow.task.write',
-                'slug' => 'workflow.task.write',
-                'resource' => 'workflow',
-                'action' => 'task:write',
-                'description' => 'R13 工作流租户归属测试权限（任务写）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->instanceReadPermissionId,
-                'name' => 'workflow.instance.read',
-                'slug' => 'workflow.instance.read',
-                'resource' => 'workflow',
-                'action' => 'instance:read',
-                'description' => 'R13 工作流租户归属测试权限（实例读）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->instanceWritePermissionId,
-                'name' => 'workflow.instance.write',
-                'slug' => 'workflow.instance.write',
-                'resource' => 'workflow',
-                'action' => 'instance:write',
-                'description' => 'R13 工作流租户归属测试权限（实例写）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->triggerReadPermissionId,
-                'name' => 'workflow.trigger.read',
-                'slug' => 'workflow.trigger.read',
-                'resource' => 'workflow',
-                'action' => 'trigger:read',
-                'description' => 'R13 工作流租户归属测试权限（触发器读）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->triggerWritePermissionId,
-                'name' => 'workflow.trigger.write',
-                'slug' => 'workflow.trigger.write',
-                'resource' => 'workflow',
-                'action' => 'trigger:write',
-                'description' => 'R13 工作流租户归属测试权限（触发器写）',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
-
-        // 两个租户各一个用户
-        Db::table('users')->insertAll([
-            [
-                'id' => $this->tenant1UserId,
-                'tenant_id' => 1,
-                'username' => 'wf_r13_tenant1',
-                'email' => 'wf_r13_tenant1@workflow-ownership.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->tenant2UserId,
-                'tenant_id' => 2,
-                'username' => 'wf_r13_tenant2',
-                'email' => 'wf_r13_tenant2@workflow-ownership.test',
-                'password' => password_hash('password', PASSWORD_DEFAULT),
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
-
-        // 两个租户各一个角色
-        Db::table('roles')->insertAll([
-            [
-                'id' => $this->tenant1RoleId,
-                'tenant_id' => 1,
-                'name' => 'wf_r13_role_1',
-                'slug' => 'wf_r13_role_1',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-            [
-                'id' => $this->tenant2RoleId,
-                'tenant_id' => 2,
-                'name' => 'wf_r13_role_2',
-                'slug' => 'wf_r13_role_2',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ],
-        ]);
-
-        Db::table('user_roles')->insertAll([
-            ['user_id' => $this->tenant1UserId, 'role_id' => $this->tenant1RoleId, 'created_at' => $now],
-            ['user_id' => $this->tenant2UserId, 'role_id' => $this->tenant2RoleId, 'created_at' => $now],
-        ]);
-
-        // 两个角色都授予全部工作流权限，确保 403 来自控制器的租户归属判断（而不是权限中间件的 2002）
-        $permissionIds = [
-            $this->definitionReadPermissionId,
-            $this->definitionDeletePermissionId,
-            $this->definitionWritePermissionId,
-            $this->taskReadPermissionId,
-            $this->taskWritePermissionId,
-            $this->instanceReadPermissionId,
-            $this->instanceWritePermissionId,
-            $this->triggerReadPermissionId,
-            $this->triggerWritePermissionId,
-        ];
-
-        $rolePermissions = [];
-        foreach ([$this->tenant1RoleId, $this->tenant2RoleId] as $roleId) {
-            foreach ($permissionIds as $permissionId) {
-                $rolePermissions[] = [
-                    'role_id' => $roleId,
-                    'permission_id' => $permissionId,
+            // 权限：slug 唯一，resource/action 拼接成中间件校验的权限码
+            Db::table('permissions')->insertAll([
+                [
+                    'id' => $this->definitionReadPermissionId,
+                    'name' => 'workflow.definition.read',
+                    'slug' => 'workflow.definition.read',
+                    'resource' => 'workflow',
+                    'action' => 'definition:read',
+                    'description' => 'R13 工作流租户归属测试权限（定义读）',
                     'created_at' => $now,
-                ];
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->definitionDeletePermissionId,
+                    'name' => 'workflow.definition.delete',
+                    'slug' => 'workflow.definition.delete',
+                    'resource' => 'workflow',
+                    'action' => 'definition:delete',
+                    'description' => 'R13 工作流租户归属测试权限（定义删）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->definitionWritePermissionId,
+                    'name' => 'workflow.definition.write',
+                    'slug' => 'workflow.definition.write',
+                    'resource' => 'workflow',
+                    'action' => 'definition:write',
+                    'description' => 'R13 工作流租户归属测试权限（定义写）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->taskReadPermissionId,
+                    'name' => 'workflow.task.read',
+                    'slug' => 'workflow.task.read',
+                    'resource' => 'workflow',
+                    'action' => 'task:read',
+                    'description' => 'R13 工作流租户归属测试权限（任务读）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->taskWritePermissionId,
+                    'name' => 'workflow.task.write',
+                    'slug' => 'workflow.task.write',
+                    'resource' => 'workflow',
+                    'action' => 'task:write',
+                    'description' => 'R13 工作流租户归属测试权限（任务写）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->instanceReadPermissionId,
+                    'name' => 'workflow.instance.read',
+                    'slug' => 'workflow.instance.read',
+                    'resource' => 'workflow',
+                    'action' => 'instance:read',
+                    'description' => 'R13 工作流租户归属测试权限（实例读）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->instanceWritePermissionId,
+                    'name' => 'workflow.instance.write',
+                    'slug' => 'workflow.instance.write',
+                    'resource' => 'workflow',
+                    'action' => 'instance:write',
+                    'description' => 'R13 工作流租户归属测试权限（实例写）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->triggerReadPermissionId,
+                    'name' => 'workflow.trigger.read',
+                    'slug' => 'workflow.trigger.read',
+                    'resource' => 'workflow',
+                    'action' => 'trigger:read',
+                    'description' => 'R13 工作流租户归属测试权限（触发器读）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->triggerWritePermissionId,
+                    'name' => 'workflow.trigger.write',
+                    'slug' => 'workflow.trigger.write',
+                    'resource' => 'workflow',
+                    'action' => 'trigger:write',
+                    'description' => 'R13 工作流租户归属测试权限（触发器写）',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
+
+            // 两个租户各一个用户
+            Db::table('users')->insertAll([
+                [
+                    'id' => $this->tenant1UserId,
+                    'tenant_id' => 1,
+                    'username' => 'wf_r13_tenant1',
+                    'email' => 'wf_r13_tenant1@workflow-ownership.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->tenant2UserId,
+                    'tenant_id' => 2,
+                    'username' => 'wf_r13_tenant2',
+                    'email' => 'wf_r13_tenant2@workflow-ownership.test',
+                    'password' => password_hash('password', PASSWORD_DEFAULT),
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
+
+            // 两个租户各一个角色
+            Db::table('roles')->insertAll([
+                [
+                    'id' => $this->tenant1RoleId,
+                    'tenant_id' => 1,
+                    'name' => 'wf_r13_role_1',
+                    'slug' => 'wf_r13_role_1',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+                [
+                    'id' => $this->tenant2RoleId,
+                    'tenant_id' => 2,
+                    'name' => 'wf_r13_role_2',
+                    'slug' => 'wf_r13_role_2',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ],
+            ]);
+
+            Db::table('user_roles')->insertAll([
+                ['user_id' => $this->tenant1UserId, 'role_id' => $this->tenant1RoleId, 'created_at' => $now],
+                ['user_id' => $this->tenant2UserId, 'role_id' => $this->tenant2RoleId, 'created_at' => $now],
+            ]);
+
+            // 两个角色都授予全部工作流权限，确保 403 来自控制器的租户归属判断（而不是权限中间件的 2002）
+            $permissionIds = [
+                $this->definitionReadPermissionId,
+                $this->definitionDeletePermissionId,
+                $this->definitionWritePermissionId,
+                $this->taskReadPermissionId,
+                $this->taskWritePermissionId,
+                $this->instanceReadPermissionId,
+                $this->instanceWritePermissionId,
+                $this->triggerReadPermissionId,
+                $this->triggerWritePermissionId,
+            ];
+
+            $rolePermissions = [];
+            foreach ([$this->tenant1RoleId, $this->tenant2RoleId] as $roleId) {
+                foreach ($permissionIds as $permissionId) {
+                    $rolePermissions[] = [
+                        'role_id' => $roleId,
+                        'permission_id' => $permissionId,
+                        'created_at' => $now,
+                    ];
+                }
             }
-        }
-        Db::table('role_permissions')->insertAll($rolePermissions);
+            Db::table('role_permissions')->insertAll($rolePermissions);
+        });
     }
 
     /**
-     * 清理本用例植入的夹具数据
+     * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
      */
     private function cleanupFixtures(): void
     {
-        $userIds = [$this->tenant1UserId, $this->tenant2UserId];
-        $roleIds = [$this->tenant1RoleId, $this->tenant2RoleId];
-        $permissionIds = [
-            $this->definitionReadPermissionId,
-            $this->definitionDeletePermissionId,
-            $this->definitionWritePermissionId,
-            $this->taskReadPermissionId,
-            $this->taskWritePermissionId,
-            $this->instanceReadPermissionId,
-            $this->instanceWritePermissionId,
-            $this->triggerReadPermissionId,
-            $this->triggerWritePermissionId,
-        ];
-
-        // 先清缓存再删用户，避免残留缓存导致下一次运行误判
-        $this->clearPermissionCache();
-
-        Db::table('role_permissions')->whereIn('role_id', $roleIds)->delete();
-        Db::table('role_permissions')->whereIn('permission_id', $permissionIds)->delete();
-        Db::table('user_roles')->whereIn('user_id', $userIds)->delete();
-        Db::table('roles')->whereIn('id', $roleIds)->delete();
-        Db::table('users')->whereIn('id', $userIds)->delete();
-        Db::table('permissions')->whereIn('id', $permissionIds)->delete();
+        $this->purgeWorkflowFixtures();
     }
 
     /**
