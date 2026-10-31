@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace app\controller\admin;
 
 use app\controller\ApiController;
+use Domain\Permission\Exception\RoleWriteRejectedException;
 use Domain\Permission\Model\Role;
 use Infrastructure\Permission\Repository\RoleRepository;
 use think\App;
@@ -263,7 +264,19 @@ class RoleController extends ApiController
         $descProperty->setAccessible(true);
         $descProperty->setValue($newRole, $data['description'] ?? null);
 
-        $this->roleRepository->save($newRole);
+        try {
+            $this->roleRepository->save($newRole);
+        } catch (RoleWriteRejectedException $e) {
+            // 兜底：本方法开头已用 findById($id, $tenantId) 校验过归属，
+            // 走到这里只可能是「校验通过后角色归属被并发改动」。
+            // 对外统一回 404（不区分「不存在」与「属于别的租户」，避免泄露他租户数据的存在性）。
+            return $this->error(
+                $this->langService->trans('role.not_found'),
+                404,
+                [],
+                404
+            );
+        }
 
         // Sync permissions if provided | 如果提供了权限则同步
         if (isset($data['permissions']) && is_array($data['permissions'])) {

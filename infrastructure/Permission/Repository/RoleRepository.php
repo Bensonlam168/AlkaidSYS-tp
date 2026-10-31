@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infrastructure\Permission\Repository;
 
+use Domain\Permission\Exception\RoleWriteRejectedException;
 use Domain\Permission\Model\Role;
 use think\facade\Db;
 
@@ -12,6 +13,9 @@ use think\facade\Db;
  *
  * Provides data access operations for roles.
  * 提供角色的数据访问操作。
+ *
+ * 多租户约定：`roles` 表带 `tenant_id`，所有按主键的读写都必须同时带租户条件；
+ * 租户参数是**必填**的（不再提供「可空 + 默认 null」的 fail-open 兜底：那是「省略即不过滤」）。
  *
  * @package Infrastructure\Permission\Repository
  */
@@ -23,18 +27,15 @@ class RoleRepository
      * Find role by ID | 根据 ID 查找角色
      *
      * @param int $id Role ID | 角色 ID
-     * @param int|null $tenantId Optional tenant ID for isolation | 可选租户 ID 用于隔离
+     * @param int $tenantId Tenant ID for isolation (required) | 租户 ID（必填，用于隔离）
      * @return Role|null
      */
-    public function findById(int $id, ?int $tenantId = null): ?Role
+    public function findById(int $id, int $tenantId): ?Role
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
-
-        $data = $query->find();
+        $data = Db::name($this->table)
+            ->where('id', $id)
+            ->where('tenant_id', $tenantId)
+            ->find();
 
         if ($data === null) {
             return null;
@@ -119,8 +120,13 @@ class RoleRepository
     /**
      * Save role | 保存角色
      *
+     * 更新分支按 `id + tenant_id` 双条件定位：只有 where('id') 会允许跨租户改写他人角色。
+     * 若受影响行数为 0，会进一步区分「值没变化」与「越权/不存在」，后者抛
+     * RoleWriteRejectedException，绝不静默当作成功。
+     *
      * @param Role $role Role entity | 角色实体
      * @return int Role ID | 角色 ID
+     * @throws RoleWriteRejectedException 目标角色属于其他租户或不存在时
      */
     public function save(Role $role): int
     {
@@ -129,10 +135,31 @@ class RoleRepository
 
         $now = date('Y-m-d H:i:s');
 
-        if ($role->getId()) {
+        $roleId = $role->getId();
+        if ($roleId !== null) {
+            $tenantId = $role->getTenantId();
+
             $data['updated_at'] = $now;
-            Db::name($this->table)->where('id', $role->getId())->update($data);
-            return $role->getId();
+
+            $affected = Db::name($this->table)
+                ->where('id', $roleId)
+                ->where('tenant_id', $tenantId)
+                ->update($data);
+
+            if ($affected === 0) {
+                // MySQL 在「新值与旧值完全相同」时同样返回 0 行受影响，
+                // 因此不能用 $affected === 0 直接判失败，必须回查该 (id, tenant_id) 是否仍存在。
+                $existsInTenant = Db::name($this->table)
+                    ->where('id', $roleId)
+                    ->where('tenant_id', $tenantId)
+                    ->count() > 0;
+
+                if (!$existsInTenant) {
+                    $this->rejectWriteOutOfTenant($roleId, $tenantId);
+                }
+            }
+
+            return $roleId;
         }
 
         $data['created_at'] = $now;
@@ -141,21 +168,51 @@ class RoleRepository
     }
 
     /**
+     * 拒绝跨租户（或指向不存在记录）的写入 | Reject writes that cross the tenant boundary
+     *
+     * 只有在本租户范围内确实定位不到该 id 时才会被调用，因此这里再按 id 无租户条件查一次
+     * 只为**区分原因**（属别的租户 / 根本不存在），不用于放行任何写入。
+     *
+     * @param int $roleId Role ID | 角色 ID
+     * @param int $tenantId Write-context tenant ID | 写入上下文租户 ID
+     * @return never
+     * @throws RoleWriteRejectedException
+     */
+    protected function rejectWriteOutOfTenant(int $roleId, int $tenantId): never
+    {
+        $ownerTenantId = Db::name($this->table)
+            ->where('id', $roleId)
+            ->value('tenant_id');
+
+        if ($ownerTenantId === null) {
+            throw new RoleWriteRejectedException(
+                sprintf('角色 %d 不存在，更新已拒绝（未写入任何数据）', $roleId)
+            );
+        }
+
+        throw new RoleWriteRejectedException(
+            sprintf(
+                '禁止跨租户更新角色：角色 %d 属于租户 %d，当前写入上下文为租户 %d',
+                $roleId,
+                (int) $ownerTenantId,
+                $tenantId
+            )
+        );
+    }
+
+    /**
      * Delete role | 删除角色
      *
      * @param int $id Role ID | 角色 ID
-     * @param int|null $tenantId Tenant ID for isolation | 租户 ID 用于隔离
+     * @param int $tenantId Tenant ID for isolation (required) | 租户 ID（必填，用于隔离）
      * @return bool
      */
-    public function delete(int $id, ?int $tenantId = null): bool
+    public function delete(int $id, int $tenantId): bool
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
-
-        return $query->delete() > 0;
+        return Db::name($this->table)
+            ->where('id', $id)
+            ->where('tenant_id', $tenantId)
+            ->delete() > 0;
     }
 
     /**

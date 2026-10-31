@@ -11,6 +11,9 @@ use think\facade\Db;
 /**
  * User Repository | 用户仓储
  *
+ * 多租户约定：`users` 表带 `tenant_id`，按主键读写一律同时带租户条件；
+ * 租户参数是**必填**的，不提供「省略即不过滤」的兜底默认值。
+ *
  * @package Infrastructure\User\Repository
  */
 class UserRepository
@@ -41,14 +44,21 @@ class UserRepository
         return Db::name($this->table)->insertGetId($data);
     }
 
-    public function findById(int $id, ?int $tenantId = null): ?User
+    /**
+     * 按 ID 查找用户（必须带租户）
+     * Find user by ID (tenant-scoped)
+     *
+     * @param int $id 用户ID | User ID
+     * @param int $tenantId 租户ID（必填，用于隔离） | Tenant ID (required, for isolation)
+     * @return User|null
+     */
+    public function findById(int $id, int $tenantId): ?User
     {
-        $query = Db::name($this->table)->where('id', $id);
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
+        $data = Db::name($this->table)
+            ->where('id', $id)
+            ->where('tenant_id', $tenantId)
+            ->find();
 
-        $data = $query->find();
         if (!$data) {
             return null;
         }

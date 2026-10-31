@@ -13,6 +13,9 @@ use think\facade\Db;
  * Provides data access operations for menus.
  * 提供菜单的数据访问操作。
  *
+ * 多租户约定：`menus` 表带 `tenant_id`，按主键读写一律同时带租户条件；
+ * 租户参数是**必填**的，不提供「省略即不过滤」的兜底默认值。
+ *
  * @package Infrastructure\Organization\Repository
  */
 class MenuRepository
@@ -23,18 +26,15 @@ class MenuRepository
      * Find menu by ID | 根据 ID 查找菜单
      *
      * @param int $id Menu ID | 菜单 ID
-     * @param int|null $tenantId Optional tenant ID for isolation | 可选租户 ID 用于隔离
+     * @param int $tenantId Tenant ID for isolation (required) | 租户 ID（必填，用于隔离）
      * @return Menu|null
      */
-    public function findById(int $id, ?int $tenantId = null): ?Menu
+    public function findById(int $id, int $tenantId): ?Menu
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
-
-        $data = $query->find();
+        $data = Db::name($this->table)
+            ->where('id', $id)
+            ->where('tenant_id', $tenantId)
+            ->find();
 
         if ($data === null) {
             return null;
