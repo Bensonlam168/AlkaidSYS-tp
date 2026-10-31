@@ -1,0 +1,53 @@
+name: Env Example Check
+
+# .env.example 配置门禁 | Environment example gate
+#
+# .env.example 有两个「改坏了也不报错」的坑，都曾真实发生并极难定位：
+#   1. `#` 注释行里的半角括号/引号会让 parse_ini_file 直接返回 false
+#      → ThinkPHP Env::load() 按 `?: []` 兜底 → 整份 .env 的键静默失效
+#      → 表现为「容器正常启动，但所有数据库操作 Connection refused」
+#   2. `#` 注释行里的半角 `=` 会被解析成伪键（键名形如 `# 1. 生产类环境（APP_ENV`）
+#
+# 本工作流跑 scripts/check-env-example.php，覆盖：
+#   A. 可解析（失败时给出语法错误行号与原文）
+#   B. 无伪键
+#   C. 注释行无 ASCII 括号/引号
+#   D. 必需键存在（DB_HOST / DB_NAME / DB_USER / DB_PASS / DB_CHARSET / JWT_SECRET）
+
+on:
+  pull_request:
+    paths:
+      - '.env.example'
+      - 'scripts/check-env-example.php'
+      - '.github/workflows/env-check.yml'
+      # AGENTS.md 里写着这两条规则与人工自查命令；规则变更时应连带复跑本门禁
+      - 'AGENTS.md'
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - '.env.example'
+      - 'scripts/check-env-example.php'
+      - '.github/workflows/env-check.yml'
+      - 'AGENTS.md'
+
+jobs:
+  env-example-check:
+    name: Env Example Consistency
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Run .env.example consistency check
+        # --strict：注释里的软字符（' 与 ]）也只提示不允许通过，与 AGENTS.md 规则对齐
+        run: php scripts/check-env-example.php --strict
