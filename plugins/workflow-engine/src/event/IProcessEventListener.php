@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -18,4 +19,3 @@ interface IProcessEventListener
     public function onEvent(ProcessEvent $event);
 
 }
-

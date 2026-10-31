@@ -89,7 +89,7 @@ class ValidationResult
     {
         return array_filter(
             $this->messages,
-            fn(array $msg) => ($msg['level'] ?? WorkflowValidator::LEVEL_ERROR) === WorkflowValidator::LEVEL_ERROR
+            fn (array $msg) => ($msg['level'] ?? WorkflowValidator::LEVEL_ERROR) === WorkflowValidator::LEVEL_ERROR
         );
     }
 
@@ -102,7 +102,7 @@ class ValidationResult
     {
         return array_filter(
             $this->messages,
-            fn(array $msg) => ($msg['level'] ?? '') === WorkflowValidator::LEVEL_WARNING
+            fn (array $msg) => ($msg['level'] ?? '') === WorkflowValidator::LEVEL_WARNING
         );
     }
 
@@ -115,7 +115,7 @@ class ValidationResult
     {
         return array_filter(
             $this->messages,
-            fn(array $msg) => ($msg['level'] ?? '') === WorkflowValidator::LEVEL_INFO
+            fn (array $msg) => ($msg['level'] ?? '') === WorkflowValidator::LEVEL_INFO
         );
     }
 
@@ -159,7 +159,7 @@ class ValidationResult
     public function getErrorCodes(): array
     {
         return array_unique(array_map(
-            fn(array $msg) => $msg['code'] ?? 'UNKNOWN',
+            fn (array $msg) => $msg['code'] ?? 'UNKNOWN',
             $this->getErrors()
         ));
     }
@@ -183,7 +183,7 @@ class ValidationResult
     public function getAllCodes(): array
     {
         return array_unique(array_map(
-            fn(array $msg) => $msg['code'] ?? 'UNKNOWN',
+            fn (array $msg) => $msg['code'] ?? 'UNKNOWN',
             $this->messages
         ));
     }
@@ -317,7 +317,7 @@ class ValidationResult
     {
         if ($this->hasErrors()) {
             $errorMessages = array_map(
-                fn(array $msg) => $msg['message'] ?? 'Unknown error',
+                fn (array $msg) => $msg['message'] ?? 'Unknown error',
                 $this->getErrors()
             );
             throw new $exceptionClass('工作流验证失败: ' . implode('; ', $errorMessages));

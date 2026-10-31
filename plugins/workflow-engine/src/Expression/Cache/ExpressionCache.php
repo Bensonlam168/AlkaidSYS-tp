@@ -124,7 +124,7 @@ class ExpressionCache
         unset($this->cache[$key]);
         $this->accessOrder = array_values(array_filter(
             $this->accessOrder,
-            fn($k) => $k !== $key
+            fn ($k) => $k !== $key
         ));
     }
 
@@ -214,7 +214,7 @@ class ExpressionCache
         // Remove key from current position
         $this->accessOrder = array_values(array_filter(
             $this->accessOrder,
-            fn($k) => $k !== $key
+            fn ($k) => $k !== $key
         ));
         // Add to end (most recently used)
         $this->accessOrder[] = $key;

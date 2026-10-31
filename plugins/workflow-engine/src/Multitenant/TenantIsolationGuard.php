@@ -256,8 +256,8 @@ class TenantIsolationGuard
      */
     public static function getViolationStats(): array
     {
-        $violations = array_filter(self::$accessLog, fn($entry) => !$entry['allowed']);
-        $allowed = array_filter(self::$accessLog, fn($entry) => $entry['allowed']);
+        $violations = array_filter(self::$accessLog, fn ($entry) => !$entry['allowed']);
+        $allowed = array_filter(self::$accessLog, fn ($entry) => $entry['allowed']);
 
         return [
             'total_accesses' => count(self::$accessLog),

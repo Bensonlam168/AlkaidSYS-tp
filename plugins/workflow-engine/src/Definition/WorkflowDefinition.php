@@ -396,7 +396,7 @@ class WorkflowDefinition implements WorkflowDefinitionInterface
         // 同时移除相关连接
         $this->connections = array_filter(
             $this->connections,
-            fn(WorkflowConnectionInterface $conn) => $conn->getSourceNodeId() !== $nodeId && $conn->getTargetNodeId() !== $nodeId
+            fn (WorkflowConnectionInterface $conn) => $conn->getSourceNodeId() !== $nodeId && $conn->getTargetNodeId() !== $nodeId
         );
 
         $this->updatedAt = date('Y-m-d H:i:s');
@@ -445,7 +445,7 @@ class WorkflowDefinition implements WorkflowDefinitionInterface
     {
         return array_filter(
             $this->nodes,
-            fn(NodeInterface $node) => $node->getType() === $type
+            fn (NodeInterface $node) => $node->getType() === $type
         );
     }
 
@@ -527,7 +527,7 @@ class WorkflowDefinition implements WorkflowDefinitionInterface
     {
         return array_values(array_filter(
             $this->nodes,
-            fn(NodeInterface $node) => $node->getType() === NodeInterface::TYPE_END
+            fn (NodeInterface $node) => $node->getType() === NodeInterface::TYPE_END
         ));
     }
 
@@ -538,7 +538,7 @@ class WorkflowDefinition implements WorkflowDefinitionInterface
     {
         return array_values(array_filter(
             $this->connections,
-            fn(WorkflowConnectionInterface $conn) => $conn->getSourceNodeId() === $nodeId
+            fn (WorkflowConnectionInterface $conn) => $conn->getSourceNodeId() === $nodeId
         ));
     }
 
@@ -549,7 +549,7 @@ class WorkflowDefinition implements WorkflowDefinitionInterface
     {
         return array_values(array_filter(
             $this->connections,
-            fn(WorkflowConnectionInterface $conn) => $conn->getTargetNodeId() === $nodeId
+            fn (WorkflowConnectionInterface $conn) => $conn->getTargetNodeId() === $nodeId
         ));
     }
 
@@ -984,9 +984,9 @@ class WorkflowDefinition implements WorkflowDefinitionInterface
             'status' => $this->status,
             'version' => $this->version,
             'tenant_id' => $this->tenantId,
-            'nodes' => array_map(fn(NodeInterface $node) => $node->toArray(), $this->nodes),
+            'nodes' => array_map(fn (NodeInterface $node) => $node->toArray(), $this->nodes),
             'connections' => array_map(
-                fn(WorkflowConnectionInterface $conn) => $conn->toArray(),
+                fn (WorkflowConnectionInterface $conn) => $conn->toArray(),
                 $this->connections
             ),
             'metadata' => $this->metadata,

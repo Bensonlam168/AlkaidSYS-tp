@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -12,7 +13,6 @@
  */
 
 namespace Alkaid\Workflow\Engine\processor\handler;
-
 
 use madong\ingenious\core\ServiceContext;
 use madong\ingenious\interface\IExecution;
@@ -76,7 +76,7 @@ class MergeBranchHandler implements IHandler
         $inputs = $node->getInputs();
         foreach ($inputs as $tm) {
             if ($tm->getSource() instanceof TaskModel) {
-                $buffer->append($tm->getSource()->getName())->append(",");
+                $buffer->append($tm->getSource()->getName())->append(',');
             }
             self::findForkTaskNames($tm->getSource(), $buffer); // 递归调用
         }

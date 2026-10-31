@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -12,8 +13,6 @@
  */
 
 namespace Alkaid\Workflow\Engine\interface;
-
-
 
 use madong\ingenious\core\Execution;
 

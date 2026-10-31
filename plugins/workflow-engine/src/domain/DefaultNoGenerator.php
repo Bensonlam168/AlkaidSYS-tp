@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -10,6 +11,7 @@
  * Software Registration Number: 2024SR0694589
  * Official Website: https://madong.tech
  */
+
 namespace Alkaid\Workflow\Engine\domain;
 
 use DateTime;
@@ -25,7 +27,6 @@ use madong\ingenious\model\ProcessModel;
  */
 class DefaultNoGenerator implements INoGenerator
 {
-
     public function generate(?ProcessModel $model): string
     {
         $dateTime = (new DateTime())->format('YmdHis');

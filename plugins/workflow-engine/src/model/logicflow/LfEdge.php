@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -12,7 +13,6 @@
  */
 
 namespace Alkaid\Workflow\Engine\model\logicflow;
-
 
 use madong\ingenious\libs\traits\DynamicPropsTrait;
 

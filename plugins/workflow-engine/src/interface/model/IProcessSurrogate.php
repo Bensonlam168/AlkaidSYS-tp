@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * madong
@@ -14,5 +15,4 @@ namespace Alkaid\Workflow\Engine\interface\model;
 
 interface IProcessSurrogate
 {
-
 }

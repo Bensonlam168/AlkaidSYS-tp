@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,19 +14,14 @@
 
 namespace Alkaid\Workflow\Engine\scheduling;
 
-
 use madong\ingenious\event\IProcessEventListener;
 use madong\ingenious\event\ProcessEvent;
 use madong\ingenious\core\ServiceContext;
 use madong\ingenious\enums\ProcessEventTypeEnum;
 use madong\helper\Dict;
 
-
-
-
 class SchedulerIProcessEventListener implements IProcessEventListener
 {
-
     public function onEvent(ProcessEvent $event)
     {
         $schedulerList = ServiceContext::findAll(IScheduler::class);
@@ -35,13 +31,15 @@ class SchedulerIProcessEventListener implements IProcessEventListener
         ])) {
             // 流程实例开始事件、流程任务开始事件，添加作业到调度器
             foreach ($schedulerList as $scheduler) {
-                $scheduler->addJob($event->getSourceId(),
+                $scheduler->addJob(
+                    $event->getSourceId(),
                     Dict::of([
                         IScheduler::SOURCE_ID_KEY   => $event->getSourceId(),
                         IScheduler::SOURCE_TYPE_KEY => $event->getEventType(),
-                    ]));
+                    ])
+                );
             }
-        } else if (in_array($event->getEventType(), [
+        } elseif (in_array($event->getEventType(), [
             ProcessEventTypeEnum::PROCESS_INSTANCE_END->value,
             ProcessEventTypeEnum::PROCESS_TASK_END->value,
         ])) {

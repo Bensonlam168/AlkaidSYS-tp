@@ -36,9 +36,9 @@ $_ENV['WORKFLOW_DEBUG'] = 'true';
 
 // 注册测试用的异常处理
 set_exception_handler(function ($exception) {
-    echo "未捕获的异常: " . $exception->getMessage() . "\n";
-    echo "文件: " . $exception->getFile() . "\n";
-    echo "行号: " . $exception->getLine() . "\n";
+    echo '未捕获的异常: ' . $exception->getMessage() . "\n";
+    echo '文件: ' . $exception->getFile() . "\n";
+    echo '行号: ' . $exception->getLine() . "\n";
     echo "堆栈跟踪:\n" . $exception->getTraceAsString() . "\n";
     exit(1);
 });
@@ -224,8 +224,8 @@ function mockHttpRequest(string $method, string $url, array $data = []): array
 // 输出测试开始信息
 if (php_sapi_name() === 'cli') {
     echo "\n=== 工作流引擎测试环境已初始化 ===\n";
-    echo "测试环境: " . APP_ENV . "\n";
-    echo "PHP版本: " . PHP_VERSION . "\n";
-    echo "时区: " . date_default_timezone_get() . "\n";
+    echo '测试环境: ' . APP_ENV . "\n";
+    echo 'PHP版本: ' . PHP_VERSION . "\n";
+    echo '时区: ' . date_default_timezone_get() . "\n";
     echo "===================================\n\n";
 }

@@ -216,8 +216,8 @@ class ExecutionMetrics
      */
     public function getSlowestNodes(int $limit = 5): array
     {
-        $nodes = array_filter($this->nodeMetrics, fn($m) => $m['duration'] !== null);
-        usort($nodes, fn($a, $b) => $b['duration'] <=> $a['duration']);
+        $nodes = array_filter($this->nodeMetrics, fn ($m) => $m['duration'] !== null);
+        usort($nodes, fn ($a, $b) => $b['duration'] <=> $a['duration']);
         return array_slice($nodes, 0, $limit);
     }
 
@@ -230,7 +230,7 @@ class ExecutionMetrics
     {
         return array_filter(
             $this->nodeMetrics,
-            fn($m) => in_array($m['status'], ['failed', 'error'])
+            fn ($m) => in_array($m['status'], ['failed', 'error'])
         );
     }
 

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -22,7 +23,6 @@ use madong\ingenious\libs\traits\EnumTrait;
  */
 enum ProcessEventTypeEnum: int implements IEnum
 {
-
     use EnumTrait;
 
     case PROCESS_INSTANCE_START = 1;

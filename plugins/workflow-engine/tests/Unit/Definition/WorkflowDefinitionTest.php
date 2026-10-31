@@ -7,11 +7,9 @@ namespace Alkaid\Workflow\Engine\Tests\Unit\Definition;
 use Alkaid\Workflow\Engine\Definition\Interfaces\WorkflowDefinitionInterface;
 use Alkaid\Workflow\Engine\Definition\WorkflowConnection;
 use Alkaid\Workflow\Engine\Definition\WorkflowDefinition;
-use Alkaid\Workflow\Engine\Nodes\Interfaces\NodeInterface;
 use Alkaid\Workflow\Engine\Nodes\Types\StartNode;
 use Alkaid\Workflow\Engine\Nodes\Types\EndNode;
 use Alkaid\Workflow\Engine\Nodes\Types\TaskNode;
-use Alkaid\Workflow\Engine\Nodes\Types\GatewayNode;
 use PHPUnit\Framework\TestCase;
 
 /**

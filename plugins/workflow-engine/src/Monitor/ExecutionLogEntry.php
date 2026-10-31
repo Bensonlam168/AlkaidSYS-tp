@@ -103,7 +103,7 @@ class ExecutionLogEntry
         return new self(
             $instanceId,
             self::EVENT_INSTANCE_STARTED,
-            "工作流实例已启动",
+            '工作流实例已启动',
             array_merge($options, [
                 'context' => [
                     'definition_id' => $definitionId,
@@ -131,7 +131,7 @@ class ExecutionLogEntry
         return new self(
             $instanceId,
             self::EVENT_INSTANCE_COMPLETED,
-            "工作流实例已完成",
+            '工作流实例已完成',
             array_merge($options, [
                 'context' => ['result' => $result],
                 'duration' => $duration,

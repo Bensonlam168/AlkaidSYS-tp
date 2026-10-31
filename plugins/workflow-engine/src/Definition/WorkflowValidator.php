@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Alkaid\Workflow\Engine\Definition;
 
-use Alkaid\Workflow\Engine\Definition\Interfaces\WorkflowConnectionInterface;
 use Alkaid\Workflow\Engine\Definition\Interfaces\WorkflowDefinitionInterface;
 use Alkaid\Workflow\Engine\Nodes\Interfaces\NodeInterface;
 

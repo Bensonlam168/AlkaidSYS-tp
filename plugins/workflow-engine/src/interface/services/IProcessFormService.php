@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -16,7 +17,6 @@ namespace Alkaid\Workflow\Engine\interface\services;
 use madong\ingenious\interface\model\IProcessForm;
 use madong\ingenious\interface\model\IProcessFormHistory;
 
-
 interface IProcessFormService
 {
     public function created(object $param): ?IProcessForm;
@@ -33,4 +33,3 @@ interface IProcessFormService
 
     public function updateDesign(object $jsonObject): ?IProcessFormHistory;
 }
-

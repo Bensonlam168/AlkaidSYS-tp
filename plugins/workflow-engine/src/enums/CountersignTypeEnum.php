@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -24,7 +25,6 @@ use madong\ingenious\libs\traits\EnumTrait;
  */
 enum CountersignTypeEnum: int implements IEnum
 {
-
     use EnumTrait;
 
     case PARALLEL = 0;

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -52,4 +53,3 @@ interface IProcessDefineService
 
     public function getProcessDefineByVersion(string $name, int|float $version): ?IProcessDefine;
 }
-

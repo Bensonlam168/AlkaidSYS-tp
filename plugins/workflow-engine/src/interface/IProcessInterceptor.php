@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -23,7 +24,6 @@ use madong\ingenious\core\Execution;
  */
 interface IProcessInterceptor
 {
-
     /**
      * 拦截方法，参数为执行对象
      *

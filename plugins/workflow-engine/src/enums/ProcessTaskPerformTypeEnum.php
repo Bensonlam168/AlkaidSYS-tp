@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -31,4 +32,3 @@ enum ProcessTaskPerformTypeEnum: int implements IEnum
         };
     }
 }
-

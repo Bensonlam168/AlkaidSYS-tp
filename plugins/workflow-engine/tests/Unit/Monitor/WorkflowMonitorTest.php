@@ -413,7 +413,7 @@ class WorkflowMonitorTest extends TestCase
         $logs = $this->monitor->getExecutionLogs($instanceId);
 
         // 非详细模式下，节点进入日志不记录
-        $nodeEnteredLogs = array_filter($logs, fn($l) => $l['event_type'] === 'node.entered');
+        $nodeEnteredLogs = array_filter($logs, fn ($l) => $l['event_type'] === 'node.entered');
         $this->assertEmpty($nodeEnteredLogs);
     }
 

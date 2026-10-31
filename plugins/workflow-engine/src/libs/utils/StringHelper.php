@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -25,7 +26,7 @@ class StringHelper
      */
     public static function getPrimaryKey(string $namespace = ''): string
     {
-        $uid = uniqid("", true);
+        $uid = uniqid('', true);
         $data = $namespace
             . $_SERVER['REQUEST_TIME'] ?? ''
             . $_SERVER['HTTP_USER_AGENT'] ?? ''
@@ -88,10 +89,10 @@ class StringHelper
         $orderArray = explode(',', $order);
 
         if (count($orderArray) !== count($orderByArray)) {
-            throw new LFlowException("分页多重排序参数中,排序字段与排序方向的个数不相等");
+            throw new LFlowException('分页多重排序参数中,排序字段与排序方向的个数不相等');
         }
 
-        return 'ORDER BY ' . implode(', ', array_map(fn($field, $direction) => "$field $direction", $orderByArray, $orderArray));
+        return 'ORDER BY ' . implode(', ', array_map(fn ($field, $direction) => "$field $direction", $orderByArray, $orderArray));
     }
 
     /**
@@ -101,7 +102,7 @@ class StringHelper
      * @param string $tag
      * @return string
      */
-    public static function substringAfterColon(string $str, string $tag = ":"): string
+    public static function substringAfterColon(string $str, string $tag = ':'): string
     {
         $pos = strpos($str, $tag);
         return $pos !== false ? substr($str, $pos + 1) : $str;

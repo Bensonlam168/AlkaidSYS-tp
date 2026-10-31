@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,7 +14,8 @@
 
 namespace Alkaid\Workflow\Engine\event;
 
-class ProcessEventService {
+class ProcessEventService
+{
     private static array $listeners = [];
     private static array $events = [];
 
@@ -24,7 +26,8 @@ class ProcessEventService {
      *
      * @return void
      */
-    public static function addListener(IProcessEventListener $listener): void {
+    public static function addListener(IProcessEventListener $listener): void
+    {
         self::$listeners[] = $listener;
     }
 
@@ -35,7 +38,8 @@ class ProcessEventService {
      *
      * @return void
      */
-    public static function removeListener(IProcessEventListener $listener): void {
+    public static function removeListener(IProcessEventListener $listener): void
+    {
         $index = array_search($listener, self::$listeners);
         if ($index !== false) {
             unset(self::$listeners[$index]);
@@ -48,11 +52,12 @@ class ProcessEventService {
      * @param ProcessEvent $event 事件实例
      * @return void
      */
-    public static function triggerEvent(ProcessEvent $event): void {
+    public static function triggerEvent(ProcessEvent $event): void
+    {
         self::$events[] = $event; // 记录事件
-//        foreach (self::$listeners as $listener) {
-//            $listener->onEvent($event);
-//        }
+        //        foreach (self::$listeners as $listener) {
+        //            $listener->onEvent($event);
+        //        }
         // 调用处理类处理事件
         $eventHandler = new ProcessEventHandler();
         $eventHandler->handle($event);
@@ -65,7 +70,8 @@ class ProcessEventService {
      * @param mixed $sourceId 事件源
      * @return void
      */
-    public static function publishNotification(string $eventType, mixed $sourceId): void {
+    public static function publishNotification(string $eventType, mixed $sourceId): void
+    {
         $event = new ProcessEvent($eventType, $sourceId);
         self::triggerEvent($event);
     }
@@ -75,7 +81,8 @@ class ProcessEventService {
      *
      * @return array
      */
-    public static function getAllEvents(): array {
+    public static function getAllEvents(): array
+    {
         return self::$events;
     }
 
@@ -85,7 +92,8 @@ class ProcessEventService {
      * @param string $eventType 事件类型
      * @return array
      */
-    public static function getEventsByType(string $eventType): array {
+    public static function getEventsByType(string $eventType): array
+    {
         $filteredEvents = [];
         foreach (self::$events as $event) {
             if ($event->getEventType() === $eventType) {
@@ -95,4 +103,3 @@ class ProcessEventService {
         return $filteredEvents;
     }
 }
-

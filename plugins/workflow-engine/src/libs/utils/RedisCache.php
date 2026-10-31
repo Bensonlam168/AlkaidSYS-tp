@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -14,7 +15,6 @@
 namespace Alkaid\Workflow\Engine\libs\utils;
 
 use madong\ingenious\core\ServiceContext;
-use madong\ingenious\interface\IConfiguration;
 use Redis;
 
 class RedisCache
@@ -127,4 +127,3 @@ class RedisCache
         return $value;
     }
 }
-

@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace Alkaid\Workflow\Engine\Tests\Unit\Core;
 
 use Alkaid\Workflow\Engine\core\ProcessEngines;
-use Alkaid\Workflow\Engine\cfg\Configuration;
 use Alkaid\Workflow\Engine\interface\IProcessEngines;
-use Alkaid\Workflow\Engine\interface\IDict;
 use Alkaid\Workflow\Engine\Tests\TestCase;
 use madong\ingenious\libs\utils\Dict;
 

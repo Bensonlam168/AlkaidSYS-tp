@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -83,5 +84,3 @@ class Dict extends ArrayObject implements IDict
         return $dict;
     }
 }
-
-

@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use think\migration\db\Column;
 use think\migration\Migrator;
 
 /**
@@ -251,7 +250,7 @@ class OptimizeIndexes extends Migrator
                 $db->execute($sql);
 
                 // 创建激活触发器的部分索引
-                $sql = "CREATE INDEX idx_active_triggers ON workflow_triggers (tenant_id, type, is_active) WHERE is_active = 1";
+                $sql = 'CREATE INDEX idx_active_triggers ON workflow_triggers (tenant_id, type, is_active) WHERE is_active = 1';
                 $db->execute($sql);
 
                 $this->output->writeln('成功创建部分索引');

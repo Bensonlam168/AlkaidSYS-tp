@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,13 +14,11 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-
 use madong\interface\IDict;
 use madong\ingenious\interface\model\IProcessInstance;
 use madong\ingenious\interface\services\IProcessDefineService;
 use madong\ingenious\interface\services\IProcessInstanceService;
 use madong\ingenious\interface\services\IProcessTaskService;
-
 
 /**
  * @author Mr.April
@@ -27,7 +26,6 @@ use madong\ingenious\interface\services\IProcessTaskService;
  */
 interface IProcessEngines
 {
-
     /**
      * 获取流程定义服务
      *

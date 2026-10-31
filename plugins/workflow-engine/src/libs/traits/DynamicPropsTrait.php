@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -15,7 +16,6 @@ namespace Alkaid\Workflow\Engine\libs\traits;
 
 use ReflectionClass;
 use ReflectionUnionType;
-
 
 /**
  * 动态地添加getter和setter方法来获取和设置私有属性
@@ -87,7 +87,7 @@ trait DynamicPropsTrait
         $type = $property->getType();
         if ($type !== null) {
             return $type instanceof ReflectionUnionType
-                ? implode(',', array_map(fn($t) => $t->getName(), $type->getTypes()))
+                ? implode(',', array_map(fn ($t) => $t->getName(), $type->getTypes()))
                 : $type->getName();
         }
         return null;

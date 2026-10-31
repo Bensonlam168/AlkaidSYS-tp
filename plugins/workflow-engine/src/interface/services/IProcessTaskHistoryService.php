@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -10,8 +11,8 @@
  * Software Registration Number: 2024SR0694589
  * Official Website: https://madong.tech
  */
-namespace Alkaid\Workflow\Engine\interface\services;
 
+namespace Alkaid\Workflow\Engine\interface\services;
 
 use madong\ingenious\interface\model\IProcessTaskHistory;
 

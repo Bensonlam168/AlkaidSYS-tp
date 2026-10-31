@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -15,5 +16,4 @@ namespace Alkaid\Workflow\Engine\interface\model;
 
 interface IProcessFormHistory
 {
-
 }

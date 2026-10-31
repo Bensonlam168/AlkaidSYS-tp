@@ -92,7 +92,7 @@ class EndNode extends AbstractNode
             // 如果没有配置映射，返回所有非内部变量
             return array_filter(
                 $context->getVariables(),
-                fn($key) => !str_starts_with($key, '_'),
+                fn ($key) => !str_starts_with($key, '_'),
                 ARRAY_FILTER_USE_KEY
             );
         }
@@ -116,7 +116,7 @@ class EndNode extends AbstractNode
     {
         return preg_replace_callback(
             '/\$\{(\w+)\}/',
-            fn($matches) => (string) $context->getVariable($matches[1], $matches[0]),
+            fn ($matches) => (string) $context->getVariable($matches[1], $matches[0]),
             $message
         );
     }

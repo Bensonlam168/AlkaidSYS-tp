@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Alkaid\Workflow\Engine\Tests\Unit\Nodes;
 
 use Alkaid\Workflow\Engine\Nodes\Interfaces\NodeInterface;
-use Alkaid\Workflow\Engine\Nodes\NodeResult;
 use Alkaid\Workflow\Engine\Nodes\Types\GatewayNode;
 use Alkaid\Workflow\Engine\Swoole\Execution\ExecutionContext;
 use PHPUnit\Framework\TestCase;

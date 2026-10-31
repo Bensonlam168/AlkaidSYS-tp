@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,8 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-
-
 use madong\ingenious\core\Execution;
 
 /**
@@ -25,7 +24,6 @@ use madong\ingenious\core\Execution;
  */
 interface IProcessNodeInterceptor
 {
-
     /**
      * 拦截方法，参数为执行对象
      *

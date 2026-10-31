@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -23,7 +24,6 @@ use madong\ingenious\enums\err\LfErrEnum;
 
 class DecisionModel extends NodeModel implements IDecisionModel
 {
-
     use DynamicPropsTrait;
 
     private string|null $expr; // 决策表达式
@@ -39,7 +39,7 @@ class DecisionModel extends NodeModel implements IDecisionModel
         if (isset($this->expr) && !empty($this->expr)) {
             $obj          = Expression::eval($this->expr, $execution->getArgs());
             $nextNodeName = (string)$obj;
-        } else if (isset($this->handleClass) && !empty($this->handleClass)) {
+        } elseif (isset($this->handleClass) && !empty($this->handleClass)) {
             $decisionHandler = ServiceContext::find($this->handleClass);
             $nextNodeName    = $decisionHandler->decide($execution);
         }
@@ -51,7 +51,7 @@ class DecisionModel extends NodeModel implements IDecisionModel
                 $isFound = true;
                 $transitionModel->setEnabled(true);
                 $transitionModel->execute($execution);
-            } else if ($transitionModel->getTo() === $nextNodeName) {
+            } elseif ($transitionModel->getTo() === $nextNodeName) {
                 // 找到对应的下一个节点
                 $isFound = true;
                 $transitionModel->setEnabled(true);

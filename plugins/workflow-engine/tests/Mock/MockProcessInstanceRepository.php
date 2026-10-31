@@ -85,7 +85,7 @@ class MockProcessInstanceRepository extends ProcessInstanceRepository
      */
     public function createTestInstance(array $override = []): IProcessInstance
     {
-        $instance = new class($override) implements IProcessInstance {
+        $instance = new class ($override) implements IProcessInstance {
             private array $data;
 
             public function __construct(array $data = [])

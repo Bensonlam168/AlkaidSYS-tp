@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -30,7 +31,6 @@ use madong\ingenious\enums\ProcessTaskPerformTypeEnum;
  */
 class CreateTaskHandler implements IHandler
 {
-
     private TaskModel $taskModel;
 
     public function __construct(TaskModel $taskModel)

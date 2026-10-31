@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -12,7 +13,6 @@
  */
 
 namespace Alkaid\Workflow\Engine\processor\handler;
-
 
 use madong\ingenious\core\Execution;
 use madong\ingenious\event\ProcessEventService;
@@ -33,7 +33,6 @@ use madong\ingenious\enums\ProcessSubmitTypeEnum;
  */
 class EndProcessHandler implements IHandler
 {
-
     private EndModel $endModel;
 
     public function __construct(EndModel $endModel)
@@ -59,9 +58,13 @@ class EndProcessHandler implements IHandler
             $processInstance = $execution->getProcessInstance();
             if (!empty($processInstance->getData('parent_id'))) {
                 $parentInstance = $execution->getEngine()->processInstanceService()->getById($processInstance->getData('parent_id'));
-                if ($parentInstance == null) return;
+                if ($parentInstance == null) {
+                    return;
+                }
                 $pm = $execution->getEngine()->processDefineService()->getProcessModel($parentInstance->getData('process_define_id'));
-                if ($pm == null) return;
+                if ($pm == null) {
+                    return;
+                }
                 $spm          = $pm->getNode($processInstance->getData('parent_node_name'));
                 $newExecution = new Execution();
                 $newExecution->setEngine($execution->getEngine());

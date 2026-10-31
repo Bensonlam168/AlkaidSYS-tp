@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -24,7 +25,6 @@ use madong\ingenious\libs\traits\EnumTrait;
  */
 enum ProcessDefineStateEnum: int implements IEnum
 {
-
     use EnumTrait;
 
     case DISABLE = 0;

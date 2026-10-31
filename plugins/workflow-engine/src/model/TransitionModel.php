@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -48,11 +49,13 @@ class TransitionModel extends BaseModel implements IActionInterface
      */
     public function execute(IExecution $execution): void
     {
-        if (!$this->enabled) return;
+        if (!$this->enabled) {
+            return;
+        }
         if ($this->target instanceof TaskModel) {
             // 创建阻塞任务
             $this->fire(new CreateTaskHandler($this->target), $execution);
-        } else if ($this->target instanceof SubProcessModel) {
+        } elseif ($this->target instanceof SubProcessModel) {
             // 如果为子流程，则启动子流程
             $this->fire(new StartSubProcessHandler($this->target), $execution);
         } else {

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -12,7 +13,6 @@
  */
 
 namespace Alkaid\Workflow\Engine\model;
-
 
 use madong\ingenious\event\ProcessEventService;
 use madong\ingenious\interface\IExecution;

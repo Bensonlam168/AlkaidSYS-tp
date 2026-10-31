@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,8 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\scheduling;
 
-
-
 use madong\ingenious\interface\IDict;
 
 /**
@@ -25,8 +24,8 @@ use madong\ingenious\interface\IDict;
  */
 interface IScheduler
 {
-    const SOURCE_ID_KEY = "source_id";
-    const SOURCE_TYPE_KEY = "source_type";
+    public const SOURCE_ID_KEY = 'source_id';
+    public const SOURCE_TYPE_KEY = 'source_type';
 
     /**
      * 添加作用调度器

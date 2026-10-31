@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -23,14 +24,13 @@ use madong\ingenious\ex\LFlowException;
  */
 abstract class AssertHelper
 {
-
     /**
      * 断言表达式为false
      *
      * @param bool   $expression
      * @param string $message 异常打印信
      */
-    public static function isTrue(bool $expression, string $message = "[Assertion failed] - this expression must be true"): void
+    public static function isTrue(bool $expression, string $message = '[Assertion failed] - this expression must be true'): void
     {
         if (!$expression) {
             throw new LFlowException($message);
@@ -43,7 +43,7 @@ abstract class AssertHelper
      * @param bool   $expression
      * @param string $message
      */
-    public static function notTrue(bool $expression, string $message = "[Assertion failed] - this expression must be true"): void
+    public static function notTrue(bool $expression, string $message = '[Assertion failed] - this expression must be true'): void
     {
         if ($expression) {
             throw new LFlowException($message);
@@ -57,7 +57,7 @@ abstract class AssertHelper
      * @param string        $message
      *
      */
-    public static function isNull(mixed $object, string $message = "[Assertion failed] - the object argument must be null"): void
+    public static function isNull(mixed $object, string $message = '[Assertion failed] - the object argument must be null'): void
     {
         if (!empty($object)) {
             throw new LFlowException($message);
@@ -71,7 +71,7 @@ abstract class AssertHelper
      * @param string             $message
      *
      */
-    public static function notNull(mixed $object, string $message = "[Assertion failed] - this argument is required; it must not be null"): void
+    public static function notNull(mixed $object, string $message = '[Assertion failed] - this argument is required; it must not be null'): void
     {
         if (empty($object)) {
             throw new LFlowException($message);
@@ -85,7 +85,7 @@ abstract class AssertHelper
      * @param string      $message
      *
      */
-    public static function notEmpty(string|null $str, string $message = "[Assertion failed] - this argument is required; it must not be null or empty"): void
+    public static function notEmpty(string|null $str, string $message = '[Assertion failed] - this argument is required; it must not be null or empty'): void
     {
         if ($str == null || strlen($str) == 0) {
             throw new LFlowException($message);

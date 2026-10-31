@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -58,7 +59,6 @@ use ReflectionClass;
  */
 abstract class NodeModel extends BaseModel implements IActionInterface
 {
-
     use DynamicPropsTrait;
 
     protected string $layout = '';// 布局属性(x,y,w,h)
@@ -75,7 +75,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
      *
      * @return mixed
      */
-    abstract function exec(IExecution $execution);
+    abstract public function exec(IExecution $execution);
 
     /**
      * @throws \ReflectionException
@@ -160,7 +160,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
                 }
             }
         } catch (LFlowException $e) {
-            Logger::error("拦截器执行失败=" . json_encode($e->getMessage()));
+            Logger::error('拦截器执行失败=' . json_encode($e->getMessage()));
             throw new LFlowException($e->getMessage());
         }
     }

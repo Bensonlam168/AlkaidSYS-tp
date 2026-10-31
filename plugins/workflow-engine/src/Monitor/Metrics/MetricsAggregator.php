@@ -437,16 +437,16 @@ class MetricsAggregator
 
         // 时间过滤
         if (isset($options['start_time'])) {
-            $data = array_filter($data, fn($p) => $p['timestamp'] >= $options['start_time']);
+            $data = array_filter($data, fn ($p) => $p['timestamp'] >= $options['start_time']);
         }
         if (isset($options['end_time'])) {
-            $data = array_filter($data, fn($p) => $p['timestamp'] <= $options['end_time']);
+            $data = array_filter($data, fn ($p) => $p['timestamp'] <= $options['end_time']);
         }
 
         // 标签过滤
         if (isset($options['tags'])) {
             foreach ($options['tags'] as $key => $value) {
-                $data = array_filter($data, fn($p) => ($p['tags'][$key] ?? null) === $value);
+                $data = array_filter($data, fn ($p) => ($p['tags'][$key] ?? null) === $value);
             }
         }
 
@@ -469,7 +469,7 @@ class MetricsAggregator
 
         $this->dataPoints[$metricName] = array_filter(
             $this->dataPoints[$metricName],
-            fn($p) => $p['timestamp'] >= $cutoff
+            fn ($p) => $p['timestamp'] >= $cutoff
         );
     }
 

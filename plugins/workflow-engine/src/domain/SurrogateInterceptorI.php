@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -12,7 +13,6 @@
  */
 
 namespace Alkaid\Workflow\Engine\domain;
-
 
 use madong\ingenious\interface\IExecution;
 use madong\ingenious\interface\IProcessInterceptor;

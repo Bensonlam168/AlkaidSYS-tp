@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -19,7 +20,6 @@ use madong\ingenious\processor\IHandler;
 
 class BaseModel
 {
-
     use DynamicPropsTrait;
 
     /**

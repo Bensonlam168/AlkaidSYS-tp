@@ -6,7 +6,6 @@ namespace Alkaid\Workflow\Engine\Tests\Unit\Swoole;
 
 use Alkaid\Workflow\Engine\Swoole\CoroutineExecutor;
 use Alkaid\Workflow\Engine\Swoole\Execution\ExecutionContext;
-use Alkaid\Workflow\Engine\Swoole\Execution\NodeExecutionResult;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
@@ -293,7 +292,7 @@ class CoroutineExecutorTest extends TestCase
      */
     private function createMockNode(): object
     {
-        return new class {
+        return new class () {
             public function getName(): string
             {
                 return 'mock_node';

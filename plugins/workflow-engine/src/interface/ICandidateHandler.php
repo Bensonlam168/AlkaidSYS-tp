@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,7 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-
 use madong\ingenious\model\TaskModel;
 
 /**
@@ -24,7 +24,6 @@ use madong\ingenious\model\TaskModel;
  */
 interface ICandidateHandler
 {
-
     /**
      * 根据任务模型参数获取候选人信息
      *
@@ -32,6 +31,6 @@ interface ICandidateHandler
      *
      * @return array
      */
-    public function handle(TaskModel $model):array;
+    public function handle(TaskModel $model): array;
 
 }

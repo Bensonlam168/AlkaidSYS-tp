@@ -10,7 +10,6 @@ use Alkaid\Workflow\Engine\Definition\WorkflowBuilder;
 use Alkaid\Workflow\Engine\Definition\WorkflowDefinition;
 use Alkaid\Workflow\Engine\Definition\WorkflowValidator;
 use Alkaid\Workflow\Engine\Nodes\Interfaces\NodeInterface;
-use Alkaid\Workflow\Engine\Nodes\Types\StartNode;
 use Alkaid\Workflow\Engine\Nodes\Types\EndNode;
 use Alkaid\Workflow\Engine\Nodes\Types\TaskNode;
 use PHPUnit\Framework\TestCase;

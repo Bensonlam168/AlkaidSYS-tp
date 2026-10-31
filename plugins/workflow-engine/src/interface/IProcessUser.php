@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,8 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-
-
 /**
  * 工作流用户信息API
  *
@@ -23,7 +22,6 @@ namespace Alkaid\Workflow\Engine\interface;
  */
 interface IProcessUser
 {
-
     /**
      * @param string|int $id
      *

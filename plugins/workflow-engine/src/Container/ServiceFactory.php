@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Alkaid\Workflow\Engine\Container;
 
-use Alkaid\Workflow\Engine\Container\WorkflowContainer;
 use Alkaid\Workflow\Engine\cfg\Configuration;
 use think\Container as ThinkContainer;
 

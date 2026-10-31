@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -40,7 +41,7 @@ class ServiceContext implements IServiceContext
         $builder = new \DI\ContainerBuilder();
         $builder->addDefinitions($context);
         $builder->useAutowiring(true);
-//        $builder->useAnnotations(false); 7.x开始废弃默认开启
+        //        $builder->useAnnotations(false); 7.x开始废弃默认开启
         self::$container = $builder->build();
     }
 
@@ -167,4 +168,3 @@ class ServiceContext implements IServiceContext
         return !empty(self::$config['debug']) && self::$config['debug'] === true;
     }
 }
-

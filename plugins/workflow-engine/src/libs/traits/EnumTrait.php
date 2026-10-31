@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -39,7 +40,7 @@ trait EnumTrait
     {
         foreach (static::cases() as $enum) {
             if ($enum->value === $codeOrName || $enum->name === $codeOrName) {
-//                return $enum;
+                //                return $enum;
                 return $enum->value;
             }
         }
@@ -48,7 +49,7 @@ trait EnumTrait
 
     public static function getEnumValues(): array
     {
-        return array_map(fn($case) => $case->value, static::cases());
+        return array_map(fn ($case) => $case->value, static::cases());
     }
 
     public static function getValueByLabel(string $label): string|int|null

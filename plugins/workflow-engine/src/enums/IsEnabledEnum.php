@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,13 +14,11 @@
 
 namespace Alkaid\Workflow\Engine\enums;
 
-
 use madong\ingenious\interface\IEnum;
 use madong\ingenious\libs\traits\EnumTrait;
 
 enum IsEnabledEnum: int implements IEnum
 {
-
     use EnumTrait;
 
     case NO = 0;

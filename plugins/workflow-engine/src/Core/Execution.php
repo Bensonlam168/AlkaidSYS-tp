@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -36,7 +37,6 @@ use madong\ingenious\enums\ProcessTaskStateEnum;
  */
 class Execution implements IExecution
 {
-
     use DynamicPropsTrait;
 
     /**

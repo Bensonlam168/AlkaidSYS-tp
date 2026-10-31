@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -17,7 +18,6 @@ use madong\ingenious\interface\IExecution;
 use madong\ingenious\interface\nodes\IJoinModel;
 use madong\ingenious\libs\traits\DynamicPropsTrait;
 use madong\ingenious\processor\handler\MergeBranchHandler;
-
 
 /**
  * 合并模型

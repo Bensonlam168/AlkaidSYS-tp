@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -11,10 +12,7 @@
  * Official Website: https://madong.tech
  */
 
-
 namespace Alkaid\Workflow\Engine\processor;
-
-
 
 use madong\ingenious\interface\IExecution;
 
@@ -26,11 +24,9 @@ use madong\ingenious\interface\IExecution;
  */
 interface IHandler
 {
-
     /**
      * 子类需要实现的方法，来处理具体的操作
      * @param \madong\ingenious\interface\IExecution $execution
      */
     public function handle(IExecution $execution): void;
 }
-

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -36,16 +37,16 @@ class PropertyCopier
         }
     }
 
-/**
-     * 给对象类赋值私有属性
-     *
-     * @param object $data
-     * @param string $className
-     * @param bool   $strictMode 是否严格模式
-     *
-     * @return object
-     * @throws \ReflectionException
-     */
+    /**
+         * 给对象类赋值私有属性
+         *
+         * @param object $data
+         * @param string $className
+         * @param bool   $strictMode 是否严格模式
+         *
+         * @return object
+         * @throws \ReflectionException
+         */
     public static function jsonObjToLfModel(object $data, string $className, bool $strictMode = false): object
     {
         $reflection = new ReflectionClass($className);

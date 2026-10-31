@@ -484,7 +484,7 @@ class TriggerManager
         } else {
             $this->listeners[$event] = array_filter(
                 $this->listeners[$event],
-                fn($l) => $l !== $listener
+                fn ($l) => $l !== $listener
             );
         }
 

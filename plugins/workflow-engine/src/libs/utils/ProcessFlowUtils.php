@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -63,11 +64,12 @@ class ProcessFlowUtils
             $args->put(ProcessConstEnum::AUTO_GEN_TITLE->value, $args->get('f_title'));
         } else {
             // 申请人的xx流程-日期
-            $format = "%s的%s-%s";
-            $args->put(ProcessConstEnum::AUTO_GEN_TITLE->value, sprintf($format,
+            $format = '%s的%s-%s';
+            $args->put(ProcessConstEnum::AUTO_GEN_TITLE->value, sprintf(
+                $format,
                 $args->get(ProcessConstEnum::USER_REAL_NAME->value),
                 $processDefineDisplayName,
-                date("Y-m-d H:i")
+                date('Y-m-d H:i')
             ));
         }
     }

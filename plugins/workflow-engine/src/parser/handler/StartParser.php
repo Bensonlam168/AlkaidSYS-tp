@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -25,7 +26,7 @@ class StartParser extends AbstractINodeParser
 
     }
 
-    public function newModel():NodeModel
+    public function newModel(): NodeModel
     {
         return new StartModel();
     }

@@ -228,7 +228,7 @@ class TenantScopeManager
     public function insertAll(array $dataList): int
     {
         $dataList = array_map(
-            fn($data) => $this->applyTenantId($data),
+            fn ($data) => $this->applyTenantId($data),
             $dataList
         );
         return Db::name($this->table)->insertAll($dataList);

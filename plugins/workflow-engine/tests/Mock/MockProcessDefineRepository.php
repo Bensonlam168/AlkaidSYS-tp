@@ -83,7 +83,7 @@ class MockProcessDefineRepository extends ProcessDefineRepository
      */
     public function createTestDefinition(array $override = []): IProcessDefine
     {
-        $definition = new class($override) implements IProcessDefine {
+        $definition = new class ($override) implements IProcessDefine {
             private array $data;
 
             public function __construct(array $data = [])

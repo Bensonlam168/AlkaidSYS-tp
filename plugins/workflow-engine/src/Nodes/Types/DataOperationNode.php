@@ -418,7 +418,7 @@ class DataOperationNode extends AbstractNode
         return [
             'data' => $insertedIds,
             'affected_rows' => count($insertedIds),
-            'message' => "已创建 " . count($insertedIds) . " 条记录",
+            'message' => '已创建 ' . count($insertedIds) . ' 条记录',
         ];
     }
 

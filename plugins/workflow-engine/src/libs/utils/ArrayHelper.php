@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -91,8 +92,8 @@ class ArrayHelper
      */
     public static function humpCamelize(string $str, string $separator = '_'): string|null
     {
-        $str = $separator . str_replace($separator, " ", strtolower($str));
-        return ltrim(str_replace(" ", "", ucwords($str)), $separator);
+        $str = $separator . str_replace($separator, ' ', strtolower($str));
+        return ltrim(str_replace(' ', '', ucwords($str)), $separator);
     }
 
     /**
@@ -180,7 +181,7 @@ class ArrayHelper
         }
 
         return $decoded;
-}
+    }
 
     /**
      * 参数过滤处理

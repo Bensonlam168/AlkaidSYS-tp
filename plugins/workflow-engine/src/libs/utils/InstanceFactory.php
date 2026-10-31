@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -15,7 +16,6 @@ namespace Alkaid\Workflow\Engine\libs\utils;
 
 use InvalidArgumentException;
 use ReflectionClass;
-
 
 class InstanceFactory
 {
@@ -36,4 +36,3 @@ class InstanceFactory
         }
     }
 }
-

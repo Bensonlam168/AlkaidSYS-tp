@@ -6,7 +6,6 @@ namespace Alkaid\Workflow\Engine\Integration;
 
 use Alkaid\Workflow\Engine\Container\ServiceFactory;
 use Alkaid\Workflow\Engine\Container\WorkflowContainer;
-use think\facade\Config;
 use think\facade\Log;
 
 /**

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -21,7 +22,7 @@ namespace Alkaid\Workflow\Engine\ex;
  */
 class LFlowException extends \RuntimeException
 {
-     public function __construct($message, $replace = [], $code = 0, \Throwable $previous = null)
+    public function __construct($message, $replace = [], $code = 0, \Throwable $previous = null)
     {
         if (is_array($message)) {
             $errInfo = $message;

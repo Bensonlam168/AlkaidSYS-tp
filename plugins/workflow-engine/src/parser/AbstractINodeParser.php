@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,8 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\parser;
 
-
-use madong\interface\IDict;
 use madong\helper\Dict;
 use madong\ingenious\libs\utils\ProcessFlowUtils;
 use madong\ingenious\libs\utils\StringHelper;
@@ -51,7 +50,7 @@ abstract class AbstractINodeParser implements INodeParser
         $y = $lfNode->getY();
         $w = !empty($properties->get(INodeParser::WIDTH_KEY)) ? $properties->get(INodeParser::WIDTH_KEY) : 0;
         $h = !empty($properties->get(INodeParser::HEIGHT_KEY)) ? $properties->get(INodeParser::HEIGHT_KEY) : 0;
-        $this->nodeModel->setLayout(sprintf("%s,%s;%s,%s", $x, $y, $w, $h));
+        $this->nodeModel->setLayout(sprintf('%s,%s;%s,%s', $x, $y, $w, $h));
         // 解析拦截器
         $this->nodeModel->setPreInterceptors($properties->get(INodeParser::PRE_INTERCEPTORS_KEY));
         $this->nodeModel->setPostInterceptors($properties->get(INodeParser::POST_INTERCEPTORS_KEY));
@@ -71,16 +70,16 @@ abstract class AbstractINodeParser implements INodeParser
                 $pointsList = $edge->getPointsList();
                 $gValues    = [];
                 foreach ($pointsList as $point) {
-                    $gValues[] = $point->x . "," . $point->y;
+                    $gValues[] = $point->x . ',' . $point->y;
                 }
-                $transitionModel->setG(implode(";", $gValues));
+                $transitionModel->setG(implode(';', $gValues));
             } else {
                 if (!empty($edge->getStartPoint()) && !empty($edge->getEndPoint())) {
                     $startPointX = $edge->getStartPoint()->getX();
                     $startPointY = $edge->getStartPoint()->getY();
                     $endPointX   = $edge->getEndPoint()->getX();
                     $endPointY   = $edge->getEndPoint()->getY();
-                    $transitionModel->setG(sprintf("%s,%s;%s,%s", $startPointX, $startPointY, $endPointX, $endPointY));
+                    $transitionModel->setG(sprintf('%s,%s;%s,%s', $startPointX, $startPointY, $endPointX, $endPointY));
                 }
             }
             $output   = $this->nodeModel->getOutputs();
@@ -96,14 +95,14 @@ abstract class AbstractINodeParser implements INodeParser
      *
      * @param \madong\ingenious\model\logicflow\LfNode $lfNode
      */
-    abstract function parseNode(LfNode $lfNode): void;
+    abstract public function parseNode(LfNode $lfNode): void;
 
     /**
      * 由子类各自创建节点模型对象
      *
      * @return \madong\ingenious\model\NodeModel
      */
-    abstract function newModel(): NodeModel;
+    abstract public function newModel(): NodeModel;
 
     public function getModel(): NodeModel
     {

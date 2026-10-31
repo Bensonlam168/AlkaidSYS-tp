@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -25,7 +26,6 @@ use madong\ingenious\model\TaskModel;
 
 class ModelParser
 {
-
     /**
      * 确保对象的实例化是在受控的环境中进行
      */
@@ -53,7 +53,8 @@ class ModelParser
             $properties = new Dict();
             $properties->putAll($node->properties ?? (object)[]);
             $node->properties = $properties;
-            $nodes[]          = PropertyCopier::jsonObjToLfModel($node, LfNode::class);;
+            $nodes[]          = PropertyCopier::jsonObjToLfModel($node, LfNode::class);
+            ;
         }
 
         foreach ($lfModel->getEdges() as $edge) {
@@ -77,7 +78,7 @@ class ModelParser
         $processModel->setPreInterceptors($lfModel->getPreInterceptors());
         // 流程节点信息
         foreach ($nodes as $node) {
-            $type       = str_replace(INodeParser::NODE_NAME_PREFIX, "", $node->getType());
+            $type       = str_replace(INodeParser::NODE_NAME_PREFIX, '', $node->getType());
             $nodeParser = ServiceContext::find($type);
             if ($nodeParser != null) {
                 $nodeParser->parse($node, $edges);

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -24,7 +25,6 @@ use madong\ingenious\libs\traits\EnumTrait;
  */
 enum LfErrEnum: int implements IEnum
 {
-
     use EnumTrait;
 
     case NOT_FOUND_NEXT_NODE = 0;

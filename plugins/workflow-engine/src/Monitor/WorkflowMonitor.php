@@ -472,29 +472,29 @@ class WorkflowMonitor implements WorkflowMonitorInterface
         // 过滤日志级别
         if (isset($options['level'])) {
             $level = $options['level'];
-            $logs = array_filter($logs, fn($log) => $log->getLevel() === $level);
+            $logs = array_filter($logs, fn ($log) => $log->getLevel() === $level);
         }
 
         // 过滤事件类型
         if (isset($options['event_type'])) {
             $eventType = $options['event_type'];
-            $logs = array_filter($logs, fn($log) => $log->getEventType() === $eventType);
+            $logs = array_filter($logs, fn ($log) => $log->getEventType() === $eventType);
         }
 
         // 过滤节点
         if (isset($options['node_id'])) {
             $nodeId = $options['node_id'];
-            $logs = array_filter($logs, fn($log) => $log->getNodeId() === $nodeId);
+            $logs = array_filter($logs, fn ($log) => $log->getNodeId() === $nodeId);
         }
 
         // 时间范围过滤
         if (isset($options['start_time'])) {
             $startTime = $options['start_time'];
-            $logs = array_filter($logs, fn($log) => $log->getTimestamp() >= $startTime);
+            $logs = array_filter($logs, fn ($log) => $log->getTimestamp() >= $startTime);
         }
         if (isset($options['end_time'])) {
             $endTime = $options['end_time'];
-            $logs = array_filter($logs, fn($log) => $log->getTimestamp() <= $endTime);
+            $logs = array_filter($logs, fn ($log) => $log->getTimestamp() <= $endTime);
         }
 
         // 分页
@@ -503,7 +503,7 @@ class WorkflowMonitor implements WorkflowMonitorInterface
         $logs = array_slice(array_values($logs), $offset, $limit);
 
         // 转换为数组
-        return array_map(fn($log) => $log->toArray(), $logs);
+        return array_map(fn ($log) => $log->toArray(), $logs);
     }
 
     /**
@@ -521,7 +521,7 @@ class WorkflowMonitor implements WorkflowMonitorInterface
         }
 
         // 按开始时间排序
-        usort($history, fn($a, $b) => $a['started_at'] <=> $b['started_at']);
+        usort($history, fn ($a, $b) => $a['started_at'] <=> $b['started_at']);
 
         return $history;
     }

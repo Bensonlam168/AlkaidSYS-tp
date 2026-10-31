@@ -7,7 +7,6 @@ namespace Alkaid\Workflow\Engine\Tests\Unit\Nodes;
 use Alkaid\Workflow\Engine\Nodes\Interfaces\NodeInterface;
 use Alkaid\Workflow\Engine\Nodes\NodeRegistry;
 use Alkaid\Workflow\Engine\Nodes\Types\EndNode;
-use Alkaid\Workflow\Engine\Nodes\Types\GatewayNode;
 use Alkaid\Workflow\Engine\Nodes\Types\StartNode;
 use Alkaid\Workflow\Engine\Nodes\Types\TaskNode;
 use PHPUnit\Framework\TestCase;

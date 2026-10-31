@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -17,17 +18,6 @@ use madong\ingenious\core\ServiceContext;
 use madong\ingenious\event\ProcessEventService;
 use madong\ingenious\ex\LFlowException;
 use madong\ingenious\interface\IConfiguration;
-use madong\ingenious\interface\services\IProcessCcInstanceService;
-use madong\ingenious\interface\services\IProcessDefineFavoriteService;
-use madong\ingenious\interface\services\IProcessDefineService;
-use madong\ingenious\interface\services\IProcessDesignHistoryService;
-use madong\ingenious\interface\services\IProcessDesignService;
-use madong\ingenious\interface\services\IProcessFormHistoryService;
-use madong\ingenious\interface\services\IProcessInstanceService;
-use madong\ingenious\interface\services\IProcessSurrogateService;
-use madong\ingenious\interface\services\IProcessTaskActorService;
-use madong\ingenious\interface\services\IProcessTaskService;
-use madong\ingenious\interface\services\IProcessTypeService;
 use madong\ingenious\libs\utils\Logger;
 use madong\ingenious\parser\handler\CustomParser;
 use madong\ingenious\parser\handler\DecisionParser;
@@ -47,7 +37,6 @@ use madong\ingenious\scheduling\SchedulerIProcessEventListener;
  */
 class Configuration implements IConfiguration
 {
-
     public function __construct($config = [])
     {
         try {
@@ -61,7 +50,7 @@ class Configuration implements IConfiguration
             $this->defaultService();
         } catch (\Throwable $e) {
             Logger::debug($e->getMessage());
-            throw new  LFlowException($e->getMessage(), [], $e->getCode());
+            throw new LFlowException($e->getMessage(), [], $e->getCode());
         }
     }
 
@@ -88,18 +77,18 @@ class Configuration implements IConfiguration
     private function defaultService(): void
     {
         $parse = [
-            "decision"     => DecisionParser::class,
-            "end"          => EndParser::class,
-            "fork"         => ForkParser::class,
-            "join"         => JoinParser::class,
-            "start"        => StartParser::class,
-            "task"         => TaskParser::class,
-            "custom"       => CustomParser::class,
-            "wfSubProcess" => WfSubProcessParser::class,
+            'decision'     => DecisionParser::class,
+            'end'          => EndParser::class,
+            'fork'         => ForkParser::class,
+            'join'         => JoinParser::class,
+            'start'        => StartParser::class,
+            'task'         => TaskParser::class,
+            'custom'       => CustomParser::class,
+            'wfSubProcess' => WfSubProcessParser::class,
         ];
         $event = [
-            "processEventService"           => ProcessEventService::class,
-            "schedulerProcessEventListener" => SchedulerIProcessEventListener::class,
+            'processEventService'           => ProcessEventService::class,
+            'schedulerProcessEventListener' => SchedulerIProcessEventListener::class,
         ];
         ServiceContext::registerBatch(array_merge($parse, $event));
     }

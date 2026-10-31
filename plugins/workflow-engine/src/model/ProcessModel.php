@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,7 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-
 use madong\ingenious\core\ServiceContext;
 use madong\ingenious\ex\LFlowException;
 use madong\ingenious\interface\ICandidateHandler;
@@ -21,7 +21,6 @@ use madong\ingenious\interface\nodes\IProcessModel;
 use madong\ingenious\libs\traits\DynamicPropsTrait;
 use madong\ingenious\libs\utils\InstanceFactory;
 use madong\ingenious\libs\utils\StringHelper;
-
 
 /**
  * @method setName($getName)
@@ -101,7 +100,9 @@ class ProcessModel extends BaseModel implements IProcessModel
     {
         $res       = [];
         $nodeModel = $this->getNode($nodeName);
-        if (empty($nodeModel)) return $res;
+        if (empty($nodeModel)) {
+            return $res;
+        }
         // 获取所有输出边的目标节点
         $nextNodeModelList = array_map(function ($item) {
             return $item->getTarget();

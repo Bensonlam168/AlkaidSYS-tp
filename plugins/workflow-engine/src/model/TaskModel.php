@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -42,7 +43,6 @@ use madong\ingenious\enums\ProcessTaskTypeEnum;
  */
 class TaskModel extends NodeModel implements ITaskModel
 {
-
     use DynamicPropsTrait;
 
     private string|null $form; // 表单标识

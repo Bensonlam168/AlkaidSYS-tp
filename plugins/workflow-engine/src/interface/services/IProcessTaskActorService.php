@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -23,7 +24,6 @@ use madong\ingenious\interface\model\IProcessTaskActor;
  */
 interface IProcessTaskActorService
 {
-
     public function created(object $param): ?IProcessTaskActor;
 
     public function updated(object $param): bool;

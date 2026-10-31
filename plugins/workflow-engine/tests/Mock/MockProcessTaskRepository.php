@@ -99,7 +99,7 @@ class MockProcessTaskRepository extends ProcessTaskRepository
      */
     public function createTestTask(array $override = []): IProcessTask
     {
-        $task = new class($override) implements IProcessTask {
+        $task = new class ($override) implements IProcessTask {
             private array $data;
 
             public function __construct(array $data = [])

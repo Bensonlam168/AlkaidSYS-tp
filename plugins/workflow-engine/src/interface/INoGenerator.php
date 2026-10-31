@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -11,9 +12,7 @@
  * Official Website: https://madong.tech
  */
 
-
 namespace Alkaid\Workflow\Engine\interface;
-
 
 use madong\ingenious\model\ProcessModel;
 

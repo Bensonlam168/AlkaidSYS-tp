@@ -216,7 +216,7 @@ class ValidationResultTest extends TestCase
         ];
 
         $result = new ValidationResult($messages);
-        $filtered = $result->filter(fn($msg) => $msg['level'] === WorkflowValidator::LEVEL_ERROR);
+        $filtered = $result->filter(fn ($msg) => $msg['level'] === WorkflowValidator::LEVEL_ERROR);
 
         $this->assertEquals(1, $filtered->getMessageCount());
         $this->assertTrue($filtered->hasErrorCode('ERR'));

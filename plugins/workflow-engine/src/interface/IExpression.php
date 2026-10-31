@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -15,7 +16,6 @@ namespace Alkaid\Workflow\Engine\interface;
 
 interface IExpression
 {
-
     /**
      * 引擎表达式
      *

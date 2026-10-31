@@ -6,10 +6,8 @@ namespace Alkaid\Workflow\Tests\Unit\Expression;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\Attributes\DataProvider;
 use Alkaid\Workflow\Engine\Expression\ExpressionEngine;
 use Alkaid\Workflow\Engine\Expression\Context\ExpressionContext;
-use Alkaid\Workflow\Engine\Expression\Cache\ExpressionCache;
 
 /**
  * ExpressionEngine Unit Tests
@@ -147,7 +145,7 @@ class ExpressionEngineTest extends TestCase
     #[Test]
     public function testRegisterFunction(): void
     {
-        $this->engine->registerFunction('double', fn($x) => $x * 2);
+        $this->engine->registerFunction('double', fn ($x) => $x * 2);
 
         $this->assertTrue($this->engine->hasFunction('double'));
 
@@ -160,8 +158,8 @@ class ExpressionEngineTest extends TestCase
     {
         $this->engine->registerFunction(
             'triple',
-            fn($x) => $x * 3,
-            fn($x) => "({$x}) * 3"
+            fn ($x) => $x * 3,
+            fn ($x) => "({$x}) * 3"
         );
 
         $result = $this->engine->evaluate('triple(4)');

@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use think\migration\db\Column;
 use think\migration\Migrator;
 
 /**

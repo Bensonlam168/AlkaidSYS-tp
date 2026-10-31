@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -22,7 +23,6 @@ use madong\ingenious\enums\ProcessConstEnum;
 
 class CustomParser extends AbstractINodeParser
 {
-
     public function parseNode(LfNode $lfNode): void
     {
         $model      = $this->nodeModel; // 假设 nodeModel 是类的一个属性

@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -13,7 +14,6 @@
 
 namespace Alkaid\Workflow\Engine\processor\handler;
 
-
 use madong\ingenious\interface\IExecution;
 use madong\helper\Dict;
 use madong\ingenious\libs\utils\Expression;
@@ -26,7 +26,6 @@ use madong\ingenious\enums\ProcessConstEnum;
 
 class CountersignHandler implements IHandler
 {
-
     private TaskModel $taskModel;
 
     public function __construct(TaskModel $taskModel)
@@ -41,19 +40,19 @@ class CountersignHandler implements IHandler
         if (!empty($this->taskModel->getExt()->get(INodeParser::EXT_FIELD_COUNTERSIGN_TYPE_KEY))) {
             $countersignType = CountersignTypeEnum::codeOf($this->taskModel->getExt()->get(INodeParser::EXT_FIELD_COUNTERSIGN_TYPE_KEY), CountersignTypeEnum::PARALLEL);//会签类型
         }
-        $countersignCompletionCondition = $this->taskModel->getExt()->get("countersign_completion_condition", "");//会签完成条件
+        $countersignCompletionCondition = $this->taskModel->getExt()->get('countersign_completion_condition', '');//会签完成条件
         $isRejected                     = $this->taskModel->getExt()->get('countersignatureRejected', false);//会签拒绝是否驳回未实现功能
-        $prefix                         = ProcessConstEnum::COUNTERSIGN_VARIABLE_PREFIX->value . $this->taskModel->getName() . "_";
+        $prefix                         = ProcessConstEnum::COUNTERSIGN_VARIABLE_PREFIX->value . $this->taskModel->getName() . '_';
         // 会签办理人列表
-        $operatorList = $execution->getArgs()->get($prefix . ProcessConstEnum:: COUNTERSIGN_OPERATOR_LIST->value, []);
+        $operatorList = $execution->getArgs()->get($prefix . ProcessConstEnum::COUNTERSIGN_OPERATOR_LIST->value, []);
         // 循环计数器，办理人在列表中的索引
         $loopCounter = array_search($execution->getOperator(), $operatorList);
         // 追加计数器
         if ($loopCounter) {
-            $execution->getArgs()->put($prefix . ProcessConstEnum:: LOOP_COUNTER->value, $loopCounter);
+            $execution->getArgs()->put($prefix . ProcessConstEnum::LOOP_COUNTER->value, $loopCounter);
         }
         // 追加已完成数量
-        $execution->getArgs()->put($prefix . ProcessConstEnum:: NR_OF_COMPLETED_INSTANCES->value, $execution->getArgs()->get($prefix . ProcessConstEnum:: NR_OF_COMPLETED_INSTANCES->value, 0) + 1);
+        $execution->getArgs()->put($prefix . ProcessConstEnum::NR_OF_COMPLETED_INSTANCES->value, $execution->getArgs()->get($prefix . ProcessConstEnum::NR_OF_COMPLETED_INSTANCES->value, 0) + 1);
         /**
          * ● 全部通过：为空
          * ● 按数量通过：#nrOfCompletedInstances==n，这里表示n人完成任务，会签结束。
@@ -67,7 +66,7 @@ class CountersignHandler implements IHandler
                 // 存在拒绝标识，则直接通过
                 $isMerged = true;
             }
-        } else if (!empty($countersignCompletionCondition)) {
+        } elseif (!empty($countersignCompletionCondition)) {
             // 根据条件判断是否通过
             $dict = new Dict();
             foreach ($execution->getArgs()->getAll() as $key => $value) {
@@ -93,8 +92,8 @@ class CountersignHandler implements IHandler
             $isMerged   = count($doingTasks) === 0; // 如果任务列表为空，$isMerged 为 true
             if (!$isMerged) {
                 // 未通过，更新已完成实例数量
-                $addVariable = new Dict ();
-                $addVariable->put($prefix . ProcessConstEnum:: NR_OF_COMPLETED_INSTANCES->value, $execution->getArgs()->get($prefix . ProcessConstEnum:: NR_OF_COMPLETED_INSTANCES->value));
+                $addVariable = new Dict();
+                $addVariable->put($prefix . ProcessConstEnum::NR_OF_COMPLETED_INSTANCES->value, $execution->getArgs()->get($prefix . ProcessConstEnum::NR_OF_COMPLETED_INSTANCES->value));
                 $execution->getEngine()->processInstanceService()->addVariable($execution->getProcessInstanceId(), $addVariable);
             }
         }

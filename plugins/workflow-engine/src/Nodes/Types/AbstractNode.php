@@ -284,7 +284,7 @@ abstract class AbstractNode implements NodeInterface
     protected function getDefaultNextNodes(): array
     {
         return array_map(
-            fn($output) => is_array($output) ? ($output['target'] ?? $output['to'] ?? '') : $output,
+            fn ($output) => is_array($output) ? ($output['target'] ?? $output['to'] ?? '') : $output,
             $this->outputs
         );
     }

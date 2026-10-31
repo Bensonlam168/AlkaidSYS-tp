@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace Alkaid\Workflow\Engine\Tests\Integration;
 
 use Alkaid\Workflow\Engine\Integration\WorkflowBootstrap;
-use Alkaid\Workflow\Engine\Container\ServiceFactory;
 use Alkaid\Workflow\Engine\Tests\TestCase;
-use madong\ingenious\libs\utils\Dict;
 
 /**
  * 工作流引擎集成测试

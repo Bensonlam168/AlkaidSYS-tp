@@ -429,7 +429,7 @@ class TaskNode extends AbstractNode
         }
 
         return array_map(
-            fn($user) => $this->resolveValue($context, $user),
+            fn ($user) => $this->resolveValue($context, $user),
             $candidates
         );
     }
@@ -449,7 +449,7 @@ class TaskNode extends AbstractNode
         }
 
         return array_map(
-            fn($group) => $this->resolveValue($context, $group),
+            fn ($group) => $this->resolveValue($context, $group),
             $groups
         );
     }
@@ -475,7 +475,7 @@ class TaskNode extends AbstractNode
         // 替换字符串中的变量
         return preg_replace_callback(
             '/\$\{(\w+)\}/',
-            fn($matches) => (string) $context->getVariable($matches[1], $matches[0]),
+            fn ($matches) => (string) $context->getVariable($matches[1], $matches[0]),
             $value
         );
     }

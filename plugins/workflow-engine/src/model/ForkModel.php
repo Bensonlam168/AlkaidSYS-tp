@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -25,7 +26,6 @@ use madong\ingenious\libs\traits\DynamicPropsTrait;
  */
 class ForkModel extends NodeModel implements IForkModel
 {
-
     use DynamicPropsTrait;
 
     public function exec(IExecution $execution): void

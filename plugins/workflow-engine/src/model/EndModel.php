@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -24,7 +25,6 @@ use madong\ingenious\processor\handler\EndProcessHandler;
  */
 class EndModel extends NodeModel implements IEndModel
 {
-
     use DynamicPropsTrait;
 
     public function exec(IExecution $execution)

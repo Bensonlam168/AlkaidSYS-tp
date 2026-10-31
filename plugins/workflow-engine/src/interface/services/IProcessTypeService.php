@@ -1,4 +1,5 @@
 <?php
+
 /**
  *+------------------
  * ingenious
@@ -35,4 +36,3 @@ interface IProcessTypeService
 
     public function findById(string|int $id): ?IProcessType;
 }
-
