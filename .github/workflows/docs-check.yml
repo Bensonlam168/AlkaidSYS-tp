@@ -9,21 +9,23 @@ name: Docs Check
 #
 # 详情见 scripts/check-docs.php
 
+# R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
+#
+# 为什么去掉：本门禁要被合并前规则设为 required status check 才能阻止合并，而 GitHub 对
+#   「声明了 paths: 且本次 PR 未命中这些路径」的工作流，会一直显示
+#   `Expected — Waiting for status to be reported` 且永不结束 —— 未命中路径的 PR 反而
+#   因此永久无法合并（详见 AGENTS.md「合并前必须通过的配置类门禁」）。
+# 代价：每个 PR 都会跑一遍。本门禁是秒级纯静态校验（只读 Markdown / PHP 源码，无 DB、无网络），
+#   几分钟的差额可以忽略；换来的是「可以安全地设为 required」。
+# 历史：此前 pull_request 与 push 都带 paths:（`design/**/*.md`、`docs/**/*.md`、
+#   `scripts/check-docs.php`），仅用于省 CI 分钟数。
+
 on:
   pull_request:
-    paths:
-      - 'design/**/*.md'
-      - 'docs/**/*.md'
-      - 'scripts/check-docs.php'
-      - '.github/workflows/docs-check.yml'
   push:
     branches:
       - develop
       - main
-    paths:
-      - 'design/**/*.md'
-      - 'docs/**/*.md'
-      - 'scripts/check-docs.php'
 
 jobs:
   docs-check:

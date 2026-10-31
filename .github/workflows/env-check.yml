@@ -14,23 +14,22 @@ name: Env Example Check
 #   C. 注释行无 ASCII 括号/引号
 #   D. 必需键存在（DB_HOST / DB_NAME / DB_USER / DB_PASS / DB_CHARSET / JWT_SECRET）
 
+# R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
+#
+# 为什么去掉：本门禁要被合并前规则设为 required status check 才能阻止合并，而 GitHub 对
+#   「声明了 paths: 且本次 PR 未命中这些路径」的工作流，会一直显示
+#   `Expected — Waiting for status to be reported` 且永不结束 —— 未命中路径的 PR 反而
+#   因此永久无法合并（详见 AGENTS.md「合并前必须通过的配置类门禁」）。
+# 代价：每个 PR 都会跑一遍。本门禁是秒级纯静态校验（只读 .env.example 与脚本源码）。
+# 历史：此前 pull_request 与 push 都带 paths:（`.env.example`、`scripts/check-env-example.php`、
+#   本工作流自身、`AGENTS.md` —— 后者因为规则原文与自查命令写在那里，规则变更时应连带复跑）。
+
 on:
   pull_request:
-    paths:
-      - '.env.example'
-      - 'scripts/check-env-example.php'
-      - '.github/workflows/env-check.yml'
-      # AGENTS.md 里写着这两条规则与人工自查命令；规则变更时应连带复跑本门禁
-      - 'AGENTS.md'
   push:
     branches:
       - develop
       - main
-    paths:
-      - '.env.example'
-      - 'scripts/check-env-example.php'
-      - '.github/workflows/env-check.yml'
-      - 'AGENTS.md'
 
 jobs:
   env-example-check:

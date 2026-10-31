@@ -68,25 +68,49 @@ Frontend:
 | PHPUnit 配置一致性 | `.github/workflows/phpunit-config-check.yml` | `PHPUnit Config Check` | `phpunit-config-check` | **PHPUnit Config Consistency** | `php scripts/check-phpunit-config.php --strict` |
 | `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict` |
 | 语言包一致性 | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `lang-check` | **Language Pack Consistency Check (i18n)** | `php think lang:check` |
+| 迁移安全（**仅静态**） | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migrations-check` | **Migration Safety Check** | `php scripts/check-migrations.php --strict --no-db`（只跑 A/C，见下） |
 
-`check-migrations`（`scripts/check-migrations.php`）**目前没有任何工作流运行它**——
-`grep -l check-migrations .github/workflows/*.yml` 无匹配。所以它在 GitHub 上**不存在 check 名称，无法设为 required**，
-只能在本地 / 提交前自查。要让它成为真正的门禁，需先新增一个运行它的工作流（不在本次改动范围内）。
+`check-migrations`（`scripts/check-migrations.php`）**已有工作流**（R41），但**CI 只跑 A/C（静态）**：
+`check A` 迁移版本唯一性、`check C` 的 up()/down() 与 change() 规则 —— 这两项与环境无关。
+
+`check B`（版本倒挂）、`check D`（`tenant_id` 列声明）、`check E`（无默认值 `tenant_id` 的租户外键）
+**都需要「哪些迁移已应用」这个基准**，CI 拿不到：GitHub Actions 里的全新 MySQL 中 `migrations` 表是空的，
+而本仓库新库全量 `migrate:run` 目前跑不通（`20251125_add_casbin_manage_permission.php` 的 8 位版本号
+排在全部 14 位时间戳之前，第一条迁移就失败），所以 CI 造不出真实的 applied 状态。
+因此工作流显式传 `--no-db`（语义是「本环境没有 applied 状态」，不是「允许跳过检查」），
+脚本会打印「跳过（--no-db）」而不是把跳过伪装成通过。
+
+⚠️ **本地 / 提交前必须跑全量**，CI 绿不代表 B/D/E 没问题：
+
+```bash
+docker exec alkaid-backend php scripts/check-migrations.php --strict   # 不带 --no-db，会连库
+```
 
 **这些 check 必须被设为 required，否则只是「跑过」而不阻止合并。** 设置位置是**仓库设置**，代码侧无法强制：
 
 ```
 Settings → Branches → Branch protection rule（或 Rulesets）
   → Require status checks to pass before merging
-  → 搜索并勾选上表 4 个名称
+  → 搜索并勾选上表 5 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E 已被守住）
 ```
 
-⚠️ **把带 `paths:` 过滤的工作流直接设为 required 会卡住 PR**：上表三个配置类工作流都声明了 `paths:`，
-未改到这些路径的 PR **不会触发**该 check，GitHub 会一直显示 `Expected — Waiting for status to be reported`
-且不会自动结束，PR 反而无法合并。当前仓库的可行做法（三选一）：
+✅ **`paths:` 过滤与 required 的冲突已解决（R40）**：上表三个配置类工作流
+（`docs-check.yml` / `phpunit-config-check.yml` / `env-check.yml`）此前在 `pull_request` 与 `push` 下
+**都**声明了 `paths:`。带 `paths:` 的工作流一旦被设为 required，未命中这些路径的 PR **根本不会触发**该 check
+—— GitHub 会一直显示 `Expected — Waiting for status to be reported` 且不会自动结束，PR 反而永久无法合并
+（required 的语义是「必须出现且为 success」，「不出现」等价于永远 pending）。
+现已**删除这三份工作流的 `paths:` 过滤**（`push.branches` 保留 `develop` / `main` 不变），
+因此这三个 check 对每个 PR 都会给出结论，可以安全地勾选为 required。
+代价：每个 PR 都会多跑三次**秒级纯静态校验**（只读 Markdown / XML / 源码，无 DB、无网络），CI 分钟数影响可忽略。
+R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述三份保持一致。
 
-- **推荐**：去掉对应工作流的 `paths:` 过滤，让这三个 check 对每个 PR 都跑一遍——这样设 required 不会卡死（本次不改工作流，属后续动作）；
-- 或改用 **Rulesets** 的 required status checks，并**同样落地前实测**：开一条只改 `app/` 的 PR，确认未被 `paths:` 命中的 check 不会让 PR 停在 `Expected`；
+历史说明（为什么当初会有这条）：三份工作流原本用 `paths:` 省 CI 分钟数 ——
+未改到 `design/**`、`docs/**`、`phpunit*.xml`、`.env.example`、对应脚本或 `AGENTS.md` 的 PR 就不触发。
+把这类门禁列为 required 候选（R39）时才暴露：「省分钟数」与「required 必须每次都有结论」互斥。
+当时列过三条备选，最终选第一条 —— 它是唯一既不依赖仓库设置实测、也不会留下永久 `Expected` 的做法：
+
+- **已采用**：去掉对应工作流的 `paths:` 过滤，让这三个 check 对每个 PR 都跑一遍（R40 已完成）；
+- 或改用 **Rulesets** 的 required status checks，并在落地前实测：开一条只改 `app/` 的 PR，确认未被 `paths:` 命中的 check 不会让 PR 停在 `Expected`；
 - 或暂不设 required，改为靠 `CODEOWNERS` + PR 模板人工把关。
 
 `.github/CODEOWNERS` 同样要仓库设置配合才生效：只有勾选 **Require review from Code Owners** 才阻止合并；
@@ -97,10 +121,10 @@ Settings → Branches → Branch protection rule（或 Rulesets）
 
 - [ ] `develop` 与 `main` **都**建了 branch protection rule（或 ruleset），不只默认分支
 - [ ] 已勾选 `Require status checks to pass before merging`
-- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`
-- [ ] 已处理 `paths:` 过滤与 required 的冲突（见上方 ⚠️），确认不会出现永久 `Expected`
+- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`（最后一项在 CI 只覆盖 A/C，见上文 ⚠️）
+- [ ] 已确认四份工作流（上表前三个 + `migrations-check.yml`）**不再有** `paths:`（R40 已完成；`grep -cE '^[[:space:]]*paths:' .github/workflows/docs-check.yml .github/workflows/phpunit-config-check.yml .github/workflows/env-check.yml .github/workflows/migrations-check.yml` 均应为 `0`，注释里提到 `paths:` 不算），不会出现永久 `Expected`
 - [ ] 已勾选 `Require review from Code Owners`，且已排除「owner 本人无法合并」的单人瓶颈
-- [ ] `check-migrations` 是否已有工作流（当前**没有**，未补前不可能成为 required check）
+- [ ] `check B` / `check D` / `check E` 无法在 CI 覆盖（需要 applied 状态），已确认**本地跑过全量**：`docker exec alkaid-backend php scripts/check-migrations.php --strict`
 - [ ] 新增 / 重命名工作流的 job 后，回填上表的 check 名称（永远取自 `jobs.<id>.name`）
 
 ## Documentation Maintenance（文档维护约定）

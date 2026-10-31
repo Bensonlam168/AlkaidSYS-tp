@@ -1,0 +1,64 @@
+name: Migrations Check
+
+# 迁移安全门禁 | Migration safety gate
+#
+# ⚠️ 覆盖范围（先读这里，再看结论）：
+#   本工作流只跑 scripts/check-migrations.php 的**静态部分**：
+#     A. 迁移文件名的时间戳前缀唯一
+#     C. 每个迁移类都实现 up()/down()，且不得出现 change()（Phinx 见到 change() 会忽略 down，使 down 成为死代码）
+#   以下三项**不跑**，因为它们都需要「哪些迁移已应用」这个基准：
+#     B. 未应用迁移的 version 不得小于已应用的最大 version（否则无参 rollback 会打错迁移）
+#     D. 未应用迁移里的 tenant_id 声明必须与 tenants.id 一致（integer/biginteger + signed => false）
+#     E. 无默认值的 tenant_id 必须带 tenant_id → tenants.id 外键（读 information_schema）
+#
+# 为什么 CI 跑不了 B/D/E（不是省事，是造不出前置状态）：
+#   1. GitHub Actions 的全新 MySQL 里 `migrations` 表是空的。B 没有「已应用」概念 → 恒真；
+#      D 会把**全部历史迁移**当成「未应用」重审一遍 —— 实测会报 8 条无法回改的历史遗留错误
+#      （20251216000001_create_workflow_tables.php ×5、20251217000005_create_hook_monitor_tables.php ×3），
+#      于是 --strict 恒红，门禁失去意义（报警疲劳后就会有人把它关掉）。
+#   2. 本仓库新库全量 `php think migrate:run` 目前跑不通：20251125_add_casbin_manage_permission.php
+#      用的是 8 位版本号（20251125），小于全部 14 位时间戳，Phinx 让它第一个执行，
+#      而它依赖尚未创建的 permissions 表 —— 第一条迁移就失败，`migrations` 表停在 0 行。
+#      所以 CI 也造不出真实的 applied 状态。
+#
+# 因此这里**显式**传 `--no-db`（语义 = 「本环境没有 applied 状态」，不是「允许跳过检查」）：
+# 脚本会打印「跳过（--no-db）」而不是降级为告警，日志不会把「只验了 A/C」伪装成「全量通过」。
+# 反过来，不传 `--no-db` 时语义完全不变：连不上库仍是告警，`--strict` 下仍会 exit 1。
+#
+# ⚠️ 本地 / 提交前必须跑**全量**（会连库读 migrations 表与 information_schema）：
+#     docker exec alkaid-backend php scripts/check-migrations.php --strict
+#
+# R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
+#   带 `paths:` 的工作流一旦被设为 required，未命中路径的 PR 不会触发 check，GitHub 会一直显示
+#   `Expected — Waiting for status to be reported` 且永不结束 —— PR 反而因此永久无法合并
+#   （详见 AGENTS.md「合并前必须通过的配置类门禁」）。
+#   代价：每个 PR 多跑一次秒级纯静态校验（本工作流不需要 composer install、不需要 DB，约 15 秒）。
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+
+jobs:
+  migrations-check:
+    name: Migration Safety Check
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: "Run migration safety check (static only: A/C)"
+        # --no-db：CI 没有 applied 状态，B/D/E 显式跳过（见文件头「覆盖范围」）。
+        # 有意不装 composer 依赖：--no-db 下脚本不会 require vendor/autoload.php，也不会建库连接。
+        # 不要在这里加 `|| true` / `continue-on-error` —— A/C 的错误必须真的挡住合并。
+        run: php scripts/check-migrations.php --strict --no-db

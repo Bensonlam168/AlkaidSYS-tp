@@ -21,11 +21,27 @@ declare(strict_types=1);
  *      （Phinx 检测到 change() 会忽略 down()，使 down 成为死代码）。
  *
  * 用法：
- *   php scripts/check-migrations.php              # 检查并输出报告
- *   php scripts/check-migrations.php --strict     # 有告警即失败（CI 门禁）
+ *   php scripts/check-migrations.php                    # 检查并输出报告
+ *   php scripts/check-migrations.php --strict           # 有告警即失败（本地门禁 / 全量）
+ *   php scripts/check-migrations.php --strict --no-db    # CI 专用：本环境没有 applied 状态，只跑 A/C
+ *
+ * 关于 `--no-db`（R41）：
+ *   它的语义是「**本环境没有 applied 状态**」，**不是**「允许跳过检查」。
+ *   区别在于是否如实报告覆盖范围：传了它，B/D/E 会显式打印「跳过（--no-db）」，
+ *   日志能一眼看出「这次只验了静态部分」；不传它而又连不上库时，则仍然是
+ *   「告警 + --strict 下 exit 1」——不会因为「反正 CI 无所谓」而把红变绿。
+ *
+ *   为什么 CI 必须用它：
+ *     a. 检查 B/D/E 的判定基准是「哪些迁移已应用」；GitHub Actions 的全新 MySQL 里
+ *        `migrations` 表是空的，B 无从判定、D 会把全部历史迁移当「未应用」重新审一遍（误报）；
+ *     b. 本仓库新库全量 `migrate:run` 目前跑不通 —— `20251125_add_casbin_manage_permission.php`
+ *        的 8 位版本号小于全部 14 位时间戳，Phinx 让它第一个执行，而它依赖尚未创建的
+ *        `permissions` 表，第一条迁移就失败；因此 CI 也造不出真实的 applied 状态。
+ *   所以 CI 覆盖的是 A/C（纯静态、与环境无关），B/D/E 必须**在本地**跑全量。
+ *   传该开关时不会 require vendor/autoload.php，也不会建立任何数据库连接。
  *
  * 退出码：
- *   0 - 通过
+ *   0 - 通过（`--no-db` 下仅代表 A/C 通过）
  *   1 - 存在错误（或 --strict 模式下存在告警）
  *
  * @package scripts
@@ -579,8 +595,17 @@ function loadTenantFkViolations(): ?array
 
 $strict = in_array('--strict', $argv, true);
 
+// R41：`--no-db` = 「本环境没有 applied 状态」（CI 专用），不是「允许跳过检查」。
+// 传了它就完全不碰 vendor/autoload.php、不建数据库连接：B/D/E 显式跳过，A/C 照常判定。
+$noDb = in_array('--no-db', $argv, true);
+
 echo colorize('Migration Safety Check | 迁移安全守卫', 'blue') . PHP_EOL;
 echo str_repeat('=', 64) . PHP_EOL;
+
+if ($noDb) {
+    // 把「本次覆盖范围」写在最显眼的位置：避免 CI 日志被误读成「全量检查通过」
+    echo colorize('模式: --no-db（无 applied 状态，仅检查 A/C；本地请跑全量）', 'yellow') . PHP_EOL;
+}
 
 $migrations = collectMigrationFiles(REPO_ROOT . '/' . MIGRATION_DIR);
 echo '扫描迁移文件数: ' . count($migrations) . PHP_EOL . PHP_EOL;
@@ -597,11 +622,18 @@ foreach ($duplicateIssues as $version => $files) {
 $errorCount += count($duplicateIssues);
 
 // --- 检查 B：版本顺序不倒挂 ---
-$applied = loadAppliedVersions();
+// `--no-db` 时不调用 loadAppliedVersions()：既不 require vendor/autoload.php，也不建库连接
+$applied = $noDb ? null : loadAppliedVersions();
 if (null === $applied) {
-    printf("检查 B  未应用迁移版本顺序      %s\n", formatResult(0, 1));
-    echo '   ' . colorize('[WARN]', 'yellow') . ' 无法连接数据库读取 migrations 表，已跳过顺序检查' . PHP_EOL;
-    $warningCount++;
+    if ($noDb) {
+        printf("检查 B  未应用迁移版本顺序      %s\n", colorize('跳过（--no-db）', 'gray'));
+        echo '   ' . colorize('[SKIP]', 'gray')
+            . ' --no-db：本环境没有 applied 状态，无从判定「未应用迁移的 version 是否倒挂」' . PHP_EOL;
+    } else {
+        printf("检查 B  未应用迁移版本顺序      %s\n", formatResult(0, 1));
+        echo '   ' . colorize('[WARN]', 'yellow') . ' 无法连接数据库读取 migrations 表，已跳过顺序检查' . PHP_EOL;
+        $warningCount++;
+    }
 } else {
     $orderIssues = checkVersionOrder($migrations, $applied);
     printf("检查 B  未应用迁移版本顺序      %s\n", formatResult(count($orderIssues), 0));
@@ -622,19 +654,34 @@ foreach ($methodIssues as $issue) {
 $errorCount += count($methodIssues);
 
 // --- 检查 D：tenant_id 列声明必须与 tenants.id 类型一致 ---
-$tenantIssues = checkTenantIdDeclaration($migrations, $applied);
-printf("检查 D  tenant_id 列声明        %s\n", formatResult(count($tenantIssues), 0));
-foreach ($tenantIssues as $issue) {
-    echo '   ' . colorize('[TENANT]', 'red') . " {$issue['base']}：{$issue['problem']}" . PHP_EOL;
+// 注意：D 同样依赖 applied 集合（只审「未应用」的迁移），所以 --no-db 的覆盖范围是 A/C，
+// **不是** A/C/D —— 没有 applied 状态时，把全部历史迁移当未应用重审只会得到一堆无法回改的误报。
+if ($noDb) {
+    printf("检查 D  tenant_id 列声明        %s\n", colorize('跳过（--no-db）', 'gray'));
+    echo '   ' . colorize('[SKIP]', 'gray')
+        . ' --no-db：检查 D 需要 applied 集合来圈定「未应用的迁移」，本环境没有' . PHP_EOL;
+} else {
+    $tenantIssues = checkTenantIdDeclaration($migrations, $applied);
+    printf("检查 D  tenant_id 列声明        %s\n", formatResult(count($tenantIssues), 0));
+    foreach ($tenantIssues as $issue) {
+        echo '   ' . colorize('[TENANT]', 'red') . " {$issue['base']}：{$issue['problem']}" . PHP_EOL;
+    }
+    $errorCount += count($tenantIssues);
 }
-$errorCount += count($tenantIssues);
 
 // --- 检查 E：无默认值的 tenant_id 必须有租户外键 ---
-$fkViolations = loadTenantFkViolations();
+// `--no-db` 时不调用 loadTenantFkViolations()：不 require vendor/autoload.php，也不查询 information_schema
+$fkViolations = $noDb ? null : loadTenantFkViolations();
 if (null === $fkViolations) {
-    printf("检查 E  租户外键一致性          %s\n", formatResult(0, 1));
-    echo '   ' . colorize('[WARN]', 'yellow') . ' 无法连接数据库读取表结构，已跳过租户外键检查' . PHP_EOL;
-    $warningCount++;
+    if ($noDb) {
+        printf("检查 E  租户外键一致性          %s\n", colorize('跳过（--no-db）', 'gray'));
+        echo '   ' . colorize('[SKIP]', 'gray')
+            . ' --no-db：检查 E 依赖真实表结构（information_schema），本环境没有数据库' . PHP_EOL;
+    } else {
+        printf("检查 E  租户外键一致性          %s\n", formatResult(0, 1));
+        echo '   ' . colorize('[WARN]', 'yellow') . ' 无法连接数据库读取表结构，已跳过租户外键检查' . PHP_EOL;
+        $warningCount++;
+    }
 } else {
     $fkErrors = [];
     $fkWarnings = [];
@@ -665,8 +712,21 @@ if (null === $fkViolations) {
 
 echo str_repeat('-', 64) . PHP_EOL;
 
+if ($noDb) {
+    // 覆盖范围提醒：读 CI 日志的人不应该把这次运行当成「全量通过」
+    echo colorize(
+        '提示：--no-db 只覆盖 A/C（纯静态）。B/D/E 需要 applied 状态，请在本地跑全量：'
+        . 'php scripts/check-migrations.php --strict',
+        'gray'
+    ) . PHP_EOL;
+}
+
 if (0 === $errorCount && 0 === $warningCount) {
-    echo colorize('✓ 全部检查通过', 'green') . PHP_EOL;
+    if ($noDb) {
+        echo colorize('✓ 静态检查（A/C）通过；B/D/E 已跳过（--no-db）', 'green') . PHP_EOL;
+    } else {
+        echo colorize('✓ 全部检查通过', 'green') . PHP_EOL;
+    }
     exit(0);
 }
 
