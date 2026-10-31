@@ -56,7 +56,13 @@ jobs:
     name: Language Pack Consistency Check (i18n)
     runs-on: ubuntu-latest
     if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
-    needs: php-cs-fixer
+    # 【刻意不写 needs —— 请勿"优化"回去】
+    # 这里曾经是 needs: php-cs-fixer。而本 check 是 AGENTS.md 明列的 required
+    # status check（`Language Pack Consistency Check (i18n)`）。required 的语义是
+    # 「必须出现且为 success」：一旦上游 php-cs-fixer 恒红（当前仓库就是如此），
+    # 本 job 会以 skipped 收场，PR 就永远等不到这个 check 的结论而被卡死 ——
+    # 与 R40 修掉的「带 paths 过滤的 required check 永久 Expected」是同一类故障。
+    # 语言包一致性与代码风格正交，两者并行运行，各自独立作为 required check。
 
     steps:
       - name: Checkout code
@@ -87,7 +93,26 @@ jobs:
     name: PHPUnit Tests
     runs-on: ubuntu-latest
     if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
-    needs: [php-cs-fixer, lang-check]
+    # ========================================================================
+    # 【刻意不写 needs（等价于 needs: []）—— 请勿"优化"回去】
+    #
+    # 这里曾经是 needs: [php-cs-fixer, lang-check]，后果是「顺序阻断」：
+    #   1. php-cs-fixer 对全仓做 --dry-run，只要有一个文件可格式化就 exit 非 0。
+    #      实测：仅 app/ 82 个文件里就有 9 个需要修复（全仓 922 个文件更多），
+    #      所以该 job 在当前仓库状态下**必然失败**。
+    #   2. php-cs-fixer 一失败，本 job 就被 GitHub 判定为 skipped —— PHPUnit
+    #      从来没在这里真正跑过，测试信号完全丢失（"CI 绿"与"测试通过"脱钩）。
+    #   3. lang-check 自身也写着 needs: php-cs-fixer，跳过会沿依赖链向下传递，
+    #      所以只保留 needs: [lang-check] 同样救不回测试，必须整个去掉。
+    #
+    # 判断依据：代码风格与测试是**两个独立的质量维度**。风格不合规不应导致
+    # 测试结果不可见；测试失败也不应掩盖风格问题。两者各自作为独立门禁并行运行，
+    # 需要"都通过才能合并"时，请用分支保护的 required status checks 表达，
+    # 而不是用 job 之间的 needs 串成一条链。
+    # php-cs-fixer job 仍然保留（同名 job，独立门禁），只是不再作为本 job 的前置。
+    #
+    # 依据：docs/superpowers/plans/2026-10-31-phase-a-verification-baseline.md Task A2（ER-16）
+    # ========================================================================
 
     services:
       mysql:
@@ -156,12 +181,31 @@ jobs:
             sleep 2
           done
 
+      # 迁移失败必须阻断，不设 continue-on-error：
+      # 测试库 schema 与迁移脚本不一致时，后续用例的失败是"结构性假失败"——
+      # 看起来是业务代码坏了，实际是库没建好，排查成本远高于直接红。
+      # 全新 MySQL 上 migrate:run 冷启动已验证可用（35 迁移 / 29 表），
+      # 因此不需要用 continue-on-error 兜底"可能连不上库"这种历史顾虑。
       - name: Run database migrations
         run: php think migrate:run
-        continue-on-error: true
 
-      - name: Run PHPUnit tests
+      # Unit 与 Feature 拆成两个 step（而不是 --testsuite=Unit 再跟 Feature）：
+      # app/command/TestCommand.php:184 的 --testsuite 是单值选项，不支持重复传参，
+      # 拆开还能让失败定位到具体是哪个套件。
+      # 两个 step 都不加 continue-on-error / || true：Feature 失败就是要让 job 失败，
+      # 把真实失败掩盖成绿色比没有这个 step 更糟。
+      - name: Run PHPUnit tests (Unit)
         run: php think test --testsuite=Unit
+        env:
+          APP_ENV: testing
+          DB_HOST: 127.0.0.1
+          DB_NAME: alkaid_sys_test
+          DB_USER: root
+          DB_PASS: root
+          REDIS_HOST: 127.0.0.1
+
+      - name: Run PHPUnit tests (Feature)
+        run: php think test --testsuite=Feature
         env:
           APP_ENV: testing
           DB_HOST: 127.0.0.1
