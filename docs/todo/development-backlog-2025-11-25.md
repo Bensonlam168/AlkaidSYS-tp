@@ -135,7 +135,7 @@
   - 管理接口：`app/controller/admin/CasbinController.php` + `route/admin.php` 中的 casbin 路由组
   - 与 PermissionService 集成：支持 DB_ONLY / CASBIN_ONLY / DUAL_MODE 三种运行模式
   - 测试覆盖：CasbinServiceTest、CasbinCacheTest、CasbinCacheDegradationTest、DatabaseAdapterTest、CasbinControllerTest、PermissionServiceIntegrationTest、CasbinPerformanceTest
-  - 迁移脚本：`20251125_add_casbin_manage_permission.php` 创建 casbin.manage 权限
+  - 迁移脚本：`20251126000001_add_casbin_manage_permission.php` 创建 casbin.manage 权限（原名 `20251125_add_casbin_manage_permission.php`，因 8 位版本号会被排到全部迁移之前、依赖的 permissions 表尚未创建而必然失败，R43 已改名为 14 位，类名 `AddCasbinManagePermission` 不变）
 - **依赖**：T-010, T-033
 ✅ **[T-012] (P1) 权限相关测试与迁移补齐**
 - **描述**：角色/权限表迁移、策略变更回滚策略、关键路径 Feature Test

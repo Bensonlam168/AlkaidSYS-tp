@@ -160,23 +160,41 @@ class CorePlatformSeed extends Seeder
     protected function assignPermissionsToRoles(): void
     {
         // Admin gets all permissions | 管理员获得所有权限
-        $adminPermissions = [];
-        for ($i = 1; $i <= 20; $i++) {
-            $adminPermissions[] = [
-                'role_id' => 1,
-                'permission_id' => $i,
-                'created_at' => date('Y-m-d H:i:s'),
-            ];
-        }
-        $this->table('role_permissions')->insert($adminPermissions)->saveData();
+        //
+        // 【为什么不能硬编码权限 ID（R43 修复）】
+        // 这里原先是 `for ($i = 1; $i <= 20; $i++)`，把管理员权限写死成 ID 1..20。隐患有两个：
+        //   1. 权限并非只由本 seeder 创建，多个迁移也会插入权限：
+        //      20251126000001（casbin.manage）、20251218000001（tenant/role 管理权限）、
+        //      20251219000002（dept.* / menu.* 共 6 条）。它们的自增 ID 都不在 1..20 内，
+        //      于是**管理员永远拿不到这些后加的权限** —— 表现为「迁移已建出 dept.read，
+        //      但管理员进不了部门管理页」，且全程无报错，极难定位。
+        //   2. 硬编码 ID 与表的自增分配顺序绑定，任何一次插入顺序变化都会静默错配。
+        //
+        // 因此改为 INSERT ... SELECT 动态读取 permissions 表的**全部** ID 分配给管理员。
+        // NOT EXISTS 保证幂等：重复执行 seeder 不会产生重复行，也不会撞复合主键 (role_id, permission_id)。
+        $this->execute("
+            INSERT INTO role_permissions (role_id, permission_id, created_at)
+            SELECT 1, p.id, NOW()
+            FROM permissions p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM role_permissions rp
+                WHERE rp.role_id = 1 AND rp.permission_id = p.id
+            )
+        ");
 
         // Regular user gets view permissions only | 普通用户只有查看权限
-        $userPermissions = [
-            ['role_id' => 2, 'permission_id' => 1, 'created_at' => date('Y-m-d H:i:s')], // forms.view
-            ['role_id' => 2, 'permission_id' => 5, 'created_at' => date('Y-m-d H:i:s')], // form_data.view
-            ['role_id' => 2, 'permission_id' => 9, 'created_at' => date('Y-m-d H:i:s')], // collections.view
-        ];
-        $this->table('role_permissions')->insert($userPermissions)->saveData();
+        // 同样不再硬编码 ID：原写法写死 1 / 5 / 9，与 createPermissions() 的插入顺序强耦合；
+        // 而 slug 才是 permissions 表的唯一键（idx_slug），按 slug 取 ID 是稳定契约。
+        $this->execute("
+            INSERT INTO role_permissions (role_id, permission_id, created_at)
+            SELECT 2, p.id, NOW()
+            FROM permissions p
+            WHERE p.slug IN ('forms.view', 'form_data.view', 'collections.view')
+            AND NOT EXISTS (
+                SELECT 1 FROM role_permissions rp
+                WHERE rp.role_id = 2 AND rp.permission_id = p.id
+            )
+        ");
     }
 
     /**

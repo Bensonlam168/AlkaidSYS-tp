@@ -16,10 +16,14 @@ name: Migrations Check
 #      D 会把**全部历史迁移**当成「未应用」重审一遍 —— 实测会报 8 条无法回改的历史遗留错误
 #      （20251216000001_create_workflow_tables.php ×5、20251217000005_create_hook_monitor_tables.php ×3），
 #      于是 --strict 恒红，门禁失去意义（报警疲劳后就会有人把它关掉）。
-#   2. 本仓库新库全量 `php think migrate:run` 目前跑不通：20251125_add_casbin_manage_permission.php
-#      用的是 8 位版本号（20251125），小于全部 14 位时间戳，Phinx 让它第一个执行，
-#      而它依赖尚未创建的 permissions 表 —— 第一条迁移就失败，`migrations` 表停在 0 行。
-#      所以 CI 也造不出真实的 applied 状态。
+#   2. 本仓库新库全量 `php think migrate:run` 曾跑不通（R43 已修复）：
+#      旧文件名 20251125_add_casbin_manage_permission.php 用的是 8 位版本号（20251125），
+#      小于全部 14 位时间戳，Phinx 让它第一个执行，而它依赖尚未创建的 permissions 表
+#      —— 第一条迁移就失败，`migrations` 表停在 0 行。
+#      R43 已把它改名为 20251126000001_add_casbin_manage_permission.php（14 位，类名不变），
+#      并给 20251219000002_add_dept_and_menu_permissions.php 的 role_id=1 分配加了 roles 存在性守卫，
+#      现在新库 `migrate:run` 可以跑通（35 条迁移 / 29 张表，实测见 R43 报告）。
+#      但本工作流**不执行迁移**，所以 CI 里依然没有 applied 基准，下面 --no-db 的语义不变。
 #
 # 因此这里**显式**传 `--no-db`（语义 = 「本环境没有 applied 状态」，不是「允许跳过检查」）：
 # 脚本会打印「跳过（--no-db）」而不是降级为告警，日志不会把「只验了 A/C」伪装成「全量通过」。
