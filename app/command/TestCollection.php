@@ -33,6 +33,9 @@ class TestCollection extends Command
 
         $manager = app()->make(LowcodeCollectionManager::class);
         $testCollectionName = 'test_collection_' . time();
+        // 租户上下文必须显式给出：本命令造的是系统模板空间的集合（tenant_id = 0）。
+        // 不能再靠传 null 让底层「默认成 0」—— 那正是 fail-open 的入口。
+        $tenantId = 0;
 
         try {
             // 1. Create Collection | 创建集合
@@ -60,7 +63,7 @@ class TestCollection extends Command
 
             // 2. Get Collection | 获取集合
             $output->writeln('2. Getting Collection | 获取集合');
-            $retrieved = $manager->get($testCollectionName, null);
+            $retrieved = $manager->get($testCollectionName, $tenantId);
 
             if ($retrieved && $retrieved->getName() === $testCollectionName) {
                 $output->writeln('  <info>✓ Collection retrieved successfully | 集合获取成功</info>');
@@ -83,7 +86,7 @@ class TestCollection extends Command
 
             // 4. Verify Update | 验证更新
             $output->writeln('4. Verifying Update | 验证更新');
-            $updated = $manager->get($testCollectionName, null);
+            $updated = $manager->get($testCollectionName, $tenantId);
 
             if ($updated && count($updated->getFields()) === 3) {
                 $output->writeln('  <info>✓ Update verified | 更新已验证</info>');
@@ -96,9 +99,9 @@ class TestCollection extends Command
 
             // 5. Delete Collection | 删除集合
             $output->writeln('5. Deleting Collection | 删除集合');
-            $manager->delete($testCollectionName, true, null);
+            $manager->delete($testCollectionName, true, $tenantId);
 
-            $deleted = $manager->get($testCollectionName, null);
+            $deleted = $manager->get($testCollectionName, $tenantId);
             if ($deleted === null) {
                 $output->writeln('  <info>✓ Collection deleted successfully | 集合删除成功</info>');
             } else {
@@ -115,7 +118,7 @@ class TestCollection extends Command
 
             // Cleanup | 清理
             try {
-                $manager->delete($testCollectionName);
+                $manager->delete($testCollectionName, true, $tenantId);
             } catch (\Exception $cleanupError) {
                 // Ignore cleanup errors
             }

@@ -42,7 +42,7 @@ class RelationshipManager
      *
      * @param string $collectionName Collection name | Collection名称
      * @param RelationshipInterface $relationship Relationship to add | 要添加的关系
-     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int $tenantId Tenant ID (0 = system template space) | 租户ID（0 表示系统模板空间）
      * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
@@ -50,12 +50,11 @@ class RelationshipManager
     public function addRelationship(
         string $collectionName,
         RelationshipInterface $relationship,
-        ?int $tenantId = null,
+        int $tenantId,
         ?int $siteId = null
     ): void {
-        $effectiveTenantId = $tenantId ?? 0;
 
-        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
+        $collection = $this->collectionManager->get($collectionName, $tenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -64,7 +63,7 @@ class RelationshipManager
         // Verify target collection exists in same tenant | 验证同一租户下目标Collection存在
         $targetCollection = $this->collectionManager->get(
             $relationship->getTargetCollection(),
-            $effectiveTenantId
+            $tenantId
         );
         if (!$targetCollection) {
             throw new \InvalidArgumentException(
@@ -77,16 +76,16 @@ class RelationshipManager
 
         // Save relationship metadata | 保存关系元数据
         $collection->addRelationship($relationship->getName(), $relationship);
-        $this->relationshipRepo->save($relationship, $collection->getId(), $effectiveTenantId);
+        $this->relationshipRepo->save($relationship, $collection->getId(), $tenantId);
 
         // Clear cache (tenant scoped) | 清除租户范围缓存
-        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
+        $this->collectionManager->clearCache($collectionName, $tenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.relationship.added', [
             'collection' => $collection,
             'relationship' => $relationship,
-            'tenant_id' => $effectiveTenantId,
+            'tenant_id' => $tenantId,
             'site_id' => $siteId,
         ]);
     }
@@ -97,7 +96,7 @@ class RelationshipManager
      * @param string $collectionName Collection name | Collection名称
      * @param string $relationshipName Relationship name | 关系名称
      * @param bool $dropPivotTable Drop pivot table for belongsToMany | 是否删除belongsToMany的中间表
-     * @param int|null $tenantId Tenant ID (null means system template) | 租户ID（null 表示系统模板）
+     * @param int $tenantId Tenant ID (0 = system template space) | 租户ID（0 表示系统模板空间）
      * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
@@ -105,13 +104,12 @@ class RelationshipManager
     public function removeRelationship(
         string $collectionName,
         string $relationshipName,
-        bool $dropPivotTable = true,
-        ?int $tenantId = null,
+        bool $dropPivotTable,
+        int $tenantId,
         ?int $siteId = null
     ): void {
-        $effectiveTenantId = $tenantId ?? 0;
 
-        $collection = $this->collectionManager->get($collectionName, $effectiveTenantId);
+        $collection = $this->collectionManager->get($collectionName, $tenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -132,16 +130,16 @@ class RelationshipManager
         }
 
         // Delete relationship metadata | 删除关系元数据
-        $this->relationshipRepo->delete($collection->getId(), $relationshipName, $effectiveTenantId);
+        $this->relationshipRepo->delete($collection->getId(), $relationshipName, $tenantId);
 
         // Clear cache (tenant scoped) | 清除租户范围缓存
-        $this->collectionManager->clearCache($collectionName, $effectiveTenantId);
+        $this->collectionManager->clearCache($collectionName, $tenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.relationship.removed', [
             'collection' => $collection,
             'relationship_name' => $relationshipName,
-            'tenant_id' => $effectiveTenantId,
+            'tenant_id' => $tenantId,
             'site_id' => $siteId,
         ]);
     }

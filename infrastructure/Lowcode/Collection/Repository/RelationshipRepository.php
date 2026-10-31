@@ -30,17 +30,16 @@ class RelationshipRepository
     /**
      * Save relationship | 保存关系
      *
+     * NOTE(租户必填): 原先的 `if ($tenantId === null) throw` 只是运行期兜底，
+     * 签名层面仍允许省略参数；现在把约束前移到签名（省略即 TypeError）。
+     *
      * @param RelationshipInterface $relationship Relationship to save | 要保存的关系
      * @param int $collectionId Collection ID | Collection ID
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return int Relationship ID | 关系ID
      */
-    public function save(RelationshipInterface $relationship, int $collectionId, ?int $tenantId = null): int
+    public function save(RelationshipInterface $relationship, int $collectionId, int $tenantId): int
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when saving relationship metadata');
-        }
-
         $data = [
             'collection_id' => $collectionId,
             'tenant_id' => $tenantId,
@@ -61,7 +60,6 @@ class RelationshipRepository
 
         if ($exists) {
             // Update existing | 更新已存在的
-            // lowcode_relationships 未包含租户列，租户隔离通过 lowcode_collections 校验
             Db::name($this->table)
                 ->where('id', $exists['id'])
                 ->where('tenant_id', $tenantId)
@@ -77,15 +75,11 @@ class RelationshipRepository
      * Find relationships by collection ID | 按Collection ID查找关系
      *
      * @param int $collectionId Collection ID | Collection ID
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return array<string, RelationshipInterface>
      */
-    public function findByCollectionId(int $collectionId, ?int $tenantId = null): array
+    public function findByCollectionId(int $collectionId, int $tenantId): array
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when reading relationships');
-        }
-
         $rows = $this->scopedQuery($collectionId, $tenantId)
             ->order('r.id', 'asc')
             ->select()
@@ -105,16 +99,12 @@ class RelationshipRepository
      *
      * @param int $collectionId Collection ID | Collection ID
      * @param string $relationshipName Relationship name | 关系名称
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function delete(int $collectionId, string $relationshipName, ?int $tenantId = null): bool
+    public function delete(int $collectionId, string $relationshipName, int $tenantId): bool
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
-
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when deleting relationship metadata');
-        }
 
         return (bool) Db::name($this->table)
             ->where('collection_id', $collectionId)
@@ -127,16 +117,12 @@ class RelationshipRepository
      * Delete all relationships by collection ID | 按Collection ID删除所有关系
      *
      * @param int $collectionId Collection ID | Collection ID
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function deleteByCollectionId(int $collectionId, ?int $tenantId = null): bool
+    public function deleteByCollectionId(int $collectionId, int $tenantId): bool
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
-
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when deleting relationships');
-        }
 
         return (bool) Db::name($this->table)
             ->where('collection_id', $collectionId)
@@ -172,29 +158,24 @@ class RelationshipRepository
 
     /**
      * 构造多租户感知查询 | Build tenant-scoped query
+     *
+     * NOTE(租户必填): 租户条件**无条件**拼进 where，不再有「传 null 就整段消失」的分支。
      */
-    protected function scopedQuery(int $collectionId, ?int $tenantId = null)
+    protected function scopedQuery(int $collectionId, int $tenantId)
     {
-        $query = Db::name($this->table)
+        return Db::name($this->table)
             ->alias('r')
-            ->where('r.collection_id', $collectionId);
-
-        if ($tenantId !== null) {
-            $query->where('r.tenant_id', $tenantId);
-        }
-
-        return $query;
+            ->where('r.collection_id', $collectionId)
+            ->where('r.tenant_id', $tenantId);
     }
 
     /**
      * 校验集合租户归属，防止跨租户访问
+     *
+     * NOTE(租户必填): 原先 `$tenantId === null` 时直接 return（等于跳过归属校验）。
      */
-    protected function assertCollectionTenant(int $collectionId, ?int $tenantId = null): void
+    protected function assertCollectionTenant(int $collectionId, int $tenantId): void
     {
-        if ($tenantId === null) {
-            return;
-        }
-
         $exists = $this->tenantDb
             ->name('lowcode_collections', $tenantId)
             ->where('id', $collectionId)

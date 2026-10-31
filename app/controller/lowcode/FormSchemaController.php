@@ -31,8 +31,7 @@ class FormSchemaController extends ApiController
         FormSchemaManager $manager,
         FormValidatorManager $validatorManager,
         SchemaParser $schemaParser
-    )
-    {
+    ) {
         parent::__construct($app);
         $this->manager = $manager;
         $this->validatorManager = $validatorManager;
@@ -229,8 +228,17 @@ class FormSchemaController extends ApiController
         $siteId = $request->siteId();
 
         try {
-            $id = $this->manager->duplicate($name, $newName, $tenantId, $siteId);
-            return $this->success(['id' => $id], 'Form duplicated successfully');
+            // 原先这里直接把路由里的 `$name`（字符串）当 `$id` 传给 duplicate()，
+            // 而 duplicate() 的首参是 `int $id` —— 在 declare(strict_types=1) 下必抛 TypeError，
+            // 该端点实际上是 500。这里按 delete() 的写法先按名称+租户解析出真实 ID。
+            $existing = $this->manager->get($name, $tenantId, $siteId);
+            if (!$existing) {
+                return $this->notFound('Form not found');
+            }
+
+            $duplicated = $this->manager->duplicate((int) $existing['id'], $newName, $tenantId);
+
+            return $this->success(['id' => $duplicated['id'] ?? null], 'Form duplicated successfully');
         } catch (\Exception $e) {
             return $this->error($e->getMessage());
         }

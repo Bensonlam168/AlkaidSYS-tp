@@ -30,17 +30,17 @@ class FieldRepository
     /**
      * Save field | 保存字段
      *
+     * NOTE(租户必填): `$tenantId` 不再可空/带默认值。原先的 `if ($tenantId === null) throw`
+     * 是**运行期**兜底，签名层面仍然允许调用方省略参数；现在把约束前移到签名，
+     * 省略参数会直接 TypeError，而不是走到方法体才失败。
+     *
      * @param FieldInterface $field Field to save | 要保存的字段
      * @param int $collectionId Collection ID | Collection ID
-     * @param int|null $tenantId Tenant ID for isolation | 用于隔离的租户ID
+     * @param int $tenantId Tenant ID for isolation | 用于隔离的租户ID
      * @return int Field ID | 字段ID
      */
-    public function save(FieldInterface $field, int $collectionId, ?int $tenantId = null): int
+    public function save(FieldInterface $field, int $collectionId, int $tenantId): int
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when saving field metadata');
-        }
-
         $data = [
             'collection_id' => $collectionId,
             'tenant_id' => $tenantId,
@@ -62,7 +62,6 @@ class FieldRepository
 
         if ($exists) {
             // Update existing | 更新已存在的
-            // lowcode_fields 表未包含 tenant_id 字段，通过 collection_id → lowcode_collections 实现租户隔离
             Db::name($this->table)
                 ->where('id', $exists['id'])
                 ->where('tenant_id', $tenantId)
@@ -78,15 +77,11 @@ class FieldRepository
      * Find fields by collection ID | 按Collection ID查找字段
      *
      * @param int $collectionId Collection ID | Collection ID
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return array<string, FieldInterface>
      */
-    public function findByCollectionId(int $collectionId, ?int $tenantId = null): array
+    public function findByCollectionId(int $collectionId, int $tenantId): array
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when reading field metadata');
-        }
-
         $rows = $this->scopedQuery($collectionId, $tenantId)
             ->order('f.sort', 'asc')
             ->order('f.id', 'asc')
@@ -107,16 +102,12 @@ class FieldRepository
      *
      * @param int $collectionId Collection ID | Collection ID
      * @param string $fieldName Field name | 字段名称
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function delete(int $collectionId, string $fieldName, ?int $tenantId = null): bool
+    public function delete(int $collectionId, string $fieldName, int $tenantId): bool
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
-
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when deleting field metadata');
-        }
 
         // 通过 assertCollectionTenant 已保证 collectionId 属于 tenantId
         return (bool) Db::name($this->table)
@@ -130,16 +121,12 @@ class FieldRepository
      * Delete all fields by collection ID | 按Collection ID删除所有字段
      *
      * @param int $collectionId Collection ID | Collection ID
-     * @param int|null $tenantId Tenant ID for isolation | 租户ID
+     * @param int $tenantId Tenant ID for isolation | 租户ID
      * @return bool
      */
-    public function deleteByCollectionId(int $collectionId, ?int $tenantId = null): bool
+    public function deleteByCollectionId(int $collectionId, int $tenantId): bool
     {
         $this->assertCollectionTenant($collectionId, $tenantId);
-
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when deleting fields');
-        }
 
         // 通过 assertCollectionTenant 已保证 collectionId 属于 tenantId
         return (bool) Db::name($this->table)
@@ -170,29 +157,25 @@ class FieldRepository
 
     /**
      * 构造多租户感知的查询 | Build tenant-scoped query
+     *
+     * NOTE(租户必填): 租户条件**无条件**拼进 where，不再有「传 null 就整段消失」的分支。
      */
-    protected function scopedQuery(int $collectionId, ?int $tenantId = null)
+    protected function scopedQuery(int $collectionId, int $tenantId)
     {
-        $query = Db::name($this->table)
+        return Db::name($this->table)
             ->alias('f')
-            ->where('f.collection_id', $collectionId);
-
-        if ($tenantId !== null) {
-            $query->where('f.tenant_id', $tenantId);
-        }
-
-        return $query;
+            ->where('f.collection_id', $collectionId)
+            ->where('f.tenant_id', $tenantId);
     }
 
     /**
      * 校验集合是否属于指定租户（防止跨租户访问）
+     *
+     * NOTE(租户必填): 原先 `$tenantId === null` 时直接 return（等于跳过归属校验），
+     * 这就是「省略参数即放开租户边界」。现在租户必填，校验无法被跳过。
      */
-    protected function assertCollectionTenant(int $collectionId, ?int $tenantId = null): void
+    protected function assertCollectionTenant(int $collectionId, int $tenantId): void
     {
-        if ($tenantId === null) {
-            return;
-        }
-
         $exists = $this->tenantDb
             ->name('lowcode_collections', $tenantId)
             ->where('id', $collectionId)

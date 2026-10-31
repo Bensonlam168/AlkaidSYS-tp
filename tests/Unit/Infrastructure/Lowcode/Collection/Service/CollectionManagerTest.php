@@ -96,7 +96,8 @@ class CollectionManagerTest extends ThinkPHPTestCase
 
         $repo->expects($this->once())
             ->method('list')
-            ->with($filters, 2, 15, 5)
+            // 仓储的 list() 现已把租户提到首位（必填），顺序为 (tenantId, filters, page, pageSize)
+            ->with(5, $filters, 2, 15)
             ->willReturn($expected);
 
         $result = $manager->list(5, $filters, 2, 15);
@@ -121,10 +122,52 @@ class CollectionManagerTest extends ThinkPHPTestCase
         $this->assertFalse(Cache::has('lowcode:collection:0:test_clear'));
         $this->assertTrue(Cache::has('lowcode:collection:1:test_clear'));
 
-        //  tenantId=null  0
+        // 租户参数已改为必填：系统模板空间必须**显式**传 0，不再靠「省略即默认 0」
         Cache::set('lowcode:collection:0:test_clear_default', 'system_default', 3600);
-        $manager->clearCache('test_clear_default');
+        $manager->clearCache('test_clear_default', 0);
         $this->assertFalse(Cache::has('lowcode:collection:0:test_clear_default'));
+    }
+
+    public function testDeleteForwardsTenantToCollectionRepository(): void
+    {
+        $schemaBuilder = $this->createMock(SchemaBuilderInterface::class);
+        $repo = $this->createMock(CollectionRepository::class);
+        $fieldRepo = $this->createMock(FieldRepository::class);
+        $relRepo = $this->createMock(RelationshipRepository::class);
+
+        $manager = new CollectionManager($schemaBuilder, $repo, $fieldRepo, $relRepo);
+
+        $collection = $this->createMock(CollectionInterface::class);
+        $collection->method('getId')->willReturn(77);
+        $collection->method('getName')->willReturn('tenant_scoped_col');
+        $collection->method('getTableName')->willReturn('lc_tenant_scoped_col');
+
+        $tenantId = 7;
+
+        $repo->expects($this->once())
+            ->method('findByName')
+            ->with('tenant_scoped_col', $tenantId)
+            ->willReturn($collection);
+
+        $relRepo->expects($this->once())
+            ->method('deleteByCollectionId')
+            ->with(77, $tenantId)
+            ->willReturn(true);
+
+        $fieldRepo->expects($this->once())
+            ->method('deleteByCollectionId')
+            ->with(77, $tenantId)
+            ->willReturn(true);
+
+        // 缺陷 A：旧实现是 `collectionRepo->delete($collectionId)`（**省略租户**）。
+        // 这里用 mock 的 with(77, $tenantId) 钉死「租户必须一路传下去」——
+        // 少传一个参数本用例就会失败。
+        $repo->expects($this->once())
+            ->method('delete')
+            ->with(77, $tenantId)
+            ->willReturn(true);
+
+        $manager->delete('tenant_scoped_col', false, $tenantId);
     }
 
     public function testBuildCacheKeyFormat(): void

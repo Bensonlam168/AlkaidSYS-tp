@@ -72,6 +72,12 @@ class FormSchemaManager
         $formId = $this->repository->save($data);
         $data['id'] = $formId;
 
+        // NOTE(缺陷 B 修复): 这里原先是 `$this->repository->findById($formId, $data['tenant_id'] ?? null)`。
+        // `?? null` 把「payload 里没有 tenant_id」退化成了「不按租户过滤」——
+        // 一旦上游少传/丢掉 tenant_id，读回来的就是任意租户的行。
+        // 现在先显式解析租户（缺失或非法即抛异常），再带着它做读操作，绝不把「缺失」当成「不过滤」。
+        $tenantId = $this->requireTenantId($data);
+
         // Cache the form | 缓存表单
         $this->cache($data);
 
@@ -83,7 +89,42 @@ class FormSchemaManager
         // 记录 Schema 版本与哈希（不阻断主流程）
         $this->schemaVersionService->recordForm($data);
 
-        return $this->repository->findById($formId, $data['tenant_id'] ?? null);
+        return $this->repository->findById($formId, $tenantId);
+    }
+
+    /**
+     * 显式解析并校验租户上下文 | Resolve tenant context, fail-closed
+     *
+     * 只接受「存在且为正整数」的 tenant_id：
+     *   - 缺失（键不存在）→ 抛异常，而不是返回 null 让下游「不过滤」；
+     *   - 0 / 负数 / 非数字 → 同样抛异常（lowcode_forms.tenant_id 有外键指向 tenants，
+     *     0 是系统模板空间，本表不承载模板行）。
+     *
+     * @param array $data 表单数据 | Form payload
+     * @return int 已校验的租户ID | Validated tenant ID
+     * @throws \InvalidArgumentException
+     */
+    protected function requireTenantId(array $data): int
+    {
+        if (!array_key_exists('tenant_id', $data) || $data['tenant_id'] === null || $data['tenant_id'] === '') {
+            throw new \InvalidArgumentException(
+                'tenant_id is required for form schema read/write: 缺失租户上下文时不允许继续'
+                . '（旧实现会退化成「不按租户过滤」的读，属于跨租户缺陷）'
+            );
+        }
+
+        if (!is_numeric($data['tenant_id'])) {
+            throw new \InvalidArgumentException('tenant_id must be numeric for form schema operations');
+        }
+
+        $tenantId = (int) $data['tenant_id'];
+        if ($tenantId <= 0) {
+            throw new \InvalidArgumentException(
+                "tenant_id must be a positive tenant ID for form schema operations, got {$tenantId}"
+            );
+        }
+
+        return $tenantId;
     }
 
     /**
@@ -120,16 +161,14 @@ class FormSchemaManager
     /**
      * Get form schema by ID | 按ID获取表单Schema
      *
+     * NOTE(租户必填): `$tenantId` 不再可空 —— 原先 null 意味着「不按租户过滤」。
+     *
      * @param int $id Form ID | 表单ID
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return array|null
      */
-    public function getById(int $id, ?int $tenantId = null): ?array
+    public function getById(int $id, int $tenantId): ?array
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required when fetching form by ID');
-        }
-
         return $this->repository->findById($id, $tenantId);
     }
 
@@ -150,11 +189,11 @@ class FormSchemaManager
      *
      * @param int $id Form ID | 表单ID
      * @param array $data Update data | 更新数据
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return array Updated form schema | 更新后的表单Schema
      * @throws \Exception
      */
-    public function update(int $id, array $data, ?int $tenantId = null): array
+    public function update(int $id, array $data, int $tenantId): array
     {
         // Get existing form | 获取已存在的表单
         $existingForm = $this->repository->findById($id, $tenantId);
@@ -173,9 +212,7 @@ class FormSchemaManager
 
         // Merge with existing data | 与已存在数据合并
         $data['id'] = $id;
-        if ($tenantId !== null) {
-            $data['tenant_id'] = $tenantId;
-        }
+        $data['tenant_id'] = $tenantId;
 
         // Save to database | 保存到数据库
         $this->repository->save($data);
@@ -199,11 +236,11 @@ class FormSchemaManager
      * Delete form schema | 删除表单Schema
      *
      * @param int $id Form ID | 表单ID
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return void
      * @throws \Exception
      */
-    public function delete(int $id, ?int $tenantId = null): void
+    public function delete(int $id, int $tenantId): void
     {
         // Get existing form | 获取已存在的表单
         $existingForm = $this->repository->findById($id, $tenantId);
@@ -244,11 +281,11 @@ class FormSchemaManager
      *
      * @param int $id Source form ID | 源表单ID
      * @param string $newName New form name | 新表单名称
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return array Duplicated form | 复制的表单
      * @throws \Exception
      */
-    public function duplicate(int $id, string $newName, ?int $tenantId = null): array
+    public function duplicate(int $id, string $newName, int $tenantId): array
     {
         // Get source form | 获取源表单
         $sourceForm = $this->repository->findById($id, $tenantId);

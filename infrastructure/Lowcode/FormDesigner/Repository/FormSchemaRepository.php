@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Infrastructure\Lowcode\FormDesigner\Repository;
 
-use think\facade\Db;
 use Infrastructure\Tenant\TenantAwareDb;
 
 /**
@@ -64,16 +63,17 @@ class FormSchemaRepository
     /**
      * Find by ID | 按ID查找
      *
+     * NOTE(租户必填，缺陷 B 的第二道防线): 修复前调用方 `FormSchemaManager::create()`
+     * 传的是 `$data['tenant_id'] ?? null`，而本方法拿到 null 时**不过滤** tenant_id，
+     * 于是「payload 里缺 tenant_id」直接退化成跨租户读。现在租户是必填的，
+     * 缺失会在参数绑定阶段就 TypeError，不可能再走到「不过滤」的分支。
+     *
      * @param int $id Form ID | 表单ID
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return array|null
      */
-    public function findById(int $id, ?int $tenantId = null): ?array
+    public function findById(int $id, int $tenantId): ?array
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required for form lookup');
-        }
-
         $data = $this->tenantDb
             ->name($this->table, $tenantId)
             ->where('id', $id)
@@ -184,23 +184,15 @@ class FormSchemaRepository
      * Delete form | 删除表单
      *
      * @param int $id Form ID | 表单ID
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return bool
      */
-    public function delete(int $id, ?int $tenantId = null): bool
+    public function delete(int $id, int $tenantId): bool
     {
-        if ($tenantId === null) {
-            throw new \InvalidArgumentException('tenant_id is required for form deletion');
-        }
-
-        $result = (bool)$this->tenantDb
+        return (bool)$this->tenantDb
             ->name($this->table, $tenantId)
             ->where('id', $id)
             ->delete();
-        if (!$result) {
-            // echo "Delete failed for ID $id (Tenant: $tenantId)\n";
-        }
-        return $result;
     }
 
     /**
