@@ -575,8 +575,15 @@ docker exec alkaid-backend php scripts/check-docs.php --strict
 
 **当前已知的未收敛项（守卫是绿的，但不代表这些地方干净）**：
 
-- [ ] `app/Request.php:86` `tenantId(?int $default = 1)` 在无认证上下文、无 `X-Tenant-ID` 时**回落到默认租户 1**，
-      而不是失败。这是「上下文解析层」的降级，不在本规范的签名守卫范围内；
+- [x] ~~`app/Request.php:86` `tenantId(?int $default = 1)` 在无认证上下文、无 `X-Tenant-ID` 时**回落到默认租户 1**~~
+      —— **已收敛（2026-10-31）**。`tenantId(): int` 已删除参数与默认值，解析不出即抛
+      `app\exception\TenantContextMissingException`（请求级 HTTP 400 / 业务码 1001）；
+      需要「允许无租户」的调用点改用新增的 `tenantIdOrNull(): ?int`。
+      「默认租户」现在只由 `app/middleware/TenantIdentify.php` 一处决定，且必须由
+      `DEFAULT_TENANT_ID` **显式配置**（代码中的隐式 `1` 已删除，未配置即
+      `TenantContextMissingException` 配置级 HTTP 500 / 业务码 5000）。
+      落到默认租户的请求会写 `[TENANT_IDENTIFY_DEFAULT]` 审计日志，可被 grep 观测。
+      本机 `.env` 与三份 `phpunit*.xml` 均已显式声明该配置。
 - [ ] `CollectionManager::create()`（`:59`）与 `update()`（`:180`）对实体可空属性做 `?? 0`，
       缺失租户时静默归入系统模板空间（§5.3）；
 - [ ] `infrastructure/Plugin/PluginManager.php:151 / :166 / :183` 的 `int $tenantId = 0` 不在 `Repository/` 目录下，
