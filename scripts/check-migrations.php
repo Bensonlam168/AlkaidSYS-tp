@@ -18,7 +18,25 @@ declare(strict_types=1);
  *   A. database/migrations/ 下所有迁移文件名的时间戳前缀唯一；
  *   B. 未应用的迁移 version 必须大于已应用的最大 version（防倒挂）；
  *   C. 每个迁移类必须实现 up() 与 down()，且不得存在 change()
- *      （Phinx 检测到 change() 会忽略 down()，使 down 成为死代码）。
+ *      （Phinx 检测到 change() 会忽略 down()，使 down 成为死代码）；
+ *   D. 未应用迁移里的 tenant_id 列声明必须与 tenants.id 类型一致
+ *      （integer/biginteger + signed => false，禁止 string）；
+ *   E. 无默认值的 tenant_id 必须有 tenant_id -> tenants.id 外键；
+ *   F. `migrations` 表里的每条 applied 记录都必须有对应的迁移文件
+ *      —— 详见下方「关于检查 F」。
+ *
+ * 关于检查 F（R50 / ER-03）：
+ *   `migrate:status` 对「有记录但找不到文件」的版本只显示 MISSING 且**退出码仍为 0**，
+ *   等于把账本与仓库的失配当成正常状态。这类记录（下称孤儿记录）的真实危害：
+ *     a. 「哪些迁移真的跑过」不再可回答 —— 账本里既有真实记录又有幽灵记录；
+ *     b. 无参 rollback 按 batch 回滚时，找不到文件的记录无法回滚，批次会留下空洞；
+ *     c. 迁移改名/删除后同一件事会在账本里出现两行（一行 up、一行 MISSING）。
+ *   本检查因此把孤儿记录视为**错误**，并要求用 `scripts/migrate-reconcile.php`
+ *   （默认 dry-run）协调后清理。过渡期允许通过 ORPHAN_APPLIED_EXEMPTIONS 豁免，
+ *   但豁免**必须带 review_by 到期日**，到期即退化为错误（与 check-phpunit-config 检查 E 同一套模式）。
+ *
+ *   为什么 CI 抓不到它：判定基准是 applied 集合，而 CI 的全新库没有 applied 状态，
+ *   所以 `--no-db` 下 F 与 B/D/E 一样显式跳过。**本地 / 提交前必须跑全量。**
  *
  * 用法：
  *   php scripts/check-migrations.php                    # 检查并输出报告
@@ -27,17 +45,17 @@ declare(strict_types=1);
  *
  * 关于 `--no-db`（R41）：
  *   它的语义是「**本环境没有 applied 状态**」，**不是**「允许跳过检查」。
- *   区别在于是否如实报告覆盖范围：传了它，B/D/E 会显式打印「跳过（--no-db）」，
+ *   区别在于是否如实报告覆盖范围：传了它，B/D/E/F 会显式打印「跳过（--no-db）」，
  *   日志能一眼看出「这次只验了静态部分」；不传它而又连不上库时，则仍然是
  *   「告警 + --strict 下 exit 1」——不会因为「反正 CI 无所谓」而把红变绿。
  *
  *   为什么 CI 必须用它：
- *     a. 检查 B/D/E 的判定基准是「哪些迁移已应用」；GitHub Actions 的全新 MySQL 里
- *        `migrations` 表是空的，B 无从判定、D 会把全部历史迁移当「未应用」重新审一遍（误报）；
+ *     a. 检查 B/D/E/F 的判定基准是「哪些迁移已应用」；GitHub Actions 的全新 MySQL 里
+ *        `migrations` 表是空的，B/F 无从判定、D 会把全部历史迁移当「未应用」重新审一遍（误报）；
  *     b. 本仓库新库全量 `migrate:run` 目前跑不通 —— `20251125_add_casbin_manage_permission.php`
  *        的 8 位版本号小于全部 14 位时间戳，Phinx 让它第一个执行，而它依赖尚未创建的
  *        `permissions` 表，第一条迁移就失败；因此 CI 也造不出真实的 applied 状态。
- *   所以 CI 覆盖的是 A/C（纯静态、与环境无关），B/D/E 必须**在本地**跑全量。
+ *   所以 CI 覆盖的是 A/C（纯静态、与环境无关），B/D/E/F 必须**在本地**跑全量。
  *   传该开关时不会 require vendor/autoload.php，也不会建立任何数据库连接。
  *
  * 退出码：
@@ -117,6 +135,28 @@ function formatResult(int $errors, int $warnings): string
     }
 
     return colorize("{$errors} 个错误" . ($warnings > 0 ? " / {$warnings} 个告警" : ''), 'red');
+}
+
+/**
+ * 兜底：确保「脚本自己崩了」不会被报成通过
+ *
+ * think\App::initialize() 会注册全局异常处理器，而未捕获异常被它渲染之后，
+ * PHP 会以 **exit 0** 结束（set_exception_handler 的返回值不影响退出码）。
+ * 也就是说门禁脚本存在「明明抛错却绿灯」的隐患 ——
+ * 实测：`$app->initialize()` 之后执行 `strlen([])`，输出 TypeError 后 `$?` 仍为 0。
+ *
+ * 这对本脚本是不可接受的：检查 F 若因数据异常崩在半途，日志里会既有报错又显示通过。
+ * 因此在每次 initialize() 之后把异常处理器换回「打印到 STDERR + exit 1」。
+ * （normalize 后的失败一律非 0；正常路径不受影响。）
+ */
+function enforceFailClosedOnError(): void
+{
+    set_exception_handler(static function (\Throwable $e): void {
+        fwrite(STDERR, '[FATAL] ' . get_class($e) . ': ' . $e->getMessage() . PHP_EOL);
+        fwrite(STDERR, $e->getTraceAsString() . PHP_EOL);
+        fwrite(STDERR, '检查因脚本异常中断，按失败处理' . PHP_EOL);
+        exit(1);
+    });
 }
 
 /**
@@ -230,27 +270,20 @@ function declaredMethods(string $code): array
 /**
  * 读取已应用的迁移版本（依赖框架引导，失败返回 null）
  *
+ * 传入 $appliedRecords 时复用已读到的记录，避免为 B/D 再初始化一次框架与连接。
+ * 版本号统一规范成 int：`migrations.version` 是 bigint，与检查 A 的文件版本口径一致。
+ *
+ * @param array<int, array{version:string, name:string}>|null $appliedRecords
  * @return int[]|null
  */
-function loadAppliedVersions(): ?array
+function loadAppliedVersions(?array $appliedRecords = null): ?array
 {
-    try {
-        $autoload = REPO_ROOT . '/vendor/autoload.php';
-        if (!is_file($autoload)) {
-            return null;
-        }
-        require_once $autoload;
-
-        $app = new \think\App();
-        $app->initialize();
-
-        $pdo = $app->db->connect()->getPdo();
-        $rows = $pdo->query('SELECT version FROM migrations')->fetchAll(PDO::FETCH_COLUMN);
-
-        return array_map('intval', $rows);
-    } catch (\Throwable $e) {
+    $records = $appliedRecords ?? loadAppliedRecords();
+    if (null === $records) {
         return null;
     }
+
+    return array_map(static fn (array $record): int => (int) $record['version'], $records);
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +572,79 @@ function checkTenantIdDeclaration(array $migrations, ?array $applied): array
 const KNOWN_TENANT_FK_EXCEPTIONS = [];
 
 /**
+ * 检查 F 的过渡豁免基线：已 applied 但仓库内无对应迁移文件的版本
+ *
+ * 与 LEGACY_CHANGE_ONLY 属同一类东西（历史遗留的临时放行），但**多了一条硬要求**：
+ * 每条豁免必须带 review_by 到期日。理由：孤儿记录是「待人协调」而不是「永久合理」——
+ * 没有到期日，这条豁免就会永远躺在清单里，账本与仓库的失配随之固化。
+ * 到期后检查 F 报 [EXEMPT-EXPIRED]，未到期则每次运行打印剩余天数（可见性）。
+ *
+ * 反向检查（不留僵尸条目）：豁免的 version 一旦不再出现在孤儿集合里
+ * （说明已经用 scripts/migrate-reconcile.php 清理过），即报 [EXEMPT-STALE] 要求删除本条，
+ * 否则「已修好」与「还欠着」在输出上无法区分。
+ *
+ * 格式：version => ['reason' => 说明, 'review_by' => 'YYYY-MM-DD']
+ * version 必须与 `migrations.version`（bigint）的十进制写法完全一致。
+ *
+ * 当前唯一已知遗留：
+ *   20251125 —— R43 把 `20251125_add_casbin_manage_permission.php` 改名成
+ *   `20251126000001_add_casbin_manage_permission.php`，但旧库里改名前已 applied 的记录没同步清理，
+ *   于是同一件事在账本里留下两行（一行 up、一行 MISSING）。
+ *   **新增迁移不得再进入本清单**；新增条目等同于承认账本已经脏了。
+ */
+const ORPHAN_APPLIED_EXEMPTIONS = [
+    '20251125' => [
+        'reason'    => 'R43 改名遗留：迁移文件已改名为 20251126000001_add_casbin_manage_permission.php，'
+            . '旧库的 applied 记录未清理（同一件事两行记录）；属「待协调」而非永久合理，'
+            . '需按 scripts/migrate-reconcile.php 的 dry-run -> 备份 -> --apply 流程处理后删除本条',
+        'review_by' => '2027-02-28',
+    ],
+];
+
+/**
+ * 读取 migrations 表的全部已应用记录（依赖框架引导，失败返回 null）
+ *
+ * 返回 version 的**原始字符串**而非 int：检查 F 的报错与 migrate-reconcile 的 SQL 都要
+ * 原样回显版本号；同时 `version` 在 MySQL 里是 bigint，字符串形态才是它的真相。
+ * 用 `SELECT *` 而不是列名清单：极早期 schema 若没有 migration_name 列，name 退化为空串，
+ * 不至于让整条检查因为一个「只用于展示」的列而变成「无法连库」的假告警。
+ *
+ * @return array<int, array{version:string, name:string}>|null
+ */
+function loadAppliedRecords(): ?array
+{
+    try {
+        $autoload = REPO_ROOT . '/vendor/autoload.php';
+        if (!is_file($autoload)) {
+            return null;
+        }
+        require_once $autoload;
+
+        $app = new \think\App();
+        $app->initialize();
+        enforceFailClosedOnError();
+
+        $pdo = $app->db->connect()->getPdo();
+        $rows = $pdo->query('SELECT * FROM migrations')->fetchAll(PDO::FETCH_ASSOC);
+
+        $records = [];
+        foreach ($rows as $row) {
+            $records[] = [
+                'version' => (string) ($row['version'] ?? ''),
+                'name'    => (string) ($row['migration_name'] ?? ''),
+            ];
+        }
+
+        // 按 version 数值升序：报告与 dry-run 输出稳定可比
+        usort($records, static fn (array $a, array $b): int => (int) $a['version'] <=> (int) $b['version']);
+
+        return $records;
+    } catch (\Throwable $e) {
+        return null;
+    }
+}
+
+/**
  * 检查 E：无默认值的 tenant_id 必须有 tenant_id → tenants.id 外键
  *
  * 依据：审计实测 224 张含 tenant_id 的表，无默认值的 11 张里 10 张有外键，
@@ -557,6 +663,7 @@ function loadTenantFkViolations(): ?array
 
         $app = new \think\App();
         $app->initialize();
+        enforceFailClosedOnError();
 
         $pdo = $app->db->connect()->getPdo();
 
@@ -587,6 +694,151 @@ function loadTenantFkViolations(): ?array
     } catch (\Throwable $e) {
         return null;
     }
+}
+
+// ---------------------------------------------------------------------------
+// 检查 F：applied 记录必须有对应文件
+// ---------------------------------------------------------------------------
+
+/**
+ * 把 version 规范化成豁免清单用的数组下标
+ *
+ * `migrations.version` 是 bigint；PHP 会把「数字字符串作数组下标」自动转成 int，
+ * 于是 `ORPHAN_APPLIED_EXEMPTIONS['20251125']` 实际是 int 键 20251125。
+ * 这里统一用同一规则转换，避免「两边看起来都是 20251125 却查不到」这类静默失配。
+ */
+function versionKey(string $version): int|string
+{
+    return preg_match('/^\d+$/', $version) === 1 ? (int) $version : $version;
+}
+
+/**
+ * 检查 F 第一步：找出「有 applied 记录、但仓库内无对应迁移文件」的版本（孤儿记录）
+ *
+ * 比对按规范化后的 int 版本号（与检查 A/B 的文件版本口径一致）。
+ * 注意 `20251125` 与 `20251125000001` 是两个不同版本，本函数不会把它们混为一谈 ——
+ * 正是「改名后旧记录没清」才会出现前者找不到文件。
+ *
+ * @param array<int, array{version:string, name:string}>          $appliedRecords
+ * @param array<int, array{file:string, base:string, version:int}> $migrations
+ * @return array<int, array{version:string, name:string}> 孤儿记录（保持 applied 的原样字符串）
+ */
+function findOrphanAppliedRecords(array $appliedRecords, array $migrations): array
+{
+    $fileVersions = [];
+    foreach ($migrations as $migration) {
+        $fileVersions[$migration['version']] = true;
+    }
+
+    $orphans = [];
+    foreach ($appliedRecords as $record) {
+        if (isset($fileVersions[(int) $record['version']])) {
+            continue;
+        }
+        $orphans[] = $record;
+    }
+
+    return $orphans;
+}
+
+/**
+ * 某个版本是否已在检查 F 的豁免基线里登记
+ *
+ * 只要「登记过」就算豁免（哪怕元数据写错）：元数据问题由 auditOrphanExemptions()
+ * 单独报 [EXEMPT-META]，不在这里再叠一条 MISSING，避免同一个原因刷两条错误。
+ */
+function isOrphanExempted(string $version): bool
+{
+    return array_key_exists(versionKey($version), ORPHAN_APPLIED_EXEMPTIONS);
+}
+
+/**
+ * 检查 F 第二步：审计豁免元数据（review_by 到期 + 陈旧条目反向检查）
+ *
+ * 与 check-phpunit-config.php 检查 E 同一套模式，错误分三种标签：
+ *   [EXEMPT-META]    元数据缺失/格式非法/日期不存在 —— 写豁免的人的问题；
+ *   [EXEMPT-EXPIRED] 真的到期了 —— 必须复核后清理账本或续期；
+ *   [EXEMPT-STALE]   豁免指向的孤儿记录已不存在 —— 账本已协调完，条目该删了。
+ *
+ * @param array<int, array{version:string, name:string}> $orphans
+ * @return array{errors: array<int, array{tag:string, msg:string}>, notices: string[]}
+ */
+function auditOrphanExemptions(array $orphans): array
+{
+    $errors  = [];
+    $notices = [];
+
+    // 孤儿集合的规范化下标（反向检查的判定基准，与检查 F 第一步同一口径）
+    $orphanKeys = [];
+    foreach ($orphans as $orphan) {
+        $orphanKeys[versionKey($orphan['version'])] = true;
+    }
+
+    $today = new DateTimeImmutable('today'); // 服务器当天零点，按日期粒度比较
+
+    foreach (ORPHAN_APPLIED_EXEMPTIONS as $version => $meta) {
+        $key = versionKey((string) $version);
+
+        // 反向检查：豁免条目必须对应真实存在的孤儿记录
+        if (!isset($orphanKeys[$key])) {
+            $errors[] = [
+                'tag' => 'EXEMPT-STALE',
+                'msg' => "检查 F 的豁免条目 {$key} 已失效：migrations 表里已没有该版本记录，"
+                    . '或它已经有对应迁移文件。说明账本已协调完毕，请从 ORPHAN_APPLIED_EXEMPTIONS 删除本条',
+            ];
+
+            continue;
+        }
+
+        if (!is_array($meta)) {
+            // 兼容被误改成字符串理由的情况：直接报结构错误，避免 review_by 静默丢失
+            $errors[] = [
+                'tag' => 'EXEMPT-META',
+                'msg' => "{$key} 的豁免元数据必须是数组 ['reason' => ..., 'review_by' => 'YYYY-MM-DD']",
+            ];
+
+            continue;
+        }
+
+        $reviewBy = $meta['review_by'] ?? null;
+        if (!is_string($reviewBy) || preg_match('/^\d{4}-\d{2}-\d{2}$/', $reviewBy) !== 1) {
+            $errors[] = [
+                'tag' => 'EXEMPT-META',
+                'msg' => "{$key} 的 review_by 缺失或格式非法（应为 YYYY-MM-DD，实际="
+                    . (is_string($reviewBy) ? $reviewBy : gettype($reviewBy)) . '）',
+            ];
+
+            continue;
+        }
+
+        $deadline = DateTimeImmutable::createFromFormat('!Y-m-d', $reviewBy);
+        // createFromFormat 会把 2027-02-30 溢出成 2027-03-02，回写比对才能识别出「不存在的日期」
+        if ($deadline === false || $deadline->format('Y-m-d') !== $reviewBy) {
+            $errors[] = [
+                'tag' => 'EXEMPT-META',
+                'msg' => "{$key} 的 review_by={$reviewBy} 不是真实存在的日期",
+            ];
+
+            continue;
+        }
+
+        // %r 带出符号：负值表示已过期
+        $daysLeft = (int) $today->diff($deadline)->format('%r%a');
+        if ($daysLeft < 0) {
+            $errors[] = [
+                'tag' => 'EXEMPT-EXPIRED',
+                'msg' => "{$key} 的豁免已到期（review_by={$reviewBy}，已过期 " . abs($daysLeft) . ' 天）'
+                    . '：请用 scripts/migrate-reconcile.php 协调账本后删除本条，或复核后更新 review_by',
+            ];
+
+            continue;
+        }
+
+        // 未到期：每次运行都打印，制造可见性（避免「设了豁免就再也不看」）
+        $notices[] = "{$key} 豁免有效期至 {$reviewBy}，剩余 {$daysLeft} 天";
+    }
+
+    return ['errors' => $errors, 'notices' => $notices];
 }
 
 // ---------------------------------------------------------------------------
@@ -622,8 +874,9 @@ foreach ($duplicateIssues as $version => $files) {
 $errorCount += count($duplicateIssues);
 
 // --- 检查 B：版本顺序不倒挂 ---
-// `--no-db` 时不调用 loadAppliedVersions()：既不 require vendor/autoload.php，也不建库连接
-$applied = $noDb ? null : loadAppliedVersions();
+// `--no-db` 时不调用 loadAppliedRecords()：既不 require vendor/autoload.php，也不建库连接
+$appliedRecords = $noDb ? null : loadAppliedRecords();
+$applied = null === $appliedRecords ? null : loadAppliedVersions($appliedRecords);
 if (null === $applied) {
     if ($noDb) {
         printf("检查 B  未应用迁移版本顺序      %s\n", colorize('跳过（--no-db）', 'gray'));
@@ -710,12 +963,72 @@ if (null === $fkViolations) {
     $errorCount += count($fkErrors);
 }
 
+// --- 检查 F：applied 记录必须有对应迁移文件（孤儿记录） ---
+// 判定基准同 B/D/E，都是 applied 集合，所以 --no-db 下同样跳过（不 require autoload、不连库）
+if ($noDb) {
+    printf("检查 F  applied 记录对应文件    %s\n", colorize('跳过（--no-db）', 'gray'));
+    echo '   ' . colorize('[SKIP]', 'gray')
+        . ' --no-db：检查 F 依赖 migrations 表的 applied 记录，本环境没有' . PHP_EOL;
+} elseif (null === $appliedRecords) {
+    printf("检查 F  applied 记录对应文件    %s\n", formatResult(0, 1));
+    echo '   ' . colorize('[WARN]', 'yellow')
+        . ' 无法连接数据库读取 migrations 表，已跳过 applied 记录一致性检查' . PHP_EOL;
+    $warningCount++;
+} else {
+    $orphans     = findOrphanAppliedRecords($appliedRecords, $migrations);
+    $exemptAudit = auditOrphanExemptions($orphans);
+
+    // 未被豁免的孤儿记录：每条都是错误，必须逐条列出（不许汇总成「有 N 条」了事）
+    $missingErrors = [];
+    foreach ($orphans as $orphan) {
+        if (isOrphanExempted($orphan['version'])) {
+            continue;
+        }
+        $missingErrors[] = $orphan;
+    }
+
+    $fErrors = count($missingErrors) + count($exemptAudit['errors']);
+    printf("检查 F  applied 记录对应文件    %s\n", formatResult($fErrors, 0));
+
+    foreach ($missingErrors as $orphan) {
+        $name = '' !== $orphan['name'] ? "（{$orphan['name']}）" : '';
+        echo '   ' . colorize('[MISSING]', 'red')
+            . " {$orphan['version']}{$name} 在 migrations 表里有 applied 记录，但找不到对应迁移文件" . PHP_EOL;
+        echo '      处置：php scripts/migrate-reconcile.php 看清单 → 备份 migrations 表 → '
+            . "php scripts/migrate-reconcile.php --apply --version={$orphan['version']} --yes" . PHP_EOL;
+    }
+
+    foreach ($exemptAudit['errors'] as $issue) {
+        echo '   ' . colorize("[{$issue['tag']}]", 'red') . " {$issue['msg']}" . PHP_EOL;
+    }
+
+    // 豁免内的孤儿只做灰色提示，不计入告警：
+    // 否则 --strict 会因这条待协调项永久变红，门禁失去意义
+    // （与检查 C 对 LEGACY_CHANGE_ONLY、检查 E 对 KNOWN_TENANT_FK_EXCEPTIONS 的处理一致）。
+    foreach ($orphans as $orphan) {
+        if (!isOrphanExempted($orphan['version'])) {
+            continue;
+        }
+        $meta   = ORPHAN_APPLIED_EXEMPTIONS[versionKey($orphan['version'])] ?? null;
+        $reason = is_array($meta)
+            ? ($meta['reason'] ?? '（缺少 reason）')
+            : '（豁免元数据格式异常，见上方 [EXEMPT-META]）';
+        echo '   ' . colorize('[EXEMPT]', 'gray')
+            . " {$orphan['version']} 属已知遗留（见 ORPHAN_APPLIED_EXEMPTIONS）：{$reason}" . PHP_EOL;
+    }
+    foreach ($exemptAudit['notices'] as $notice) {
+        echo '   ' . colorize('[EXEMPT-REVIEW]', 'gray') . " {$notice}" . PHP_EOL;
+    }
+
+    $errorCount += $fErrors;
+}
+
 echo str_repeat('-', 64) . PHP_EOL;
 
 if ($noDb) {
     // 覆盖范围提醒：读 CI 日志的人不应该把这次运行当成「全量通过」
     echo colorize(
-        '提示：--no-db 只覆盖 A/C（纯静态）。B/D/E 需要 applied 状态，请在本地跑全量：'
+        '提示：--no-db 只覆盖 A/C（纯静态）。B/D/E/F 需要 applied 状态，请在本地跑全量：'
         . 'php scripts/check-migrations.php --strict',
         'gray'
     ) . PHP_EOL;
@@ -723,7 +1036,7 @@ if ($noDb) {
 
 if (0 === $errorCount && 0 === $warningCount) {
     if ($noDb) {
-        echo colorize('✓ 静态检查（A/C）通过；B/D/E 已跳过（--no-db）', 'green') . PHP_EOL;
+        echo colorize('✓ 静态检查（A/C）通过；B/D/E/F 已跳过（--no-db）', 'green') . PHP_EOL;
     } else {
         echo colorize('✓ 全部检查通过', 'green') . PHP_EOL;
     }

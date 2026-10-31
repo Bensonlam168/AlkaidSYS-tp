@@ -73,14 +73,15 @@ Frontend:
 `check-migrations`（`scripts/check-migrations.php`）**已有工作流**（R41），但**CI 只跑 A/C（静态）**：
 `check A` 迁移版本唯一性、`check C` 的 up()/down() 与 change() 规则 —— 这两项与环境无关。
 
-`check B`（版本倒挂）、`check D`（`tenant_id` 列声明）、`check E`（无默认值 `tenant_id` 的租户外键）
+`check B`（版本倒挂）、`check D`（`tenant_id` 列声明）、`check E`（无默认值 `tenant_id` 的租户外键）、
+`check F`（applied 记录必须有对应迁移文件）
 **都需要「哪些迁移已应用」这个基准**，CI 拿不到：GitHub Actions 里的全新 MySQL 中 `migrations` 表是空的，
 而本仓库新库全量 `migrate:run` 目前跑不通（`20251125_add_casbin_manage_permission.php` 的 8 位版本号
 排在全部 14 位时间戳之前，第一条迁移就失败），所以 CI 造不出真实的 applied 状态。
 因此工作流显式传 `--no-db`（语义是「本环境没有 applied 状态」，不是「允许跳过检查」），
 脚本会打印「跳过（--no-db）」而不是把跳过伪装成通过。
 
-⚠️ **本地 / 提交前必须跑全量**，CI 绿不代表 B/D/E 没问题：
+⚠️ **本地 / 提交前必须跑全量**，CI 绿不代表 B/D/E/F 没问题：
 
 ```bash
 docker exec alkaid-backend php scripts/check-migrations.php --strict   # 不带 --no-db，会连库
@@ -91,7 +92,7 @@ docker exec alkaid-backend php scripts/check-migrations.php --strict   # 不带 
 ```
 Settings → Branches → Branch protection rule（或 Rulesets）
   → Require status checks to pass before merging
-  → 搜索并勾选上表 5 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E 已被守住）
+  → 搜索并勾选上表 5 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E/F 已被守住）
 ```
 
 ✅ **`paths:` 过滤与 required 的冲突已解决（R40）**：上表三个配置类工作流
@@ -124,8 +125,40 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 - [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`（最后一项在 CI 只覆盖 A/C，见上文 ⚠️）
 - [ ] 已确认四份工作流（上表前三个 + `migrations-check.yml`）**不再有** `paths:`（R40 已完成；`grep -cE '^[[:space:]]*paths:' .github/workflows/docs-check.yml .github/workflows/phpunit-config-check.yml .github/workflows/env-check.yml .github/workflows/migrations-check.yml` 均应为 `0`，注释里提到 `paths:` 不算），不会出现永久 `Expected`
 - [ ] 已勾选 `Require review from Code Owners`，且已排除「owner 本人无法合并」的单人瓶颈
-- [ ] `check B` / `check D` / `check E` 无法在 CI 覆盖（需要 applied 状态），已确认**本地跑过全量**：`docker exec alkaid-backend php scripts/check-migrations.php --strict`
+- [ ] `check B` / `check D` / `check E` / `check F` 无法在 CI 覆盖（需要 applied 状态），已确认**本地跑过全量**：`docker exec alkaid-backend php scripts/check-migrations.php --strict`
 - [ ] 新增 / 重命名工作流的 job 后，回填上表的 check 名称（永远取自 `jobs.<id>.name`）
+
+#### 迁移文件改名 / 删除的协调流程（ER-03）
+
+`migrations` 表是 Phinx 的账本，它**只记版本号，不知道文件去哪了**。某个迁移文件一旦被改名或删除，
+旧库的 applied 记录就会变成「孤儿记录」：`php think migrate:status` 把它显示成 `MISSING`，**退出码却仍是 0**。
+这类记录不会被 `migrate:run` 自愈，必须显式协调。
+
+`scripts/check-migrations.php` 的**检查 F** 是这条防线：连库时逐条比对「applied 记录 ↔ 迁移文件」，
+发现 MISSING 即报错（`--strict` 下 exit 1）并**列出全部版本号**。已知遗留可登记到
+`ORPHAN_APPLIED_EXEMPTIONS` 作过渡豁免，但**必须带 `review_by` 到期日**：到期即退化为错误，
+账本协调完成后条目会变成 `[EXEMPT-STALE]` 要求删除（不允许留僵尸豁免）。
+
+处置顺序（**不要手工拼 DELETE**）：
+
+```bash
+# 1) dry-run：只 SELECT + 打印「孤儿记录」与「有文件但未 applied」两个清单，绝不写库
+docker exec alkaid-backend php scripts/migrate-reconcile.php
+
+# 2) 备份 migrations 表（脚本也会提示；先确认备份非空再往下走）
+docker exec alkaid-mysql mysqldump -u<user> -p <db> migrations > migrations.backup.sql
+
+# 3) 只删「指定版本的单条」孤儿记录；缺 --yes 会被拒绝执行，数据库不动
+docker exec alkaid-backend php scripts/migrate-reconcile.php --apply --version=<ver> --yes
+
+# 4) 重跑全量检查：检查 F 应无 [MISSING]；随后删掉脚本里对应的豁免条目
+docker exec alkaid-backend php scripts/check-migrations.php --strict
+```
+
+`migrate-reconcile.php` 的边界是**故意做窄**的：默认 dry-run；一次只删一条且版本号必须由人指定；
+账本里没有该版本、或该版本**仍有对应文件**时一律拒绝（删掉有文件的记录会让迁移被重复执行）。
+它不改迁移文件、不改表结构、不批量清理。
+**改名迁移时只改文件名而不清账本，等于亲手制造上面那条 MISSING。**
 
 ## Documentation Maintenance（文档维护约定）
 
