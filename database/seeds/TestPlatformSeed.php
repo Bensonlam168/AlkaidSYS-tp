@@ -31,7 +31,7 @@
  *   - tenants：1（迁移已建）+ 2（隔离对照，本文件 ensureSecondTenant()）
  *   - sites：1
  *   - roles：1 admin / 2 user（显式 id，父类 createRoles()）
- *   - permissions：23 条业务权限（显式 id 1001..1023，父类 ensurePermissions()）
+ *   - permissions：33 条业务权限（显式 id 1001..1033，含 workflow_* 10 条，父类 ensurePermissions()）
  *   - role_permissions：admin 全量 + user 只读 3 条
  *   - users：id = 1 的系统用户（无可用口令）
  *   - user_roles：user 1 → role 1
