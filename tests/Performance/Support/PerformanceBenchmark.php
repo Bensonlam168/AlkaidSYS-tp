@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Performance\Support;
 
+use RuntimeException;
+
 /**
  * 性能基准管理类
  * Performance Benchmark Manager
@@ -30,6 +32,16 @@ class PerformanceBenchmark
     protected string $benchmarkDir;
 
     /**
+     * 默认基准数据目录（相对项目根）
+     * Default benchmark data directory (relative to the project root)
+     *
+     * 与 PerformanceReporter 一样落在 `runtime/` 下：历史版本的默认值
+     * `tests/Performance/.benchmarks` 在版本库内，每跑一次基准就会重写
+     * `single_permission_check.json`，让工作区常驻未提交改动。
+     */
+    protected const DEFAULT_BENCHMARK_DIR = __DIR__ . '/../../../runtime/performance-reports/benchmarks';
+
+    /**
      * 当前测试的基准数据
      * Current test benchmark data
      *
@@ -38,11 +50,14 @@ class PerformanceBenchmark
     protected array $benchmarks = [];
 
     /**
-     * 性能退化阈值（百分比）
-     * Performance regression threshold (percentage)
+     * 性能退化阈值（比率）
+     * Performance regression threshold (ratio)
      *
-     * 默认 20%，即性能下降超过 20% 视为退化
-     * Default 20%, i.e., performance degradation > 20% is considered regression
+     * 判定式：本次耗时 > 历史中位数 × (1 + 阈值)。默认 0.20 即「慢 20% 以上算退化」。
+     * 注意：这是**历史中位数比对**的阈值，不是预算断言。宿主 I/O 抖动大的机器上
+     * 20% 会随机把用例判成 Incomplete，调用方可用 setRegressionThreshold() 放宽
+     * （性能套件里默认放宽到 2.0，见 CasbinPerformanceTest::DEFAULT_REGRESSION_THRESHOLD）。
+     * Default 20%: > 20% slower than the historical median is treated as a regression.
      */
     protected float $regressionThreshold = 0.20;
 
@@ -54,12 +69,14 @@ class PerformanceBenchmark
      */
     public function __construct(?string $benchmarkDir = null)
     {
-        $this->benchmarkDir = $benchmarkDir ?? __DIR__ . '/../.benchmarks';
+        $this->benchmarkDir = $benchmarkDir ?? self::DEFAULT_BENCHMARK_DIR;
 
-        // 确保目录存在
-        // Ensure directory exists
-        if (!is_dir($this->benchmarkDir)) {
-            mkdir($this->benchmarkDir, 0755, true);
+        // 确保目录存在：失败时抛出可定位的异常，而不是让后续 file_put_contents 报含混的 warning
+        if (!is_dir($this->benchmarkDir) && !mkdir($this->benchmarkDir, 0755, true) && !is_dir($this->benchmarkDir)) {
+            throw new RuntimeException(sprintf(
+                '无法创建性能基准目录：「%s」。请检查目录权限，或用构造参数指定一个可写目录。',
+                $this->benchmarkDir
+            ));
         }
     }
 
