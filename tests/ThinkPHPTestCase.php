@@ -59,15 +59,29 @@ use think\Response;
  * `queue` / `queue.failer`(闭包) / `Faker\Generator`(闭包) / `think\migration\Factory`(闭包) 等，
  * 它们不属于任何测试类；整份回滚会让后续类解析不到这些服务。因此只删「指向被丢弃替身」的绑定。
  *
+ * ## 两层容器清理（类级还原 + 方法级 Request/Response 丢弃）
+ *
+ *   1. **类级还原**：`tearDownAfterClass()` → `restoreContainerState()`，按基线清掉本类注入的
+ *      替身、业务单例与 `think\Middleware`（判据见 `isClassLocalInstance()`）；
+ *   2. **方法级丢弃**：`tearDown()` → `discardPerRequestInstances()`，只丢
+ *      `think\Request` / `app\Request` / `think\Response` 这三类「一次请求一个对象」的实例。
+ *
+ * 第 2 层是为随机顺序（`--order-by=random`）准备的：`app\Request::$traceId` 由 `Trace` 中间件
+ * 写入后**不自愈**，而 `withHeader()` 只替换 header 表、不动该属性，`ApiController::getTraceId()`
+ * 又**优先读属性** —— 于是容器里复用的同一个 Request 实例会把上一个用例的 trace_id 带给下一个用例
+ * （实测：`TraceIdCoverageTest` 读到 `trace-id-auth-401`）。`think\Http::run()` 每个真实请求都会
+ * `instance('request', $request)` 重建，所以「按方法丢弃」与框架语义一致，属于安全操作。
+ *
+ * 只丢这三类的边界很明确：`think\Config` / `think\Db` / `think\Cache` / `think\Event` / `think\Lang` /
+ * 隔离版 `think\Env` / `think\Middleware` 一律**不按方法**丢弃 —— 丢 `Config` 会连带丢掉本基类在
+ * `setUpBeforeClass()` 写入的 database/cache/log 覆盖配置，丢 `Db` 会断开已建立的连接，
+ * `think\Middleware` 的队列是进程级累加、按方法清空会破坏路由中间件语义。它们只在类级还原里处理。
+ *
  * 已知边界（**有意不做**，见验收报告的风险项）：
- *   - 只做「跨测试类」还原，不做「同类内跨测试方法」还原。把 Request / Response 也按方法清理
- *     能顺带修掉 `TraceIdCoverageTest` 在 `--order-by=random` 下的随机红（`app\Request`
- *     的 `$traceId` 属性由 Trace 中间件写入后不自愈，且 `ApiController::getTraceId()` 优先读属性），
- *     但会让 `CollectionControllerTest::testDeleteIgnoresTenantIdInBody` 变红 —— 它目前依赖
- *     上一个方法留在容器里的 `Content-Type` 头才让 `Request::withInput()` 解析出 `put` 数据。
- *     要同时修好，必须先让该用例自己 `withHeader(['Content-Type' => 'application/json'])`。
  *   - `think\Route` 的路由规则、`think\Event` 的监听器、`think\Cache` 的缓存项仍是跨类共享的；
  *     本次不动它们（动 Route 会让 `include_once route/*.php` 的用例注册不到路由）。
+ *   - `think\Config` / `think\Db` / `think\Cache` / `think\Event` / `think\Lang` / 隔离版 `think\Env`
+ *     不按**方法**丢弃（理由同上），方法级清理的范围就只有 Request / Response 三类实例。
  */
 abstract class ThinkPHPTestCase extends BaseTestCase
 {
@@ -291,6 +305,20 @@ abstract class ThinkPHPTestCase extends BaseTestCase
     }
 
     /**
+     * 每个测试方法结束时丢弃「一次请求一个对象」的实例 | Discard per-request instances
+     *
+     * 与 `tearDownAfterClass()` 的类级还原互补：这里只处理**方法级**串味。
+     * 子类若自己也重写了 `tearDown()`，只要在末尾调用 `parent::tearDown()` 就能享受这层清理
+     * （本仓库现状即如此：子类先做自己的清理，再调父类）。
+     */
+    protected function tearDown(): void
+    {
+        self::discardPerRequestInstances();
+
+        parent::tearDown();
+    }
+
+    /**
      * 快照容器状态 | Snapshot container state
      *
      * 反射实证（PHP 8.2 + think-container 3.x / think-framework 8.x）：
@@ -403,6 +431,55 @@ abstract class ThinkPHPTestCase extends BaseTestCase
         //         导致后续所有门面（Facade）都从另一个容器解析。
         if (Container::getInstance() !== $app) {
             Container::setInstance($app);
+        }
+    }
+
+    /**
+     * 按测试方法丢弃 Request / Response 实例 | Discard Request/Response per test method
+     *
+     * 为什么需要：容器会把 `make()` 的解析结果缓存进 `instances`，而 `think\Request` 在
+     * `app/provider.php` 里被绑成 `app\Request` —— 于是同一个请求对象会在整个进程内被复用。
+     * `app\Request::$traceId` 由 `Trace` 中间件写入后**不自愈**，`withHeader()` 只替换 header 表、
+     * 不动该属性，`ApiController::getTraceId()` 又优先读属性，最终表现为
+     * 「随机顺序下 `TraceIdCoverageTest` 读到上一个用例的 trace_id」。
+     *
+     * 为什么丢弃是安全的：`think\Http::run()` 每个请求都会 `instance('request', $request)` 重建；
+     * `think\Response` 同理是「一次请求一个对象」。`bind` 里的 `think\Request => app\Request`
+     * 映射**不动**，下次 `make()` 会重新实例化。
+     *
+     * 为什么只丢这三类：`think\Config` / `think\Db` / `think\Cache` / `think\Event` / `think\Lang` /
+     * 隔离版 `think\Env` / `think\Middleware` 丢不得（丢配置覆盖、断连接、破坏路由中间件队列语义）。
+     *
+     * 实现上复用 `readContainerArray()` / `writeContainerArray()`：ThinkPHP 没有「列出实例」的
+     * 公开 API，读写 `instances` 只能走反射。`instances` 里没有匹配项时**静默跳过**，不抛异常
+     * （部分用例会在 `setUp()` 中途失败，此时容器状态本来就是半成品）。
+     */
+    private static function discardPerRequestInstances(): void
+    {
+        if (null === self::$app) {
+            return;
+        }
+
+        $app = self::$app;
+        $instances = self::readContainerArray($app, 'instances');
+
+        $discarded = false;
+        foreach ($instances as $abstract => $instance) {
+            // 只处理对象：`instances` 正常都存对象，但测试可能塞入标量占位；
+            // `instanceof` 对非对象恒为 false，这里显式跳过让意图更清楚
+            if (!is_object($instance)) {
+                continue;
+            }
+
+            if ($instance instanceof Request || $instance instanceof Response) {
+                unset($instances[$abstract]);
+                $discarded = true;
+            }
+        }
+
+        // 没有命中就不写回：避免无意义地整份重写容器实例表
+        if ($discarded) {
+            self::writeContainerArray($app, 'instances', $instances);
         }
     }
 

@@ -223,17 +223,18 @@ class CollectionControllerTest extends ThinkPHPTestCase
             'title' => 'Updated Title',
             'tenant_id' => 999,
         ];
+        // 必须先声明 Content-Type，再喂 body：
+        // `think\Request::withInput()` 会**立刻**调用 `getInputData()` 解析，
+        // 而该方法只认 `application/json`（含 json 子串）与 `application/x-www-form-urlencoded`，
+        // 其余一律返回 []（`$put` 保持 null）。若把 header 放到 withInput 之后，
+        // 或用例依赖「上一个用例残留在容器 Request 实例上的 Content-Type」，
+        // 单跑本用例就会拿不到 body（实测：setMethod('PUT') + 无 Content-Type → put() 为 null）。
+        $request->withHeader(['Content-Type' => 'application/json']);
         $request->withInput(json_encode($data));
-        try {
-            $reflection = new \ReflectionClass($request);
-            if ($reflection->hasProperty('put')) {
-                $prop = $reflection->getProperty('put');
-                $prop->setAccessible(true);
-                $prop->setValue($request, $data);
-            }
-        } catch (\Throwable $e) {
-            // Ignore reflection errors in tests
-        }
+        // 历史 workaround（已删除）：此处原来用反射把 $data 强塞进 think\Request 的 $put 属性。
+        // 有了上面的 Content-Type，`withInput()` 内部就会 `$this->put = $inputData`，
+        // 反射写入的是同一份数据，属于纯冗余；实测去掉后本用例单跑仍全绿。
+        // 留着反而会掩盖「解析路径是否真的生效」—— 数据到底来自解析还是反射无法区分。
 
         // 直接调用控制器方法，注入 mock 的 CollectionManager
         /** @var \app\controller\lowcode\CollectionController $controller */
@@ -267,17 +268,17 @@ class CollectionControllerTest extends ThinkPHPTestCase
             'drop_table' => false,
             'tenant_id' => 999,
         ];
+        // 同 testUpdateIgnoresTenantIdInBody：Content-Type 必须早于 withInput()，
+        // 否则 `$put` 不会被填充，`CollectionController::delete()` 取不到 drop_table
+        // 会回落成默认值 true，与 mock 期望 false 不符而返回 400。
+        $request->withHeader(['Content-Type' => 'application/json']);
         $request->withInput(json_encode($data));
-        try {
-            $reflection = new \ReflectionClass($request);
-            if ($reflection->hasProperty('delete')) {
-                $prop = $reflection->getProperty('delete');
-                $prop->setAccessible(true);
-                $prop->setValue($request, $data);
-            }
-        } catch (\Throwable $e) {
-            // Ignore reflection errors in tests
-        }
+        // 历史 workaround（已删除）：此处原来是反射写 `delete` 属性 —— 而 think\Request
+        // **根本没有 `$delete` 属性**（`hasProperty('delete')` 实测为 false，
+        // `app\Request::delete()` 只是转发到 `put()`），所以那段代码一直是空操作。
+        // 本用例此前能通过，靠的是容器里复用的 Request 实例残留了上一个用例的
+        // `Content-Type: application/json`，使 `withInput()` 把数据解析进 `$put`。
+        // 现在 Content-Type 显式声明，解析路径不再依赖残留；单跑本用例亦全绿。
 
         /** @var \app\controller\lowcode\CollectionController $controller */
         $controller = $this->app()->make(\app\controller\lowcode\CollectionController::class);
