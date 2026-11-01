@@ -288,6 +288,119 @@ JWT 只能证明「这张令牌在**签发时**是真的」，不能证明「令
 被丢弃的键只能等 TTL 自然过期。生产环境强制 Redis（`config/cache.php` 对
 `production/prod/stage/staging` 强制 `redis`），不受此限制。
 
+### 3.5 授予边界（Grant Ceiling，ER-05）
+
+#### 3.5.1 缺口
+
+`role.write` / `user.write` 只回答「你能不能改角色/用户」，**不回答「你能改出多大的权限」**。
+历史实现里四条写路径都直接落库：
+
+| 路径 | 动作 | 缺口 |
+| --- | --- | --- |
+| `RoleController::setPermissions` | `PUT /v1/admin/roles/:id/permissions` | 可授任意权限 |
+| `RoleController::save` | `POST /v1/admin/roles`（带 `permissions`） | 可授任意权限 |
+| `RoleController::update` | `PUT /v1/admin/roles/:id`（带 `permissions`） | 可授任意权限 |
+| `UserController::setRoles` | `PUT /v1/admin/users/:id/roles` | 可分配任意角色 |
+| `UserController::save` | `POST /v1/admin/users`（带 `role_ids`） | 可分配任意角色 |
+
+攻击链（**条件性提权**）：只有 `role.write` 的租户管理员 →
+
+```
+PUT /v1/admin/roles/{自己持有的角色}/permissions  {"permissions": ["tenant.write 的 ID"]}
+```
+
+→ 自己立刻持有 `tenant.write`。不需要任何别的漏洞。
+
+#### 3.5.2 判定规则
+
+- **权限集路径**（前三条）：请求的 permission ID 集合 ⊆ 操作者当前持有的权限集合；
+- **角色分配路径**（后两条）：目标角色集合的**权限并集** ⊆ 操作者当前持有的权限集合
+  （角色比权限更粗：一个角色会带来它名下全部权限，逐角色判会漏掉并集越界）；
+- 跨租户角色一律视为**不存在**（不区分「不存在」与「别人的角色」，避免泄露存在性）。
+
+比对口径是**权限码 `resource:action`**，不是权限 ID：
+
+- 操作者侧取 `PermissionService::getUserPermissions()` —— 与鉴权中间件**同一份数据源**
+  （含 `DB_ONLY` / `CASBIN_ONLY` / `DUAL_MODE` 三种模式与多级缓存）。若改成比 ID，
+  就会引入第二个真相源，在 Casbin 模式下与中间件的判断分叉；
+- 请求侧把 permission ID 经 `permissions` 表折算成 `resource:action`
+  （该表是**全局目录**，无 `tenant_id`；开发库 45 行 / 测试库 52 行中
+  `resource + action` 无空值、无重复组合，映射良定义）；
+- 折算不出权限码的权限行（`resource`/`action` 为空）→ 任何人都不"持有"它 → 拒绝（fail-closed）。
+
+#### 3.5.3 拒绝语义
+
+- **HTTP 403 + 业务码 2002**，与 `app\middleware\Permission` 的「权限不足」同码；
+- message 用 `error.grant_ceiling_exceeded`：**可操作但不回显缺哪些权限**
+  （否则可被逐条试探出操作者的权限边界）；
+- 完整差集（权限 ID + 权限码）只写 `Log::warning`，供取证；
+- **先校验后落库**：`save` / `update` / `setRoles` / `save(用户)` 的判定都在写库**之前**，
+  因此被拒绝时不会有"半成品角色 / 已建但无角色的账号 / 旧权限已被删"的部分执行
+  （`role_permissions` 的外键报错会把 `syncPermissions` 的 delete+insert 撕成两半）。
+
+#### 3.5.4 不引入「超管绕过」
+
+没有任何硬编码的用户 ID / 角色 slug / `is_system` 判定。平台/系统管理员之所以不受限，
+是因为他们**天然持有全部权限**（seeded admin 角色挂满 52 条），子集校验自然通过。
+这样就不存在"写死一个 id 就免检"的后门。
+
+#### 3.5.5 操作者身份只来自 JWT
+
+授予边界要拿「操作者是谁」去查权限集，所以这个值**只能**来自 Auth 中间件
+从 JWT 解出并写入 `Request` 上下文的值。
+
+`UserController::getCurrentUserId()` 历史实现**优先读 `X-User-Id` 请求头**，等于让客户端
+自己声明"我是谁"：伪造该头即可冒充 seeded admin，授予边界形同虚设，
+「禁止删除/禁用自己」也一并失效。该分支已移除，只保留服务端可信来源
+（`Request::userId()` 与框架注入的 `request->user`）。
+
+#### 3.5.6 明确防不住的（设计上的允许）
+
+- 操作者把**自己已有**的权限授予自己可影响的角色：他没有获得任何新能力；
+- 操作者**回收**权限不受限（回收是减权）；
+- 操作者改**自己所属角色**的权限集：受同一条子集校验约束，无法借此提权，
+  但可以自我降权（self-lockout）。**不做**「禁止修改自己所属角色」的硬拦截：
+  那会让「唯一的租户管理员主动交出 `role.write`」这类合法减权流程断掉，
+  且没有绕行手段时只能靠"超管绕过"，与本节的 3.5.4 冲突。自我降权属于可审计的
+  运维操作，交由日志与流程治理。
+
+#### 3.5.7 路由遮蔽：加了校验 ≠ 校验生效
+
+`config/route.php` 的 `route_complete_match = false` 让规则变成**前缀匹配**，于是
+`PUT /v1/admin/roles/:id`（`update`）注册在 `:id/permissions` 之前，会先吃掉
+`PUT /v1/admin/roles/5/permissions`：
+
+```
+请求   PUT /v1/admin/roles/5/permissions
+命中   RoleController@update        ← 前缀匹配 v1/admin/roles/5
+结果   200 + {"message":"role.updated"}（不是 404，而是静默走错动作）
+```
+
+后果：`setPermissions()` / `setRoles()` 是**永远进不去的死代码**，任何加在它们里面的
+校验都不会执行；而提权实际发生在可达的 `update()` 上（它同样 `syncPermissions`）。
+因此本次给四条规则都补了 `->completeMatch()`：
+
+- `PUT /v1/admin/roles/:id`、`PUT /v1/admin/roles/:id/permissions`
+- `PUT /v1/admin/users/:id`、`PUT /v1/admin/users/:id/roles`
+
+修复后响应 message 可区分动作：`role.permissions_updated` / `角色设置成功`（对应端点）
+vs `role.updated` / `用户更新成功`（父级 `update`）。
+回归用例：`tests/Feature/Route/AdminRouteReachabilityTest.php` 用框架自己的
+`Route::check()` 逐条重放 `v1/admin/**` 的样例 URL，断言「命中的目标 == 注册的目标」。
+
+**同类型的其它遮蔽（ER-05 实测确认，本次未修 —— 不在本包范围）**，把该用例的
+`AUDIT_PREFIX` 临时改成 `/v1/` 即可复现：
+
+| 被遮蔽的路由 | 实际命中 | 后果 |
+| --- | --- | --- |
+| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | **删字段 = 删整张集合** |
+| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | 同上 |
+| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | 历史记录端点不可达 |
+| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | 变量端点不可达 |
+| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | 任务表单端点不可达 |
+| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | 触发器日志端点不可达 |
+| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | **Webhook 回调永远进不去** |
+
 ## 4. 数据安全
 
 ### 4.1 加密- **传输加密**：强制使用 HTTPS（TLS 1.2+ 最低，推荐 TLS 1.3）

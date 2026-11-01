@@ -12,7 +12,6 @@ use Tests\Helpers\AuthHelper;
 use Tests\ThinkPHPTestCase;
 use think\facade\Cache;
 use think\facade\Db;
-use think\facade\Route;
 
 /**
  * 撤权 / 改角色 / 停用后「权限缓存立即失效」测试（ER-06 回归防护）
@@ -34,19 +33,20 @@ use think\facade\Route;
  * 断言方式：`PermissionService::hasPermission()` 在**同一进程内**紧接着读取。
  * 若缓存没被清，它必然命中旧值（TTL 还没到）—— 断言就会失败。这就是「立即生效」的证据。
  *
- * ## 已知路由缺陷（本次不改，`route/**` 不在改动范围）
+ * ## 路由遮蔽：已由 ER-05 修复，本类改用生产路由
  *
- * `config/route.php` 的 `route_complete_match = false`，导致
- * `PUT v1/admin/roles/{id}/permissions`（`setPermissions`）与
- * `PUT v1/admin/users/{id}/roles`（`setRoles`）被先注册的
- * `PUT :id`（`update`）**部分匹配遮蔽**，这两个端点实际进不了各自的控制器动作
- * （实测：请求 `PUT v1/admin/roles/990402/permissions` 返回 `role.updated`，
- * 即走的是 `update`）。这是既有缺陷，与本次改动无关，但会挡住本测试。
+ * `config/route.php` 的 `route_complete_match = false` 曾让 `PUT :id`（`update`）**前缀匹配**
+ * 吃掉 `PUT :id/permissions`、`PUT :id/roles`（实测：`PUT v1/admin/roles/990402/permissions`
+ * 返回 `role.updated`）。ER-05 给这四条规则补了 `->completeMatch()` 后，两个端点已经可达。
  *
- * 因此本类用**独有路径**把请求送进同样的控制器动作：
- * `PUT v1/admin/tmp-cache-test/users/:id/roles` → `UserController@setRoles`，
- * `PUT v1/admin/tmp-cache-test/roles/:id/permissions` → `RoleController@setPermissions`。
- * 路径独有 → 不会被任何既有规则部分匹配，中间件链与控制器逻辑与生产完全一致。
+ * 因此本类**不再**用 `v1/admin/tmp-cache-test/**` 之类的绕行路径，而是直接打生产路由 ——
+ * 这样「撤权/授权立即生效」的断言同时也成了「路由确实进到 setPermissions / setRoles」的证据。
+ *
+ * ## 授予边界（ER-05）对夹具的约束
+ *
+ * 管理员夹具必须**自己持有**它要授予的权限（本类里是 `permcache.view` / `permcache.edit`），
+ * 否则请求会被授予边界按 403/2002 拒绝 —— 那正是 ER-05 要守住的行为，反过来也说明
+ * 「管理员能授的权限」不再可能超过他自己的权限集。
  *
  * @package Tests\Feature\Permission
  */
@@ -58,7 +58,8 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
     private const TENANT_ID = 1;
 
     /**
-     * 管理员（持有 user.write / role.write / permission.write）
+     * 管理员（持有 user.write / role.write / permission.write **以及**他要授予的
+     * permcache.view / permcache.edit —— ER-05 授予边界要求操作者先持有才能授予）
      */
     private const ADMIN_USER_ID = 990401;
     private const ADMIN_ROLE_ID = 990401;
@@ -84,11 +85,6 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
     private const PERMISSION_VIEW_ID = 990401;
     private const PERMISSION_EDIT_ID = 990402;
 
-    /**
-     * 测试专用路由是否已注册（路由表是进程级的，只需注册一次）
-     */
-    private static bool $testRoutesRegistered = false;
-
     protected function setUp(): void
     {
         parent::setUp();
@@ -98,8 +94,6 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
 
         // 注册 admin 路由（与 PermissionMonitorRouteAuthTest / AuthPermissionIntegrationTest 一致）
         include_once $this->app()->getRootPath() . 'route/admin.php';
-
-        $this->registerTestRoutes();
 
         // 复位鉴权中间件实例：避免其它测试类把它绑成 no-op 替身（容器会缓存首次解析结果）
         $this->app()->instance(\app\middleware\Auth::class, new \app\middleware\Auth());
@@ -115,32 +109,6 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
         $this->resetRouteMiddlewareQueue();
 
         parent::tearDown();
-    }
-
-    /**
-     * 注册两条测试专用路由（绕开既有规则的部分匹配遮蔽，见类注释）
-     *
-     * 中间件与权限码与生产路由保持一致，因此「鉴权 + 控制器 + 仓储 + 失效钩子」链路不变。
-     *
-     * @return void
-     */
-    private function registerTestRoutes(): void
-    {
-        if (self::$testRoutesRegistered) {
-            return;
-        }
-
-        Route::put('v1/admin/tmp-cache-test/users/:id/roles', 'app\controller\admin\UserController@setRoles')
-            ->middleware(\app\middleware\Auth::class)
-            ->middleware(\app\middleware\Permission::class, 'user.write')
-            ->completeMatch();
-
-        Route::put('v1/admin/tmp-cache-test/roles/:id/permissions', 'app\controller\admin\RoleController@setPermissions')
-            ->middleware(\app\middleware\Auth::class)
-            ->middleware(\app\middleware\Permission::class, 'role.write')
-            ->completeMatch();
-
-        self::$testRoutesRegistered = true;
     }
 
     /**
@@ -240,6 +208,10 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
             ['role_id' => self::ADMIN_ROLE_ID, 'permission_id' => $userWriteId, 'created_at' => $now],
             ['role_id' => self::ADMIN_ROLE_ID, 'permission_id' => $roleWriteId, 'created_at' => $now],
             ['role_id' => self::ADMIN_ROLE_ID, 'permission_id' => $permissionWriteId, 'created_at' => $now],
+            // ER-05：管理员必须自己先持有 permcache.view / permcache.edit，否则「授予」会被
+            // 授予边界按 403/2002 拒绝（这正是被修复的提权路径）。加进来只改夹具，不改断言。
+            ['role_id' => self::ADMIN_ROLE_ID, 'permission_id' => self::PERMISSION_VIEW_ID, 'created_at' => $now],
+            ['role_id' => self::ADMIN_ROLE_ID, 'permission_id' => self::PERMISSION_EDIT_ID, 'created_at' => $now],
             ['role_id' => self::TARGET_ROLE_ID, 'permission_id' => self::PERMISSION_VIEW_ID, 'created_at' => $now],
             ['role_id' => self::ALT_ROLE_ID, 'permission_id' => self::PERMISSION_EDIT_ID, 'created_at' => $now],
         ]);
@@ -367,7 +339,7 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
 
         $response = $this->request(
             'PUT',
-            'v1/admin/tmp-cache-test/roles/' . self::TARGET_ROLE_ID . '/permissions',
+            'v1/admin/roles/' . self::TARGET_ROLE_ID . '/permissions',
             ['permissions' => []]
         );
 
@@ -396,7 +368,7 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
 
         $response = $this->request(
             'PUT',
-            'v1/admin/tmp-cache-test/roles/' . self::TARGET_ROLE_ID . '/permissions',
+            'v1/admin/roles/' . self::TARGET_ROLE_ID . '/permissions',
             ['permissions' => [self::PERMISSION_VIEW_ID, self::PERMISSION_EDIT_ID]]
         );
 
@@ -416,7 +388,7 @@ class PermissionCacheInvalidationTest extends ThinkPHPTestCase
 
         $response = $this->request(
             'PUT',
-            'v1/admin/tmp-cache-test/users/' . self::TARGET_USER_ID . '/roles',
+            'v1/admin/users/' . self::TARGET_USER_ID . '/roles',
             ['role_ids' => [self::ALT_ROLE_ID]]
         );
 

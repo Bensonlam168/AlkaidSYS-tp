@@ -72,10 +72,18 @@ Route::group('v1/admin/roles', function () {
 
     // 更新角色 | Update role
     // PUT /v1/admin/roles/:id
+    //
+    // ⚠️ `->completeMatch()` 是**必须**的（ER-05 实测发现的路由遮蔽缺陷）：
+    // 系统配置 `route_complete_match = false`（见 config/route.php），而本组里 `:id`
+    // 这条规则注册在 `:id/permissions` **之前**，于是 `PUT /v1/admin/roles/5/permissions`
+    // 会被 `:id` 的**前缀匹配**吃掉 —— 请求进的是 update()，返回 `role.updated`，
+    // 而 `setPermissions()` 成了永远进不去的死代码（提权校验也就永远不会执行）。
+    // 加上完整匹配后，`:id` 只匹配 `/roles/{数字}`，`:id/permissions` 才能被命中。
     Route::put(':id', 'app\controller\admin\RoleController@update')
         ->middleware(\app\middleware\Auth::class)
         ->middleware(\app\middleware\Permission::class, 'role.write')
-        ->pattern(['id' => '\d+']);
+        ->pattern(['id' => '\d+'])
+        ->completeMatch();
 
     // 删除角色 | Delete role
     // DELETE /v1/admin/roles/:id
@@ -86,10 +94,15 @@ Route::group('v1/admin/roles', function () {
 
     // 设置角色权限 | Set role permissions
     // PUT /v1/admin/roles/:id/permissions
+    //
+    // 语义说明：本端点**替换**角色的权限集（不是增量追加）。
+    // 中间件只要求 `role.write`；真正的「不能授出自己没有的权限」由控制器内的
+    // 授予边界校验（ER-05）负责，越界返回 403 / 2002。
     Route::put(':id/permissions', 'app\controller\admin\RoleController@setPermissions')
         ->middleware(\app\middleware\Auth::class)
         ->middleware(\app\middleware\Permission::class, 'role.write')
-        ->pattern(['id' => '\d+']);
+        ->pattern(['id' => '\d+'])
+        ->completeMatch();
 });
 
 // Permission Management routes | 权限管理路由
@@ -182,10 +195,14 @@ Route::group('v1/admin/users', function () {
 
     // 更新用户 | Update user
     // PUT /v1/admin/users/:id
+    //
+    // 与 `PUT /v1/admin/roles/:id` 同因同解：不加 `completeMatch()` 时，
+    // `PUT /v1/admin/users/5/roles` 会被本规则前缀匹配吃掉（进 update() 而不是 setRoles()）。
     Route::put(':id', 'app\controller\admin\UserController@update')
         ->middleware(\app\middleware\Auth::class)
         ->middleware(\app\middleware\Permission::class, 'user.write')
-        ->pattern(['id' => '\d+']);
+        ->pattern(['id' => '\d+'])
+        ->completeMatch();
 
     // 删除用户 | Delete user
     // DELETE /v1/admin/users/:id
@@ -203,10 +220,15 @@ Route::group('v1/admin/users', function () {
 
     // 设置用户角色 | Set user roles
     // PUT /v1/admin/users/:id/roles
+    //
+    // 语义说明：本端点**替换**用户的角色集（不是增量追加）。
+    // 中间件只要求 `user.write`；「分配的角色不能比操作者更强」由控制器内的
+    // 授予边界校验（ER-05）负责，越界返回 403 / 2002。
     Route::put(':id/roles', 'app\controller\admin\UserController@setRoles')
         ->middleware(\app\middleware\Auth::class)
         ->middleware(\app\middleware\Permission::class, 'user.write')
-        ->pattern(['id' => '\d+']);
+        ->pattern(['id' => '\d+'])
+        ->completeMatch();
 
     // 重置用户密码 | Reset user password
     // POST /v1/admin/users/:id/reset-password

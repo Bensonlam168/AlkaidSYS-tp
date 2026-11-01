@@ -42,6 +42,10 @@ return [
     'forbidden' => 'Forbidden',
     'permission_denied' => 'Permission Denied',
     'access_denied' => 'Access Denied',
+    // ER-05 grant ceiling: out-of-scope grant (granting permissions you do not hold,
+    // or assigning roles stronger than yourself). Actionable but non-probing:
+    // it never lists the specific permissions the operator is missing.
+    'grant_ceiling_exceeded' => 'Permission denied: you cannot grant permissions beyond your own scope',
 
     // Resource errors | 资源错误
     'resource_not_found' => 'Resource Not Found',

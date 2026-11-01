@@ -8,14 +8,24 @@ use app\controller\ApiController;
 use Domain\Permission\Exception\RoleWriteRejectedException;
 use Domain\Permission\Model\Role;
 use Infrastructure\Permission\Repository\RoleRepository;
+use Infrastructure\Permission\Service\GrantCeilingService;
 use think\App;
 use think\Response;
+use think\facade\Log;
 
 /**
  * Role Controller | 角色控制器
  *
  * Provides CRUD operations for role management.
  * 提供角色管理的增删改查操作。
+ *
+ * ## 授予边界（ER-05）
+ *
+ * 本控制器有**三条**会改变「角色权限集」的写路径：`save`（创建时带 permissions）、
+ * `update`（更新时带 permissions）、`setPermissions`（专门改权限集）。三条都必须满足
+ * 「请求的权限集合 ⊆ 操作者自身当前持有的权限集合」，否则 403 / 2002 且**不写库**。
+ * 比对逻辑在 `Infrastructure\Permission\Service\GrantCeilingService`，本类只负责
+ * 「取操作者 → 校验 → 翻译成统一响应 / 记录差集日志」。
  *
  * @package app\controller\admin
  */
@@ -24,12 +34,18 @@ class RoleController extends ApiController
     protected RoleRepository $roleRepository;
 
     /**
+     * 授予边界服务（ER-05）
+     */
+    protected GrantCeilingService $grantCeiling;
+
+    /**
      * Constructor | 构造函数
      */
     public function __construct(App $app)
     {
         parent::__construct($app);
         $this->roleRepository = new RoleRepository();
+        $this->grantCeiling = new GrantCeilingService();
     }
 
     /**
@@ -175,6 +191,16 @@ class RoleController extends ApiController
             $descProperty->setValue($role, $data['description']);
         }
 
+        // ER-05 授予边界：必须在**建角色之前**判定。
+        // 若先建角色再校验，拒绝时库里会留下一个"半成品角色"（已有角色行、没有权限），
+        // 既是部分执行，也让攻击者能靠 403 不断堆垃圾数据。
+        if (isset($data['permissions']) && is_array($data['permissions'])) {
+            $denied = $this->guardPermissionGrant($data['permissions']);
+            if ($denied !== null) {
+                return $denied;
+            }
+        }
+
         $roleId = $this->roleRepository->save($role);
 
         // Sync permissions if provided | 如果提供了权限则同步
@@ -265,6 +291,15 @@ class RoleController extends ApiController
         $descProperty = $reflectionClass->getProperty('description');
         $descProperty->setAccessible(true);
         $descProperty->setValue($newRole, $data['description'] ?? null);
+
+        // ER-05 授予边界：本入口同样能改权限集（PUT /roles/:id 带 permissions），
+        // 必须在 `save()`（写角色行）之前判定，避免"角色已改名、权限被拒"的部分执行。
+        if (isset($data['permissions']) && is_array($data['permissions'])) {
+            $denied = $this->guardPermissionGrant($data['permissions']);
+            if ($denied !== null) {
+                return $denied;
+            }
+        }
 
         try {
             $this->roleRepository->save($newRole);
@@ -405,6 +440,14 @@ class RoleController extends ApiController
             );
         }
 
+        // ER-05 授予边界：本方法是「改权限集」的专用入口，必须先过子集校验再落库。
+        // `syncPermissions()` 内部是 delete + insertAll（无事务），一旦放行后再失败
+        // （例如权限 ID 不存在撞外键）就会变成「旧权限已删、新权限没插上」的部分执行。
+        $denied = $this->guardPermissionGrant($data['permissions']);
+        if ($denied !== null) {
+            return $denied;
+        }
+
         $this->roleRepository->syncPermissions($id, array_map('intval', $data['permissions']));
 
         $responseData = $role->toArray();
@@ -490,5 +533,106 @@ class RoleController extends ApiController
         }
 
         return $errors;
+    }
+
+    /**
+     * 授予边界校验：请求的权限集合必须是**操作者自身权限集合**的子集（ER-05）
+     *
+     * 三条改权限集的写路径（save / update / setPermissions）共用本方法。
+     *
+     * 拒绝时**不回显具体缺哪些权限**：那等于把"操作者自己没什么"告诉调用方，
+     * 可被用来逐条试探出边界（例如先试 `tenant.write`、再试 `casbin.manage`）。
+     * 完整差集只写日志（含权限 ID 与权限码），便于事后取证。
+     *
+     * @param array<int|string> $permissionIds 请求要授予的权限 ID 列表
+     * @return Response|null null = 通过；非 null = 应直接 return 的拒绝/校验响应
+     */
+    protected function guardPermissionGrant(array $permissionIds): ?Response
+    {
+        $operatorId = $this->getCurrentUserId();
+
+        // fail-closed：拿不到已认证的操作用户就不允许改权限集。
+        // 正常链路里 Auth 中间件已保证 userId 存在，走到这里只可能是路由被绕开。
+        if ($operatorId === null) {
+            Log::warning('Grant ceiling denied: operator identity missing', [
+                'path' => $this->request->pathinfo(),
+                'trace_id' => $this->getTraceId(),
+            ]);
+
+            return $this->grantCeilingDeniedResponse();
+        }
+
+        $inspection = $this->grantCeiling->inspectPermissions($operatorId, $permissionIds);
+
+        // 请求里有不存在的权限 ID：属于入参错误（继续写入会撞 role_permissions 外键），
+        // 用 422 而不是 403 —— 这个分支不涉及"操作者有没有权限"，不泄露操作者权限集。
+        if ($inspection['unknown'] !== []) {
+            Log::warning('Grant rejected: unknown permission ids', [
+                'operator_user_id' => $operatorId,
+                'unknown_permission_ids' => $inspection['unknown'],
+                'path' => $this->request->pathinfo(),
+                'trace_id' => $this->getTraceId(),
+            ]);
+
+            return $this->error(
+                $this->langService->trans('validation.failed'),
+                422,
+                ['permissions' => [$this->langService->trans('validation.exists', ['field' => 'permissions'])]],
+                422
+            );
+        }
+
+        if ($inspection['denied'] !== []) {
+            Log::warning('Grant ceiling denied: operator does not own the permissions', [
+                'operator_user_id' => $operatorId,
+                'denied_permission_ids' => array_keys($inspection['denied']),
+                'denied_permission_codes' => array_values($inspection['denied']),
+                'path' => $this->request->pathinfo(),
+                'trace_id' => $this->getTraceId(),
+            ]);
+
+            return $this->grantCeilingDeniedResponse();
+        }
+
+        return null;
+    }
+
+    /**
+     * 统一的授予边界拒绝响应：HTTP 403 / 业务码 2002
+     *
+     * 与 `app\middleware\Permission` 的「权限不足」保持同一语义与错误码，
+     * 客户端不需要为"越界授权"单独写一套错误处理。
+     *
+     * @return Response
+     */
+    protected function grantCeilingDeniedResponse(): Response
+    {
+        return $this->error(
+            $this->langService->trans('error.grant_ceiling_exceeded'),
+            2002,
+            [],
+            403
+        );
+    }
+
+    /**
+     * 获取当前已认证操作者的用户 ID
+     *
+     * **只信任 Auth 中间件从 JWT 解出并写入请求上下文的用户 ID**。
+     * 刻意不读 `X-User-Id` 之类的请求头：那是客户端可任意设置的值，
+     * 一旦用它决定"操作者是谁"，授予边界就变成了"客户端自己声明自己有多少权限"。
+     *
+     * @return int|null 未认证时为 null
+     */
+    protected function getCurrentUserId(): ?int
+    {
+        if (method_exists($this->request, 'userId')) {
+            $userId = $this->request->userId();
+            if (is_int($userId) && $userId > 0) {
+                return $userId;
+            }
+        }
+
+        return null;
     }
 }

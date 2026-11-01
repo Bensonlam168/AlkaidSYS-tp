@@ -42,6 +42,9 @@ return [
     'forbidden' => '禁止访问',
     'permission_denied' => '权限不足',
     'access_denied' => '访问被拒绝',
+    // ER-05 授予边界：越界授权（把自己没有的权限授予角色 / 把比自己更强的角色分配给用户）
+    // 文案保持"可操作但不可探测"：说明"你做错了什么"，但**不列出**具体缺哪些权限
+    'grant_ceiling_exceeded' => '权限不足：不能授予超出你自身权限范围的权限',
 
     // Resource errors | 资源错误
     'resource_not_found' => '资源不存在',

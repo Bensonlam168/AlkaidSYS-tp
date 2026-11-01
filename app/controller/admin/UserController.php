@@ -7,9 +7,11 @@ namespace app\controller\admin;
 use app\controller\ApiController;
 use Domain\User\Model\User;
 use Infrastructure\Permission\Cache\PermissionCacheInvalidator;
+use Infrastructure\Permission\Service\GrantCeilingService;
 use Infrastructure\User\Repository\UserRepository;
 use think\App;
 use think\Response;
+use think\facade\Log;
 
 /**
  * 用户管理控制器
@@ -30,6 +32,13 @@ use think\Response;
  * - 失效器 `PermissionCacheInvalidator` 是叶子类（只依赖 Cache/Db），不会造成循环依赖。
  *
  * 所有失效调用都**不会抛异常**（内部 try/catch + warning），因此不会把一次成功的写入变成失败。
+ *
+ * ## 角色分配的授予边界（ER-05）
+ *
+ * `setRoles`（以及创建用户时带的 `role_ids`）会把一整套角色能力转交给目标用户。
+ * 角色比权限更粗，因此按「目标角色集合的**权限并集** ⊆ 操作者自身权限集合」判定：
+ * 操作者只能把「自己已经拥有的能力」转交给别人，不能借角色分配完成提权。
+ * 判定逻辑在 `Infrastructure\Permission\Service\GrantCeilingService`。
  */
 class UserController extends ApiController
 {
@@ -40,11 +49,17 @@ class UserController extends ApiController
      */
     protected PermissionCacheInvalidator $cacheInvalidator;
 
+    /**
+     * 授予边界服务（ER-05）
+     */
+    protected GrantCeilingService $grantCeiling;
+
     public function __construct(App $app)
     {
         parent::__construct($app);
         $this->userRepository = new UserRepository();
         $this->cacheInvalidator = new PermissionCacheInvalidator();
+        $this->grantCeiling = new GrantCeilingService();
     }
 
     /**
@@ -199,6 +214,15 @@ class UserController extends ApiController
         // 检查邮箱是否已存在 | Check if email already exists
         if ($this->userRepository->emailExists($tenantId, $email)) {
             return $this->error('邮箱已被使用');
+        }
+
+        // ER-05 授予边界：创建用户时就带 role_ids，等于一次角色分配，必须在**建用户之前**判定，
+        // 否则拒绝时会留下一个"已创建但没有角色"的账号（部分执行）。
+        if (!empty($roleIds) && is_array($roleIds)) {
+            $denied = $this->guardRoleAssignment($roleIds);
+            if ($denied !== null) {
+                return $denied;
+            }
         }
 
         try {
@@ -421,6 +445,14 @@ class UserController extends ApiController
             return $this->error('用户不存在', 404);
         }
 
+        // ER-05 授予边界：目标角色集合的权限并集必须是操作者权限集合的子集。
+        // 放在 `setRoles()` 之前：该方法内部是 delete + insertAll（有事务），
+        // 但"先删后拒"仍然是部分执行，必须在动手前判定。
+        $denied = $this->guardRoleAssignment($roleIds);
+        if ($denied !== null) {
+            return $denied;
+        }
+
         try {
             $this->userRepository->setRoles($id, array_map('intval', $roleIds));
 
@@ -488,22 +520,108 @@ class UserController extends ApiController
      * 获取当前用户ID
      * Get current user ID
      *
-     * @return int|null
+     * **只信任 Auth 中间件从 JWT 解出并写入请求上下文的用户 ID**。
+     *
+     * 历史实现优先读 `X-User-Id` 请求头 —— 那是客户端可任意设置的值，于是：
+     *   - 「禁止删除自己」「禁止禁用/锁定自己」两个保护和 ER-05 的授予边界
+     *     都能靠伪造一个别的 user id 绕开；
+     *   - ER-05 尤其致命：授予边界要拿「操作者是谁」去查权限集，
+     *     若这个值来自请求头，攻击者把自己的 id 换成 seeded admin 的 id 就能"合法"授予任何权限。
+     *
+     * 因此这里删掉了请求头分支，只保留两个**服务端可信**来源：
+     *   1. `Request::userId()`（Auth 中间件写入）；
+     *   2. `$request->user['id']`（框架注入的已认证用户，非客户端可控）。
+     *
+     * @return int|null 未认证时为 null
      */
     protected function getCurrentUserId(): ?int
     {
-        $userId = $this->request->header('X-User-Id');
-        if ($userId) {
-            return (int) $userId;
+        if (method_exists($this->request, 'userId')) {
+            $userId = $this->request->userId();
+            if (is_int($userId) && $userId > 0) {
+                return $userId;
+            }
         }
 
         // 从 JWT token 或 session 获取 | Get from JWT token or session
         $user = $this->request->user ?? null;
-        if ($user && isset($user['id'])) {
+        if (is_array($user) && isset($user['id'])) {
             return (int) $user['id'];
         }
 
         return null;
+    }
+
+    /**
+     * 授予边界校验：目标角色集合的权限并集必须是**操作者自身权限集合**的子集（ER-05）
+     *
+     * `setRoles` 与 `save`（创建用户时带 `role_ids`）共用本方法。
+     *
+     * 拒绝时**不回显具体缺哪些权限**（避免被用来逐条探测操作者的权限边界）；
+     * 完整差集只写日志。
+     *
+     * @param array<int|string> $roleIds 请求要分配的角色 ID 列表
+     * @return Response|null null = 通过；非 null = 应直接 return 的拒绝/校验响应
+     */
+    protected function guardRoleAssignment(array $roleIds): ?Response
+    {
+        $operatorId = $this->getCurrentUserId();
+
+        // fail-closed：拿不到已认证的操作用户就不允许分配角色
+        if ($operatorId === null) {
+            Log::warning('Grant ceiling denied: operator identity missing', [
+                'path' => $this->request->pathinfo(),
+                'trace_id' => $this->getTraceId(),
+            ]);
+
+            return $this->grantCeilingDeniedResponse();
+        }
+
+        $inspection = $this->grantCeiling->inspectRoles($operatorId, $roleIds, $this->getTenantId());
+
+        // 角色不存在 / 属于其它租户：入参错误（**不**区分「不存在」与「别人的角色」，
+        // 避免泄露他租户角色的存在性；真实原因写日志）
+        if ($inspection['unknown'] !== []) {
+            Log::warning('Role assignment rejected: unknown role ids', [
+                'operator_user_id' => $operatorId,
+                'unknown_role_ids' => $inspection['unknown'],
+                'path' => $this->request->pathinfo(),
+                'trace_id' => $this->getTraceId(),
+            ]);
+
+            return $this->error('角色不存在或不属于当前租户', 422, [], 422);
+        }
+
+        if ($inspection['denied'] !== []) {
+            Log::warning('Grant ceiling denied: role set exceeds operator permissions', [
+                'operator_user_id' => $operatorId,
+                'denied_permission_ids' => array_keys($inspection['denied']),
+                'denied_permission_codes' => array_values($inspection['denied']),
+                'path' => $this->request->pathinfo(),
+                'trace_id' => $this->getTraceId(),
+            ]);
+
+            return $this->grantCeilingDeniedResponse();
+        }
+
+        return null;
+    }
+
+    /**
+     * 统一的授予边界拒绝响应：HTTP 403 / 业务码 2002
+     *
+     * 与 `app\middleware\Permission` 的「权限不足」同语义、同错误码。
+     *
+     * @return Response
+     */
+    protected function grantCeilingDeniedResponse(): Response
+    {
+        return $this->error(
+            $this->langService->trans('error.grant_ceiling_exceeded'),
+            2002,
+            [],
+            403
+        );
     }
 
     /**

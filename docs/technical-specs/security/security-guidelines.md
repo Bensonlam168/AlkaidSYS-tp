@@ -223,6 +223,118 @@ The key index is capped (50k entries) with a 1-hour TTL. When the cap is exceede
 entries are dropped with a warning; those keys can only expire via TTL. Production forces Redis
 (`config/cache.php` forces `redis` for `production/prod/stage/staging`), so this does not apply there.
 
+### 3.5 Grant Ceiling (ER-05)
+
+#### 3.5.1 The gap
+
+`role.write` / `user.write` only answer "may you edit roles/users"; they do not answer
+"how much authority may you hand out". Every permission-set write path used to write straight
+through:
+
+| Path | Action | Gap |
+| --- | --- | --- |
+| `RoleController::setPermissions` | `PUT /v1/admin/roles/:id/permissions` | any permission |
+| `RoleController::save` | `POST /v1/admin/roles` (with `permissions`) | any permission |
+| `RoleController::update` | `PUT /v1/admin/roles/:id` (with `permissions`) | any permission |
+| `UserController::setRoles` | `PUT /v1/admin/users/:id/roles` | any role |
+| `UserController::save` | `POST /v1/admin/users` (with `role_ids`) | any role |
+
+Attack chain (**conditional privilege escalation**): a tenant admin holding only `role.write`
+calls `PUT /v1/admin/roles/{a role he already holds}/permissions` with the ID of `tenant.write`
+and instantly holds `tenant.write`. No other hole is needed.
+
+#### 3.5.2 Rule
+
+- Permission-set paths (first three): requested permission IDs ⊆ the operator's current permission set;
+- Role-assignment paths (last two): the **union** of the target roles' permissions ⊆ the operator's
+  current permission set (a role is coarser than a permission, so per-role checks miss union escapes);
+- Roles from another tenant are treated as **non-existent** (never distinguishing "missing" from
+  "someone else's", to avoid leaking existence).
+
+Comparison is done on **permission codes `resource:action`**, not on permission IDs:
+
+- Operator side: `PermissionService::getUserPermissions()` — the *same* source the authorization
+  middleware uses (all three modes `DB_ONLY` / `CASBIN_ONLY` / `DUAL_MODE`, including multi-level cache).
+  Comparing raw IDs would create a second source of truth that diverges from the middleware;
+- Request side: permission IDs are mapped through the `permissions` table (a **global catalog** with no
+  `tenant_id`; `resource + action` has no blanks and no duplicates), so the mapping is well defined;
+- Rows that cannot be mapped (empty `resource`/`action`) can never be "held" by anyone → denied
+  (fail-closed).
+
+#### 3.5.3 Rejection semantics
+
+- **HTTP 403 + business code 2002**, the same code the `app\middleware\Permission` middleware uses;
+- Message is `error.grant_ceiling_exceeded`: actionable, but it **never lists the missing permissions**
+  (that would let callers probe the operator's boundary one permission at a time);
+- The full diff (permission IDs + codes) goes to `Log::warning` only;
+- **Check before write**: all guards run before any insert/update, so a rejection cannot leave a
+  half-created role, an account created without roles, or a role whose old permissions were already
+  deleted (the `role_permissions` foreign key would otherwise tear `syncPermissions`'s
+  delete+insert in half).
+
+#### 3.5.4 No hard-coded "super admin bypass"
+
+There is no hard-coded user ID, role slug or `is_system` check. Platform/system administrators are
+unrestricted simply because they **already hold every permission** (the seeded admin role carries all
+52 rows), so the subset check passes naturally. That avoids a "hard-code this id and skip the check"
+back door.
+
+#### 3.5.5 Operator identity comes from the JWT only
+
+The ceiling has to look up "who is the operator", so that value may only come from the Auth middleware
+(JWT payload written into the `Request` context). `UserController::getCurrentUserId()` used to read the
+`X-User-Id` request header first — which let a client declare its own identity, defeating both the
+ceiling and the "cannot delete/disable yourself" guards. That branch has been removed; only trusted
+server-side sources remain (`Request::userId()` and the framework-injected `request->user`).
+
+#### 3.5.6 Explicitly out of scope (allowed by design)
+
+- An operator granting permissions he already holds to roles he can influence — he gains nothing;
+- **Revoking** is unrestricted (it only reduces authority);
+- An operator editing the permission set of a role he himself holds: still bounded by the same subset
+  check, so it cannot be used to escalate, but it does allow self-lockout. We deliberately do **not**
+  hard-block "modify my own role": that would break legitimate de-provisioning (a sole tenant admin
+  handing back `role.write`) and the only escape hatch would be a super-admin bypass, contradicting
+  3.5.4. Self-demotion is an auditable operational action and is left to logging and process.
+
+#### 3.5.7 Route shadowing: "added a check" is not "the check runs"
+
+`config/route.php` sets `route_complete_match = false`, which makes rules **prefix matches**.
+Because `PUT /v1/admin/roles/:id` (`update`) is registered before `:id/permissions`, it swallows
+`PUT /v1/admin/roles/5/permissions`:
+
+```
+request   PUT /v1/admin/roles/5/permissions
+matched   RoleController@update        <- prefix match on v1/admin/roles/5
+result    200 + {"message":"role.updated"}   (not a 404: it silently runs the wrong action)
+```
+
+Consequence: `setPermissions()` / `setRoles()` were **dead code**, so no check placed inside them
+could ever run, while the actual escalation happened through the reachable `update()`
+(which also calls `syncPermissions`). All four rules now carry `->completeMatch()`:
+
+- `PUT /v1/admin/roles/:id`, `PUT /v1/admin/roles/:id/permissions`
+- `PUT /v1/admin/users/:id`, `PUT /v1/admin/users/:id/roles`
+
+The response message distinguishes the action: `role.permissions_updated` / `角色设置成功`
+(the dedicated endpoints) vs `role.updated` / `用户更新成功` (the parent `update`).
+Regression guard: `tests/Feature/Route/AdminRouteReachabilityTest.php` replays a sample URL for
+every `v1/admin/**` rule through the framework's own `Route::check()` and asserts that the matched
+target equals the registered target.
+
+**Other shadowing of the same kind (confirmed by ER-05, deliberately not fixed here — out of scope)**;
+reproduce by temporarily setting that test's `AUDIT_PREFIX` to `/v1/`:
+
+| Shadowed route | Actually matched | Impact |
+| --- | --- | --- |
+| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | **deleting a field deletes the whole collection** |
+| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | same |
+| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | history endpoint unreachable |
+| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | variables endpoint unreachable |
+| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | task form endpoint unreachable |
+| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | trigger logs unreachable |
+| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | **webhook callbacks never fire** |
+
 ## 4. Data Security
 
 ### 4.1 Encryption
