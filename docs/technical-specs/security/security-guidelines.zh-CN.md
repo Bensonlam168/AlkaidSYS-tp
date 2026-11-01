@@ -35,6 +35,112 @@
 - **重放检测**：使用已撤销/黑名单 Token 将触发 `code = 2007` 错误并记录审计日志
 - **黑名单 TTL**：与 Refresh Token 生命周期一致（默认 7 天）
 
+### 2.5 会话失效闭环（ER-04）
+
+> 实现状态：**已实现**。实现位置：`app\middleware\Auth`、`app\controller\AuthController::login()/refresh()`、
+> `Infrastructure\Auth\PrincipalStateChecker`、`Infrastructure\Tenant\Service\TenantUsability`。
+> 回归测试：`tests/Feature/Auth/SessionInvalidationTest.php`（13 条，覆盖停用/锁定/删除/改租户/租户停用/租户过期/续期/登录/恢复）。
+
+#### 2.5.1 缺口
+
+JWT 只能证明「这张令牌在**签发时**是真的」，不能证明「令牌持有者**现在**仍然有效」。改造前：
+
+- `app\middleware\Auth` 只做三件事：验签/过期/`type=access`、把 `user_id`/`tenant_id`/`site_id` 写进 Request、放行，
+  **从不回查用户与租户的当前状态**；
+- `AuthController::refresh()` 只校验 Refresh Token 自身（签名 + 白名单），**按旧声明继续签发**；
+- 于是「用户被置 `inactive`/`locked`」「租户被置 `inactive`/`suspended`」「租户 `expires_at` 已过期」之后，
+  **已签发的** Access Token 在 2 小时内、Refresh Token 在 7 天内仍然完全可用。
+
+#### 2.5.2 判据（三条链路共用同一实现）
+
+| 链路 | 校验项 | 位置 |
+| --- | --- | --- |
+| 每个受保护请求 | 用户仍存在于令牌声明的租户内 + `status = active` + 租户可用 | `app\middleware\Auth` → `PrincipalStateChecker::check()` |
+| `POST /v1/auth/refresh` | 同上（续期前必须先验主体） | `AuthController::refresh()` |
+| `POST /v1/auth/login` | 租户可用（用户状态原已由 `User::isActive()` 拦住） | `AuthController::login()` → `PrincipalStateChecker::checkTenant()` |
+
+- 「租户可用」= 存在 + `status = active` + `expires_at` 未过期（空值视为不限期），
+  判据集中在 `Infrastructure\Tenant\Service\TenantUsability`，`TenantIdentify` 也已改为委托同一实现。
+- 用户被删除、或被改到其它租户，一律按「**该用户在令牌声明的租户内已不存在**」处理（`user_not_found`）：
+  跨租户的「这个 id 到底存不存在」查询不参与放行判断（与 `docs/technical-specs/multi-tenant/tenant-parameter-contract.md` 口径一致）。
+- 上下文（`user_id`/`tenant_id`/`site_id`）在状态校验**之前**写入 Request：
+  请求即使被拒，访问日志/审计日志仍能记录发起主体。
+
+#### 2.5.3 拒绝语义
+
+- HTTP **401** + 业务码 **2001**（`ErrorCode::UNAUTHORIZED`）。**不用 403**：
+  会话失效属于认证层，前端应「清本地会话 → 重新登录」，而不是「权限不足」。
+- 对外 message 统一为 `error.session_invalid`（「当前登录会话已失效，请重新登录」），
+  **不区分**具体原因。可区分的原因（`user_not_found` / `user_inactive` / `user_locked` /
+  `tenant_not_found` / `tenant_unusable` / `tenant_expired`）只写日志（含 `trace_id`）。
+  取舍：区分原因便于排障，但会让持有合法签名令牌的一方能判断「该账号是否存在」「该租户是否被停用/欠费」，
+  属于账号与运营状态泄露；而客户端对这几种情况的处置完全相同，排障需求由「日志 reason + 响应 trace_id」满足。
+- refresh 拒绝时**同时作废**该 Refresh Token（白名单移除 + `jti` 入黑名单），重放将得到 `2007`。
+- 主体状态校验自身失败（如数据库不可用）返回 **500**，不返回 401：
+  把一次数据库故障说成「会话失效」会让全站被登出并掩盖真实故障；500 同样是 fail-closed（不放行）。
+- 登录阶段租户不可用返回 **403 + 2002**，与 `TenantIdentify` 的既有口径一致（此时尚无会话可失效）。
+
+#### 2.5.4 性能与缓存结论：**不缓存**
+
+每个已认证请求新增 **2 次按主键的查询**，用户不可用时短路、不再查租户。实测（本机 Docker 环境）：
+
+- **查询计数**（MySQL general log，单次 `GET /v1/auth/me`，共 6 条业务语句，其中前 2 条为本次新增）：
+
+  | # | 语句 | 来源 |
+  | --- | --- | --- |
+  | 1 | `SELECT * FROM users WHERE id = ? AND tenant_id = ? LIMIT 1` | **新增**：主体状态校验 |
+  | 2 | `SELECT * FROM tenants WHERE id = ? LIMIT 1` | **新增**：租户可用性校验 |
+  | 3 | `SELECT * FROM users WHERE id = ? AND tenant_id = ? LIMIT 1` | 原有：`AuthController::me()` |
+  | 4 | `SELECT tenant_id FROM users WHERE id = ? LIMIT 1` | 原有：`PermissionService::getTenantId()` |
+  | 5 | `SELECT role_id FROM user_roles WHERE user_id = ?` | 原有：`getRoleIds()` |
+  | 6 | `SELECT tenant_id FROM users WHERE id = ? LIMIT 1` | 原有：权限查询内的租户解析 |
+
+- **索引与执行计划**：`EXPLAIN` 显示两条新查询均为 `type=const`、`key=PRIMARY`、`rows=1`、`filtered=100.00`；
+  `EXPLAIN ANALYZE` 的 `actual time` 分别约 `0.0015ms`（users）与 `0.0012ms`（tenants），
+  即 MySQL 侧开销可忽略，成本主要是「一次 TCP 往返」。
+- **单次往返开销**（容器内 PDO，500 次均值）：`SELECT 1` 纯往返 ~1.40ms，
+  `users` 主键查 ~2.21ms、`tenants` 主键查 ~2.41ms → **两条新增查询的边际成本约 1.6–2.0ms/请求**。
+- **端到端 A/B**（临时切回改造前 `Auth.php` 对照，各 80 次经 nginx 的 `upstream_time`）：
+  改造前 p50 `77.0ms` / min `36.0ms`，改造后 p50 `58.0ms` / min `36.0ms`，改造后复测 p50 `43.0ms` / min `34.0ms`
+  —— **同一份代码两次测量可差 15ms 以上，约 2ms 的增量被本机噪声吞没**（Swoole 常驻进程 + 其它容器负载）。
+  结论：以「+2 次主键查、约 +1.6–2.0ms/请求」为准，端到端差异在当前环境不可分辨。
+
+**刻意不做任何缓存**（含 `static`）：
+
+- `alkaid-backend` 是 Swoole 常驻进程，`static` 属性跨请求存活，缓存住 `active`
+  等于「停用用户在 worker 重启前一直可用」——用一个进程内缓存把安全校验变成安全假象；
+- 共享缓存（Redis）虽不跨进程，但必须 TTL + **全部写路径**显式失效才成立：
+  用户/租户状态可经 `UserController::updateStatus`、`TenantController::update|toggleStatus`、
+  甚至直接改库的运营动作变更，任何一处漏失效都会把「停用延迟」无限放大；
+- 因此选择「停用即生效（延迟 **0**，无 TTL）」的正确性，用两次主键查询换。
+- 若将来确需缓存，硬性要求：① TTL 写进本文件与该处注释（建议 ≤ 10s）；
+  ② 在用户/租户状态写路径**显式失效**；③ 明确「最坏停用延迟 ≤ TTL」；④ 不得用 `static`。
+- 同类判据已有先例：`app\middleware\SiteIdentify` 同样选择「不缓存，每次主键查」。
+- 若确实需要把两次查询压成一次，可在仓储层加一条
+  `SELECT u.status, t.status, t.expires_at FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.tenant_id = ?`
+  的联表查询（本次**未做**：会引入「用户仓储依赖租户表」的耦合，收益仅 ~1ms）。
+
+#### 2.5.5 逐 token 撤销 vs 会话版本号（评估，未实施）
+
+- **路线 A（当前实现）**：逐请求状态校验。优点：停用/锁定/删除/改租户/租户停用/过期**立即**生效，
+  无需改 schema、无需吊销传播；缺点：每请求 2 次主键查询，且「正常态」也要查。
+- **路线 B**：`users.token_epoch`（或 `password_changed_at`）写进 JWT claim，变更时递增，校验侧比对。
+  优点：可「一键撤销某用户所有令牌」且查询可减为 1 次（users 行同时承载 epoch 与 status）；
+  缺点：需要迁移 + 改签发/校验两侧 + 所有「改密码/改状态/强制下线」路径都要递增 epoch，
+  漏一处即是「撤销不生效」；且**仍然要读 users 行**才能比对 epoch，省不下那次查询。
+- **推荐**：保持路线 A。语义上真正需要「撤销全部会话」时应做的是「吊销 + 强制重新登录」，
+  那正是本节的 401 闭环；路线 B 的边际收益（一次 `users` 查询）与引入的 schema/契约改动不成比例。
+  若后续出现「同一用户多端强制下线」的强需求，再按 ADR 流程评估路线 B，且必须与当前闭环并存。
+
+#### 2.5.6 未覆盖范围（明确不做/待裁决）
+
+- **未挂 `Auth` 中间件的路由不受本节保护**（例如 `POST /v1/auth/login|register|refresh`、
+  `GET /v1/workflow/triggers/webhook/:key` 等 webhook）。这些入口必须自行做主体校验，
+  其中登录/刷新已由本节的 `PrincipalStateChecker` 覆盖。
+- 站点维度（`X-Site-ID` 的归属与状态）由 `SiteIdentify` 负责，不在本节范围。
+- `AUTH_SKIP_MIDDLEWARE`（仅 `APP_ENV=dev` 生效）会整段跳过本中间件，
+  等于跳过本节全部校验；**严禁在生产类环境配置该变量**（`JwtService` 的密钥强度检查不覆盖它）。
+
 ## 3. 授权（Authorization）
 
 ### 3.1 RBAC 模型

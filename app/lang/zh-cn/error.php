@@ -31,6 +31,12 @@ return [
     'user_not_found' => '用户不存在',
     'user_disabled' => '用户已被禁用',
     'login_failed' => '登录失败',
+    // ER-04：会话失效闭环的统一对外文案
+    // 刻意**不区分**具体原因（用户不存在/被停用/被锁定/租户停用/租户过期），避免泄露账号与运营状态；
+    // 可区分的原因只写日志。客户端对这一组情况的处理完全一致：清本地会话 → 重新登录。
+    'session_invalid' => '当前登录会话已失效，请重新登录',
+    // 租户不可用（登录阶段拒绝用；与 TenantIdentify 的 403 口径一致）
+    'tenant_unavailable' => '当前租户不可用',
 
     // Authorization errors | 授权错误
     'forbidden' => '禁止访问',

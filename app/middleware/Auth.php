@@ -6,7 +6,9 @@ namespace app\middleware;
 
 use Closure;
 use think\Request;
+use think\Response;
 use Infrastructure\Auth\JwtService;
+use Infrastructure\Auth\PrincipalStateChecker;
 use Infrastructure\I18n\LanguageService;
 use app\constant\ErrorCode;
 use think\facade\Log;
@@ -25,6 +27,31 @@ use think\facade\Log;
  * - decode_error: Failed to decode token payload
  * - invalid_tenant_scope: Token payload carries non-positive user_id/tenant_id
  *   令牌中的 user_id / tenant_id 非正数（存量或伪造 token），对外仍返回 401 + 2001
+ * - user_not_found: 令牌中的用户在所属租户内已不存在（被删除，或被改到其它租户）
+ * - user_inactive: 用户状态为 `inactive`
+ * - user_locked: 用户状态为 `locked`
+ * - tenant_not_found: 令牌中的租户行不存在
+ * - tenant_unusable: 租户状态为 `inactive` / `suspended`
+ * - tenant_expired: 租户 `expires_at` 已过期
+ * - principal_check_error: 主体状态校验自身失败（数据库不可用等），返回 500 而非 401
+ *
+ * ## 会话失效闭环（ER-04）
+ *
+ * 历史实现只做三件事：`validateAccessToken()`（签名/过期/type=access）+ 把
+ * `user_id` / `tenant_id` / `site_id` 从 payload 写进 Request + 放行。
+ * **从不回查用户与租户的当前状态**，后果是：
+ *   管理员把用户设为 `inactive` / `locked`，或把租户设为 `inactive` / `suspended`、
+ *   或租户 `expires_at` 已过期，该用户**已签发的** Access Token 在 2 小时有效期内仍然完全可用。
+ *
+ * 现在 token 校验通过后、`$next($request)` 之前，追加一次主体状态闭环校验
+ * （`Infrastructure\Auth\PrincipalStateChecker`）：
+ *   1. 用户必须仍存在于令牌声明的租户内；
+ *   2. 用户状态必须是 `active`；
+ *   3. 租户必须可用（存在 + `active` + 未过期，判据复用 `TenantUsability`）。
+ * 任一不满足 → **401 + 2001**（不是 403：会话失效属于认证层，前端应「重新登录」而不是「权限不足」）。
+ *
+ * 上下文写入**先于**状态校验：即使请求最终被拒，审计日志/访问日志仍能记录
+ * 「是哪个 user_id / tenant_id 发起的」——排障时最需要的信息不会因为拒绝而丢失。
  *
  * @package app\middleware
  */
@@ -33,17 +60,26 @@ class Auth
     protected JwtService $jwtService;
     protected LanguageService $langService;
 
+    /**
+     * 主体状态校验器（ER-04）| Principal state checker
+     *
+     * 每次请求真查 `users` / `tenants` 主键各一次，**不做任何缓存**（含 static），
+     * 理由见 `Infrastructure\Auth\PrincipalStateChecker` 类注释。
+     */
+    protected PrincipalStateChecker $principalStateChecker;
+
     public function __construct()
     {
         $this->jwtService = new JwtService();
         $this->langService = app()->make(LanguageService::class);
+        $this->principalStateChecker = new PrincipalStateChecker();
     }
 
     /**
      * Log authentication failure with detailed context | 记录认证失败及详细上下文
      *
      * @param Request $request Request instance
-     * @param string $reason Failure reason (token_missing|token_invalid|token_expired|token_revoked|decode_error|invalid_tenant_scope)
+     * @param string $reason Failure reason (token_missing|token_invalid|token_expired|token_revoked|decode_error|invalid_tenant_scope|user_not_found|user_inactive|user_locked|tenant_not_found|tenant_unusable|tenant_expired)
      * @param array $context Additional context
      * @return void
      */
@@ -166,6 +202,19 @@ class Auth
                 $request->setSiteId((int)$payload['site_id']);
             }
 
+            // 会话失效闭环（ER-04）：令牌有效 ≠ 主体仍然有效
+            //
+            // 放在上下文写入**之后**：请求即使被拒，审计/访问日志里仍留得下主体身份。
+            // 放在 `$next($request)` **之前**：被停用的主体不会进入任何业务逻辑。
+            $stateResponse = $this->rejectIfPrincipalUnusable(
+                $request,
+                (int) ($payload['user_id'] ?? 0),
+                (int) ($payload['tenant_id'] ?? 0)
+            );
+            if ($stateResponse !== null) {
+                return $stateResponse;
+            }
+
             return $next($request);
         } catch (\Exception $e) {
             // Determine failure reason based on exception | 根据异常确定失败原因
@@ -215,6 +264,76 @@ class Auth
                 $traceId
             );
         }
+    }
+
+    /**
+     * Reject when the authenticated principal is no longer usable | 主体已不可用时拒绝请求
+     *
+     * 仅在 `validateAccessToken()` 通过之后调用：此时令牌本身可信，
+     * 但「令牌可信」不代表「主体现在仍然可用」（ER-04）。
+     *
+     * 返回值的三种语义：
+     *   - `null`        ：主体可用，继续走 `$next($request)`；
+     *   - `Response(401)`: 用户/租户已不可用 —— 401 + 2001 + `error.session_invalid`；
+     *   - `Response(500)`: 校验过程自身失败（数据库不可用等）。
+     *     这里**刻意不返回 401**：把一次数据库故障说成「会话失效」会让全站用户被登出，
+     *     真正的原因反而被掩盖。500 同样是 fail-closed（请求不会继续进入业务逻辑）。
+     *
+     * 对外文案统一为 `error.session_invalid`，**不区分**具体原因：
+     * reason（`user_not_found` / `user_inactive` / `user_locked` / `tenant_not_found` /
+     * `tenant_unusable` / `tenant_expired`）只写日志。
+     * 取舍说明：区分原因对排障有用，但会让持有合法签名令牌的一方得以判断
+     * 「该用户是否存在」「该租户是否被停用/欠费」——那属于账号与运营状态泄露，
+     * 而客户端对这五种情况应做的事完全相同（清本地会话 → 重新登录）。
+     * 排障需求由日志（含 reason）+ 响应里的 `trace_id` 共同满足。
+     *
+     * @param Request $request 当前请求
+     * @param int $userId 令牌中的用户 ID
+     * @param int $tenantId 令牌中的租户 ID
+     * @return Response|null 需要拒绝时返回响应；放行时返回 null
+     */
+    protected function rejectIfPrincipalUnusable(Request $request, int $userId, int $tenantId): ?Response
+    {
+        try {
+            $reason = $this->principalStateChecker->check($userId, $tenantId);
+        } catch (\Throwable $e) {
+            // 校验依赖数据库：查不出来就不能放行（fail-closed）
+            Log::error('Authentication principal state check failed', [
+                'reason'        => 'principal_check_error',
+                'exception'     => get_class($e),
+                'error_message' => $e->getMessage(),
+                'user_id'       => $userId,
+                'tenant_id'     => $tenantId,
+                'path'          => '/' . ltrim($request->pathinfo(), '/'),
+                'method'        => $request->method(),
+                'trace_id'      => $this->getTraceId($request),
+            ]);
+
+            return ResponseHelper::jsonError(
+                ErrorCode::SERVER_ERROR,
+                $this->langService->trans('error.internal_server_error'),
+                500,
+                $this->getTraceId($request)
+            );
+        }
+
+        if ($reason === null) {
+            return null;
+        }
+
+        // 记录可区分的原因（对排障与审计至关重要），但对外只暴露统一文案
+        $this->logAuthFailure($request, $reason, [
+            'stage'     => 'principal_state',
+            'user_id'   => $userId,
+            'tenant_id' => $tenantId,
+        ]);
+
+        return ResponseHelper::jsonError(
+            ErrorCode::UNAUTHORIZED,
+            $this->langService->trans('error.session_invalid'),
+            401,
+            $this->getTraceId($request)
+        );
     }
 
     /**

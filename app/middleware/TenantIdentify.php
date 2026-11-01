@@ -9,6 +9,7 @@ use app\exception\ForbiddenException;
 use app\exception\TenantContextMissingException;
 use Domain\Tenant\Model\Tenant;
 use Infrastructure\Tenant\Repository\TenantRepository;
+use Infrastructure\Tenant\Service\TenantUsability;
 use Closure;
 use think\facade\Env;
 use think\facade\Log;
@@ -139,20 +140,18 @@ class TenantIdentify
 
     /**
      * 租户是否可用（active 且未过期）
+     *
+     * 判据已提取到 `Infrastructure\Tenant\Service\TenantUsability`（ER-04）：
+     * 现在 `Auth` 中间件、`AuthController::login()/refresh()` 与这里共用**同一份**实现，
+     * 避免「某处补了 `expires_at` 校验、另一处没补」这类判据漂移。
+     * 本方法保留为薄委托（对外形制不变，本中间件的阅读者无需跳文件）。
+     *
+     * @param Tenant $tenant 已查出的租户实体
+     * @return bool 可用返回 true
      */
     private function isUsable(Tenant $tenant): bool
     {
-        if (!$tenant->isActive()) {
-            return false;
-        }
-
-        $expiresAt = $tenant->toArray()['expires_at'] ?? null;
-        if (!empty($expiresAt) && strtotime((string) $expiresAt) !== false
-            && strtotime((string) $expiresAt) < time()) {
-            return false;
-        }
-
-        return true;
+        return TenantUsability::isUsable($tenant);
     }
 
     /**

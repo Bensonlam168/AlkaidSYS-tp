@@ -35,6 +35,32 @@ This document outlines the security architecture and guidelines for AlkaidSYS. I
 - **Replay Detection**: Using revoked/blacklisted token triggers `code = 2007` error and audit log
 - **Blacklist TTL**: Matches Refresh Token lifetime (7 days default)
 
+### 2.5 Session Invalidation Closure (ER-04)
+
+> Status: **Implemented**. See the Chinese version of this document (§2.5) for the full rationale,
+> measurements and trade-offs; this section is the normative summary.
+
+A JWT only proves that the token was genuine **when it was issued**; it does not prove that the subject is still valid.
+
+- **Where**: `app\middleware\Auth` (every protected request), `AuthController::refresh()` (renewal) and
+  `AuthController::login()` (session start), all delegating to `Infrastructure\Auth\PrincipalStateChecker`.
+  Tenant usability criteria live in exactly one place: `Infrastructure\Tenant\Service\TenantUsability`
+  (existence + `status = active` + `expires_at` not in the past).
+- **Checks**: user still exists inside the tenant declared by the token, `users.status = active`,
+  and the tenant is usable. Refresh additionally revokes the presented refresh token when the subject is unusable.
+- **Rejection**: HTTP **401** + business code **2001** with a single external message (`error.session_invalid`).
+  The machine-readable reason (`user_not_found` / `user_inactive` / `user_locked` / `tenant_not_found` /
+  `tenant_unusable` / `tenant_expired`) is **logged only** — distinguishing it in the response would leak
+  account existence and tenant operational state, while the client action is identical for all cases.
+  A failure of the check itself (e.g. database unavailable) returns **500**, never a fabricated 401.
+- **Performance**: +2 primary-key lookups per authenticated request (`EXPLAIN`: `type=const`, `rows=1`),
+  roughly +1.6–2.0 ms per request in the local Docker environment; end-to-end difference is below measurement noise.
+- **Caching**: deliberately **none** (not even `static`), because `alkaid-backend` is a long-lived Swoole process
+  and caching `active` re-introduces "disabled but still usable". Any future cache MUST have a short TTL
+  documented here, explicit invalidation on every user/tenant status write path, and a stated worst-case delay.
+- **Not covered**: routes that do not mount the `Auth` middleware, and the dev-only `AUTH_SKIP_MIDDLEWARE`
+  switch (must never be enabled in production-like environments).
+
 ## 3. Authorization (AuthZ)
 
 ### 3.1 RBAC Model
