@@ -25,15 +25,14 @@ final class FormApiMultiTenantE2ETest extends FormApiTest
         parent::setUp();
 
         // 确保每个用例开始前清理租户 B 专用的测试集合/表
-        Db::execute('DROP TABLE IF EXISTS lc_test_api_data_t2');
-        Db::execute('DELETE FROM lowcode_collections WHERE name = "test_api_data_t2"');
+        // 复用父类的 purgeCollection()：drop 表 + 删元数据 + 清 CollectionManager/ORM 两级缓存
+        $this->purgeCollection('test_api_data_t2', 'lc_test_api_data_t2');
     }
 
     protected function tearDown(): void
     {
         // 清理本测试类创建的额外资源，避免影响其他用例
-        Db::execute('DROP TABLE IF EXISTS lc_test_api_data_t2');
-        Db::execute('DELETE FROM lowcode_collections WHERE name = "test_api_data_t2"');
+        $this->purgeCollection('test_api_data_t2', 'lc_test_api_data_t2');
 
         parent::tearDown();
     }
@@ -297,8 +296,10 @@ final class FormApiMultiTenantE2ETest extends FormApiTest
     /**
      * 建好集合与表单，供上面的伪造用例复用 | Create collection + form for the spoofing cases
      *
-     * 集合名固定为 `test_api_data`：父类 setUp/tearDown 会 drop 物理表 `lc_test_api_data`
-     * 并删掉该集合行，因此本方法在每个用例里都可以安全重建。
+     * 集合名固定为 `test_api_data`：父类 setUp/tearDown 会通过 `purgeCollection()`
+     * 把物理表 `lc_test_api_data`、`lowcode_collections` 里的集合行，以及
+     * CollectionManager 缓存与 think-orm 的进程内字段缓存一并清掉，
+     * 因此本方法在每个用例里都可以安全重建（不会拿到上一轮的旧字段集）。
      */
     private function prepareCollectionAndForm(array $headers, string $formName): void
     {
