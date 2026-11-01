@@ -195,6 +195,32 @@ JWT 只能证明「这张令牌在**签发时**是真的」，不能证明「令
 - 权限使用租户范围前缀：`tenant:{tenantId}:{resource}`
 - 在授权层禁止跨租户访问
 
+### 3.3 权限监控端点鉴权（`/v1/admin/permission-monitor`）
+
+该组端点会暴露权限子系统内部状态（L1/L2 缓存命中率、TTL、P95 延迟、任意用户的权限集），
+且包含两条**写**操作（清空指定用户 / 全部权限缓存）。因此**整组必须挂 Auth + Permission，不允许匿名访问**。
+
+| 方法 | 路径 | 所需权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/v1/admin/permission-monitor/cache-stats` | `permission.read` | 缓存统计（含命中率 / TTL） |
+| GET | `/v1/admin/permission-monitor/performance` | `permission.read` | 性能指标（P95 / 命中率目标） |
+| GET | `/v1/admin/permission-monitor/health` | `permission.read` | 健康检查（内部状态，非探活入口） |
+| GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | `permission.read` | 目标用户必须属于当前租户，否则 404 |
+| GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | `permission.read` | 同上；`:permission` 允许 `resource:action` |
+| DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | `permission.write` | 同上；清缓存是对权限子系统的写操作 |
+| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | 底层为 `Cache::clear()`（影响整个缓存存储） |
+
+约束与结论：
+
+- **`health` 不单独开口子**：它返回的是内部缓存/延迟状态，不是「进程是否存活」。
+  进程级探活应使用不返回业务数据的独立端点；把本端点匿名化会把刚修掉的未鉴权读取重新打开。
+- **跨租户一律 404（不是 403）**：`PermissionService` 的按用户查询是「以被查用户自己的 `tenant_id` 为准」，
+  不含请求租户维度，因此控制器必须先校验「目标用户属于当前请求租户」再委托。
+  用 404 而非 403 是为了不泄露「该 userId 存在但属于别家」。
+- **路由中间件参数格式**：`route/**` 中的中间件声明使用内部 slug 形式（`permission.read`），
+  因为 `scripts/check-permission-codes.php` 明确禁止在路由层使用 `resource:action`（含 `:`）；
+  两种形式在中间件内部会被归一化，语义等价。
+
 ## 4. 数据安全
 
 ### 4.1 加密

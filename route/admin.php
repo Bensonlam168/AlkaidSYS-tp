@@ -217,34 +217,71 @@ Route::group('v1/admin/users', function () {
 });
 
 // Permission Monitor routes | 权限监控路由
+//
+// 安全说明（本组历史上**整组没有任何中间件**，属于未鉴权暴露）：
+//   - 无 token 也能读权限子系统内部指标（L1/L2 命中率、TTL、P95 延迟、任意用户的权限集）；
+//   - 两条 DELETE 可清空「指定用户」甚至「全部」权限缓存。
+//
+// 现在按本文件既有风格**逐条**挂 Auth + Permission（不改用 group 级中间件，
+// 与其它 admin 组保持同一写法，便于后续逐条演进权限码）：
+//   - 只读类（cache-stats / performance / user/:userId/permissions /
+//     user/:userId/check/:permission / health）→ permission.read
+//   - 清缓存类（cache/user/:userId / cache）→ permission.write
+//     语义论证：`permission.delete` 的语义是「删除权限定义」，清缓存是对权限子系统的
+//     **写**操作而非删除定义，`permission.write` 更贴切；同时避免新增权限码 / 改 seeder。
+//     注意：`DELETE cache`（clearAllCache）底层是 `Cache::clear()`，影响面是**整个缓存存储**
+//     （含 Redis 整库 flushDB），若后续要收紧到运行维护级操作，应改用 `casbin.manage`
+//     —— 见本次改动报告的「风险与未做项」。
 Route::group('v1/admin/permission-monitor', function () {
     // 获取缓存统计 | Get cache statistics
     // GET /v1/admin/permission-monitor/cache-stats
-    Route::get('cache-stats', 'app\controller\api\admin\PermissionMonitorController@getCacheStats');
+    Route::get('cache-stats', 'app\controller\api\admin\PermissionMonitorController@getCacheStats')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.read');
 
     // 获取性能指标 | Get performance metrics
     // GET /v1/admin/permission-monitor/performance
-    Route::get('performance', 'app\controller\api\admin\PermissionMonitorController@getPerformanceMetrics');
+    Route::get('performance', 'app\controller\api\admin\PermissionMonitorController@getPerformanceMetrics')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.read');
 
     // 清除用户缓存 | Clear user cache
     // DELETE /v1/admin/permission-monitor/cache/user/:userId
-    Route::delete('cache/user/:userId', 'app\controller\api\admin\PermissionMonitorController@clearUserCache');
+    Route::delete('cache/user/:userId', 'app\controller\api\admin\PermissionMonitorController@clearUserCache')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.write')
+        ->pattern(['userId' => '\d+']);
 
     // 清除所有缓存 | Clear all cache
     // DELETE /v1/admin/permission-monitor/cache
-    Route::delete('cache', 'app\controller\api\admin\PermissionMonitorController@clearAllCache');
+    Route::delete('cache', 'app\controller\api\admin\PermissionMonitorController@clearAllCache')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.write');
 
     // 获取用户权限 | Get user permissions
     // GET /v1/admin/permission-monitor/user/:userId/permissions
-    Route::get('user/:userId/permissions', 'app\controller\api\admin\PermissionMonitorController@getUserPermissions');
+    Route::get('user/:userId/permissions', 'app\controller\api\admin\PermissionMonitorController@getUserPermissions')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.read')
+        ->pattern(['userId' => '\d+']);
 
     // 检查用户权限 | Check user permission
     // GET /v1/admin/permission-monitor/user/:userId/check/:permission
-    Route::get('user/:userId/check/:permission', 'app\controller\api\admin\PermissionMonitorController@checkPermission');
+    //
+    // `permission` 允许 `resource:action`（对外权限码，如 user:read）与
+    // `resource.action`（内部 slug）两种形态：默认路由变量规则 `[\w\.]+` 不含 `:`，
+    // 在 `route_complete_match=false` 下会把 `user:read` 截断成 `user` 并**仍返回 200**
+    // （实测：{"permission":"user","has_permission":false}），属于静默错答。
+    Route::get('user/:userId/check/:permission', 'app\controller\api\admin\PermissionMonitorController@checkPermission')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.read')
+        ->pattern(['userId' => '\d+', 'permission' => '[\w\.\-:]+']);
 
     // 健康检查 | Health check
     // GET /v1/admin/permission-monitor/health
-    Route::get('health', 'app\controller\api\admin\PermissionMonitorController@healthCheck');
+    Route::get('health', 'app\controller\api\admin\PermissionMonitorController@healthCheck')
+        ->middleware(\app\middleware\Auth::class)
+        ->middleware(\app\middleware\Permission::class, 'permission.read');
 });
 
 // Department Management routes | 部门管理路由

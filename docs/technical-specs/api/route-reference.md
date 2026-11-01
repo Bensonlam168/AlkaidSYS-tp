@@ -66,13 +66,13 @@ This document lists all API routes in AlkaidSYS-tp.
 | GET | `/v1/admin/menus/check-path` | MenuController@checkPath | Auth, Permission:menu.read |
 | GET | `/v1/admin/menus/name-exists` | MenuController@checkName | Auth, Permission:menu.read |
 | GET | `/v1/admin/menus/path-exists` | MenuController@checkPath | Auth, Permission:menu.read |
-| DELETE | `/v1/admin/permission-monitor/cache` | PermissionMonitorController@clearAllCache | - |
-| GET | `/v1/admin/permission-monitor/cache-stats` | PermissionMonitorController@getCacheStats | - |
-| DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | PermissionMonitorController@clearUserCache | - |
-| GET | `/v1/admin/permission-monitor/health` | PermissionMonitorController@healthCheck | - |
-| GET | `/v1/admin/permission-monitor/performance` | PermissionMonitorController@getPerformanceMetrics | - |
-| GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | PermissionMonitorController@checkPermission | - |
-| GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | PermissionMonitorController@getUserPermissions | - |
+| DELETE | `/v1/admin/permission-monitor/cache` | PermissionMonitorController@clearAllCache | Auth, Permission:permission.write |
+| GET | `/v1/admin/permission-monitor/cache-stats` | PermissionMonitorController@getCacheStats | Auth, Permission:permission.read |
+| DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | PermissionMonitorController@clearUserCache | Auth, Permission:permission.write |
+| GET | `/v1/admin/permission-monitor/health` | PermissionMonitorController@healthCheck | Auth, Permission:permission.read |
+| GET | `/v1/admin/permission-monitor/performance` | PermissionMonitorController@getPerformanceMetrics | Auth, Permission:permission.read |
+| GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | PermissionMonitorController@checkPermission | Auth, Permission:permission.read |
+| GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | PermissionMonitorController@getUserPermissions | Auth, Permission:permission.read |
 | GET | `/v1/admin/permissions` | PermissionController@index | Auth, Permission:permission.read |
 | POST | `/v1/admin/permissions` | PermissionController@save | Auth, Permission:permission.write |
 | DELETE | `/v1/admin/permissions/<id>` | PermissionController@delete | Auth, Permission:permission.delete |

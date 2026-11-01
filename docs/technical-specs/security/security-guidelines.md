@@ -120,6 +120,36 @@ Internally, the middleware normalizes both formats to the external `resource:act
 - Permission codes for multi-tenant scenarios are prefixed with tenant scope, for example: `tenant:{tenantId}:{resource}:{action}` (e.g., `tenant:1001:forms:view`).
 - Cross-tenant access is prohibited at authorization layer.
 
+### 3.3 Permission Monitor Endpoint Authorization (`/v1/admin/permission-monitor`)
+
+This route group exposes internal state of the permission subsystem (L1/L2 cache hit rates, TTL,
+P95 latency, and any user's permission set) and contains two **write** operations (clear a user's
+cache / clear all permission caches). The whole group therefore **MUST** carry `Auth` + `Permission`;
+anonymous access is not allowed.
+
+| Method | Path | Required permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/v1/admin/permission-monitor/cache-stats` | `permission.read` | Cache statistics (hit rate / TTL) |
+| GET | `/v1/admin/permission-monitor/performance` | `permission.read` | Performance metrics (P95 / hit-rate targets) |
+| GET | `/v1/admin/permission-monitor/health` | `permission.read` | Internal health detail, not a liveness probe |
+| GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | `permission.read` | Target user must belong to the current tenant, otherwise 404 |
+| GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | `permission.read` | Same rule; `:permission` accepts `resource:action` |
+| DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | `permission.write` | Same rule; clearing cache is a write on the permission subsystem |
+| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | Backed by `Cache::clear()` (affects the whole cache store) |
+
+Rules and decisions:
+
+- **`health` gets no exemption**: it returns internal cache/latency state, not "is the process alive".
+  Process liveness must use a separate endpoint that returns no business data; making this endpoint
+  anonymous would re-open the unauthenticated read that was just closed.
+- **Cross-tenant access is always 404 (never 403)**: the per-user queries inside `PermissionService`
+  derive the tenant from the target user row and carry no request-tenant dimension, so the controller
+  must verify "target user belongs to the current request tenant" before delegating. Returning 404
+  instead of 403 avoids leaking "this userId exists but belongs to someone else".
+- **Route middleware parameter format**: declarations under `route/**` use the internal slug form
+  (`permission.read`) because `scripts/check-permission-codes.php` forbids `resource:action` (which
+  contains `:`) at the route layer. Both forms are normalized inside the middleware and are equivalent.
+
 ## 4. Data Security
 
 ### 4.1 Encryption
