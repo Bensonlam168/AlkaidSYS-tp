@@ -35,6 +35,7 @@ Backend（全部命令必须在 `alkaid-backend` 容器内执行，保持与 CI 
 - Run Think commands: `docker exec -it alkaid-backend php think migrate:run`
 - Tail logs: `docker logs -f alkaid-backend`
 - Run tests: `docker exec -it alkaid-backend php think test [--testsuite=Feature]`
+- **改动生效规则**：`alkaid-backend` 是 Swoole **常驻进程**（非 PHP-FPM）。`app/**`、`route/**` 改完约 2–5 秒自动重载（仅 `APP_DEBUG=true` 时）；`config/**` 改完用 `docker kill -s USR1 alkaid-backend`；`config/swoole.php` 必须 `docker restart alkaid-backend`。详见 `.agent/workflows/alkaidsys-dev.md` §5。
 
 Frontend:
 - Install: `cd frontend && corepack enable && pnpm install`
