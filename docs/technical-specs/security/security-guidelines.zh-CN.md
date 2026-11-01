@@ -208,7 +208,7 @@ JWT 只能证明「这张令牌在**签发时**是真的」，不能证明「令
 | GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | `permission.read` | 目标用户必须属于当前租户，否则 404 |
 | GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | `permission.read` | 同上；`:permission` 允许 `resource:action` |
 | DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | `permission.write` | 同上；清缓存是对权限子系统的写操作 |
-| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | 底层为 `Cache::clear()`（影响整个缓存存储） |
+| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | 只清权限缓存（白名单前缀），**不再** `Cache::clear()`，见 3.4 |
 
 约束与结论：
 
@@ -221,10 +221,76 @@ JWT 只能证明「这张令牌在**签发时**是真的」，不能证明「令
   因为 `scripts/check-permission-codes.php` 明确禁止在路由层使用 `resource:action`（含 `:`）；
   两种形式在中间件内部会被归一化，语义等价。
 
+### 3.4 权限缓存失效策略（R1 / ER-06）
+
+> 实现任务：R1（`clearAllCache` 误清整库）、ER-06（撤权未接缓存失效）
+
+#### 3.4.1 键空间与 TTL
+
+| 键（逻辑名，落 Redis 时驱动会再加 `alkaid:` 前缀） | TTL | 生产者 |
+| --- | --- | --- |
+| `l1:permission:tenant:{t}:user:{u}:permissions` | 60s | `PermissionCacheService` |
+| `l2:permission:tenant:{t}:user:{u}:permissions` | 300s | `PermissionCacheService` |
+| `permission:tenant:{t}:user:{u}:check:{md5(code)}` | 30s | `PermissionCacheService::hasPermission()` |
+| `casbin:check:{u}:{t}:{resource}:{action}` | 300s（`CASBIN_CACHE_TTL`） | `CasbinService::check()` |
+| `casbin:policy:full` | 300s（`policy_cache_enabled` 默认关闭） | `DatabaseAdapter` |
+
+实测落库形态（phpredis `SCAN` 取样）：`alkaid:l1:permission:tenant:9:user:9:permissions`、
+`alkaid:session:verify-r1-abc123`、`alkaid:rl:dev:user:verify-r1:token_bucket`。
+
+#### 3.4.2 前缀白名单（安全边界）
+
+清除操作**只允许**命中下列前缀族，其它前缀（含空串）一律抛异常拒绝执行：
+
+`l1:permission:` / `l2:permission:` / `permission:` / `casbin:check:` / `casbin:policy:`
+
+这条边界是结构性的：所有权限相关键都含 `permission:` 段或 `casbin:` 段，
+而 `session:`（会话）、`rl:`（限流）、`lowcode:`（低代码）、`casbin_last_reload`
+都不含 —— 因此「清权限缓存」在**定义上**不可能误删会话与限流计数。
+
+**禁止**再用 `Cache::clear()` 清权限缓存：ThinkPHP 的 Redis 驱动把它实现为 `flushDB()`，
+清的是整个库（会话与缓存同库）；File 驱动则是 `rmdir(缓存目录)`。
+同理禁止用 `KEYS pattern`（O(N) 且阻塞单线程 Redis），只允许 `SCAN` + 批量 `DEL`。
+
+#### 3.4.3 驱动适配
+
+| 驱动 | 策略 | 说明 |
+| --- | --- | --- |
+| Redis（phpredis） | `SCAN` 游标迭代 + 分批 `DEL`（500/批） | 生产路径。按前缀首段分组，同组共用一轮 `SCAN` |
+| File | 键索引精确删除 | File 驱动把键名 `md5()` 后落盘（`runtime/cache/ab/cdef….php`），**无法反推**，因此写入时登记「写过哪些键」，清除时按索引逐键删 |
+| 其它（Predis / Memory / 自定义） | 同上（索引） | **绝不**退化为 `Cache::clear()`；索引为空时只记 warning 并返回 0 |
+
+#### 3.4.4 失效时机与覆盖范围
+
+失效一律发生在**写操作提交之后**（提交前清缓存会让并发请求把未提交的旧数据重新填满）：
+
+| 变更 | 失效对象 | 钩子位置 |
+| --- | --- | --- |
+| 角色权限变更（`syncPermissions`） | 该角色下**所有用户** | `RoleRepository::syncPermissions()` |
+| 角色删除 | 该角色的成员 | `RoleRepository::delete()`（删除前先取成员） |
+| 用户角色变更（`setRoles`） | 该用户 | `UserController::setRoles()` |
+| 用户状态变更（`updateStatus` / `update`） | 该用户 | `UserController::updateStatus()/update()` |
+| 用户删除 | 该用户 | `UserController::delete()` |
+| 权限定义变更/删除 | 全部权限缓存 | `PermissionRepository::save()/delete()` |
+| 管理端「清全部权限缓存」 | 全部权限缓存 | `PermissionCacheService::clearAllCache()` |
+
+影响用户数超过 100 时自动升级为「整族清除」：一次 `SCAN` 胜过上千次逐用户拼键。
+
+#### 3.4.5 失败处理
+
+缓存失效是**尽力而为**：`PermissionCacheInvalidator` 全部方法内部 `catch (Throwable)`，
+失败只记 `warning` 并返回 `success=false`，**不向上抛**、不回滚业务写入。
+清缓存失败让一次成功的撤权回滚是本末倒置 —— 最坏后果是旧权限多活一个 TTL。
+
+#### 3.4.6 已知降级（File 驱动，仅开发/测试）
+
+键索引有上限（5 万条）与 TTL（1 小时）。超限时丢弃最旧记录并记 warning，
+被丢弃的键只能等 TTL 自然过期。生产环境强制 Redis（`config/cache.php` 对
+`production/prod/stage/staging` 强制 `redis`），不受此限制。
+
 ## 4. 数据安全
 
-### 4.1 加密
-- **传输加密**：强制使用 HTTPS（TLS 1.2+ 最低，推荐 TLS 1.3）
+### 4.1 加密- **传输加密**：强制使用 HTTPS（TLS 1.2+ 最低，推荐 TLS 1.3）
 - **存储加密**：
   - 密码：使用 `bcrypt` 或 `Argon2` 加密
   - 敏感数据（PII）：静态数据使用 AES-256 加密

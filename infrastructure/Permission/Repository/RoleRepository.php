@@ -6,6 +6,7 @@ namespace Infrastructure\Permission\Repository;
 
 use Domain\Permission\Exception\RoleWriteRejectedException;
 use Domain\Permission\Model\Role;
+use Infrastructure\Permission\Cache\PermissionCacheInvalidator;
 use think\facade\Db;
 
 /**
@@ -22,6 +23,22 @@ use think\facade\Db;
 class RoleRepository
 {
     protected string $table = 'roles';
+
+    /**
+     * 权限缓存失效器（ER-06）
+     *
+     * 通过构造参数注入（默认自建）：既是生产默认行为，也让测试可以传入「会抛异常的失效器」
+     * 来证明「清缓存失败不影响写入」。
+     */
+    protected PermissionCacheInvalidator $cacheInvalidator;
+
+    /**
+     * @param PermissionCacheInvalidator|null $cacheInvalidator 缓存失效器（默认新建）
+     */
+    public function __construct(?PermissionCacheInvalidator $cacheInvalidator = null)
+    {
+        $this->cacheInvalidator = $cacheInvalidator ?? new PermissionCacheInvalidator();
+    }
 
     /**
      * Find role by ID | 根据 ID 查找角色
@@ -209,10 +226,21 @@ class RoleRepository
      */
     public function delete(int $id, int $tenantId): bool
     {
-        return Db::name($this->table)
+        // 先取「持该角色的用户」：删除后 user_roles 已无记录，届时再查就查不到了
+        // Collect the role's users first: after the delete, user_roles no longer yields them
+        $affectedUsers = $this->cacheInvalidator->usersOfRole($id);
+
+        $deleted = Db::name($this->table)
             ->where('id', $id)
             ->where('tenant_id', $tenantId)
             ->delete() > 0;
+
+        // ER-06：删除角色后失效相关用户的权限缓存（尽力而为，失败只记 warning）
+        if ($deleted && $affectedUsers !== []) {
+            $this->cacheInvalidator->invalidateUsers($affectedUsers);
+        }
+
+        return $deleted;
     }
 
     /**
@@ -269,6 +297,13 @@ class RoleRepository
     /**
      * Sync role permissions | 同步角色权限
      *
+     * 写完后立即失效「持有该角色的所有用户」的权限缓存（ER-06）。
+     * 这是角色权限变更的**唯一收口**：RoleController 的 save / update / setPermissions
+     * 三个入口都调用本方法，挂在这里可以保证将来新增的调用方也不会漏掉失效。
+     *
+     * 时机：本方法内部是 `delete + insertAll`，没有外层事务，因此返回前数据已提交；
+     * 若将来调用方在外层开事务，失效会提前到提交前，需要改成「提交后回调」（已在报告登记为风险）。
+     *
      * @param int $roleId Role ID | 角色 ID
      * @param array<int> $permissionIds Permission IDs | 权限 ID 列表
      * @return void
@@ -291,6 +326,11 @@ class RoleRepository
 
             Db::name('role_permissions')->insertAll($data);
         }
+
+        // ER-06：撤权/授权后失效该角色下所有用户的权限缓存
+        // 依赖方向：本类只依赖叶子类 PermissionCacheInvalidator（只用到 Cache/Db），
+        // 不依赖 PermissionService，因此不会形成 Repository → Service → Repository 的循环依赖
+        $this->cacheInvalidator->invalidateRoleUsers($roleId);
     }
 
     /**

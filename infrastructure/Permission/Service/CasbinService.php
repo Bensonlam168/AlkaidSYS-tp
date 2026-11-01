@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infrastructure\Permission\Service;
 
 use Casbin\Enforcer;
+use Infrastructure\Permission\Cache\PermissionCachePurger;
 use Infrastructure\Permission\Casbin\DatabaseAdapter;
 use think\facade\Cache;
 use think\facade\Config;
@@ -70,6 +71,12 @@ class CasbinService
      * Last cache degradation reason
      */
     protected ?string $lastCacheDegradationReason = null;
+
+    /**
+     * 权限缓存前缀清除器（懒加载）
+     * Permission cache prefix purger (lazy)
+     */
+    protected ?PermissionCachePurger $purger = null;
 
     /**
      * 构造函数
@@ -220,6 +227,8 @@ class CasbinService
                 try {
                     $cacheTtl = Config::get('casbin.cache_ttl', 300);
                     Cache::set($cacheKey, $result, $cacheTtl);
+                    // 登记键：不可枚举驱动（File 等）清理时依赖该索引
+                    $this->purger()->trackKey($cacheKey);
                 } catch (\Exception $e) {
                     // 缓存写入失败，记录降级事件但不影响结果返回
                     // Cache write failed, record degradation but don't affect result
@@ -552,8 +561,13 @@ class CasbinService
      * 清除所有权限检查缓存
      * Clear all permission check cache
      *
-     * 清除所有以 casbin:check: 开头的缓存。
-     * Clear all cache with prefix casbin:check:.
+     * 清除所有以 `casbin:check:` 开头的缓存（以及 `casbin:policy:` 全量策略缓存）。
+     * Clear all cache with prefix `casbin:check:` (plus `casbin:policy:` full policy cache).
+     *
+     * **R1 修复**：此前这里是 `Cache::clear()` —— Redis 驱动下等于 `FLUSHDB`，
+     * 会连 `session:*` 会话与限流计数一起清空。现在按白名单前缀清除：
+     * Redis 用 `SCAN` + 批量 `DEL`，其它驱动用键索引精确删除，绝不退化为清全库。
+     * 同时不再需要「先备份 `casbin_last_reload` 再恢复」——那个键压根不在清除范围内。
      *
      * @return void
      */
@@ -564,44 +578,39 @@ class CasbinService
         $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
-            // 保存重要的缓存值
-            // Save important cache values
-            $lastReload = Cache::get('casbin_last_reload');
-
-            // ThinkPHP Cache 不支持按前缀删除，需要手动实现
-            // ThinkPHP Cache does not support delete by prefix, need manual implementation
-            // 这里我们使用 clear() 清除所有缓存（生产环境应使用 Redis 的 SCAN + DEL）
-            // Here we use clear() to clear all cache (production should use Redis SCAN + DEL)
-            Cache::clear();
-
-            // 恢复重要的缓存值
-            // Restore important cache values
-            if ($lastReload !== null) {
-                Cache::set('casbin_last_reload', $lastReload);
-            }
+            $report = $this->purger()->purge([
+                PermissionCachePurger::PREFIX_CASBIN_CHECK,
+                PermissionCachePurger::PREFIX_CASBIN_POLICY,
+            ]);
 
             // 重置缓存统计
             // Reset cache statistics
             $this->cacheHits = 0;
             $this->cacheMisses = 0;
 
-            Log::info('Casbin cache cleared', [
+            Log::info('Casbin cache cleared (prefix-scoped)', [
                 'trace_id' => $traceId,
+                'driver' => $report['driver'] ?? null,
+                'strategy' => $report['strategy'] ?? null,
+                'deleted' => $report['deleted'] ?? 0,
             ]);
-        } catch (\Exception $e) {
-            Log::error('Casbin cache clear failed', [
+        } catch (\Throwable $e) {
+            // 缓存清除失败不应让「策略已成功重载」这件事变成异常：
+            // 只记 warning，让 reloadPolicy() 正常返回（最坏情况是缓存多活一个 TTL）
+            Log::warning('Casbin cache clear failed', [
                 'trace_id' => $traceId,
                 'error_type' => get_class($e),
                 'error_message' => $e->getMessage(),
             ]);
-
-            throw $e;
         }
     }
 
     /**
      * 清除特定用户的权限检查缓存
      * Clear permission check cache for specific user
+     *
+     * 只清 `casbin:check:{userId}:{tenantId}:` 前缀下的键，其它用户/其它租户的缓存不受影响。
+     * Only purge keys under `casbin:check:{userId}:{tenantId}:`.
      *
      * @param int $userId 用户 ID | User ID
      * @param int $tenantId 租户 ID | Tenant ID
@@ -614,43 +623,45 @@ class CasbinService
         $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
-            // 保存重要的缓存值
-            // Save important cache values
-            $lastReload = Cache::get('casbin_last_reload');
-
-            // ThinkPHP Cache 不支持按前缀删除
-            // 这里我们只能清除所有缓存
-            // ThinkPHP Cache does not support delete by prefix
-            // Here we can only clear all cache
-            Cache::clear();
-
-            // 恢复重要的缓存值
-            // Restore important cache values
-            if ($lastReload !== null) {
-                Cache::set('casbin_last_reload', $lastReload);
-            }
+            $report = $this->purger()->purge([
+                sprintf('%s%d:%d:', PermissionCachePurger::PREFIX_CASBIN_CHECK, $userId, $tenantId),
+            ]);
 
             // 重置缓存统计
             // Reset cache statistics
             $this->cacheHits = 0;
             $this->cacheMisses = 0;
 
-            Log::info('Casbin user cache cleared', [
+            Log::info('Casbin user cache cleared (prefix-scoped)', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
+                'strategy' => $report['strategy'] ?? null,
+                'deleted' => $report['deleted'] ?? 0,
             ]);
-        } catch (\Exception $e) {
-            Log::error('Casbin user cache clear failed', [
+        } catch (\Throwable $e) {
+            Log::warning('Casbin user cache clear failed', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
                 'error_type' => get_class($e),
                 'error_message' => $e->getMessage(),
             ]);
-
-            throw $e;
         }
+    }
+
+    /**
+     * 取权限缓存前缀清除器（懒加载）
+     *
+     * @return PermissionCachePurger
+     */
+    protected function purger(): PermissionCachePurger
+    {
+        if ($this->purger === null) {
+            $this->purger = new PermissionCachePurger();
+        }
+
+        return $this->purger;
     }
 
     /**

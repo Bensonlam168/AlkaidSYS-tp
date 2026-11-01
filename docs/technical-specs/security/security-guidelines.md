@@ -135,7 +135,7 @@ anonymous access is not allowed.
 | GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | `permission.read` | Target user must belong to the current tenant, otherwise 404 |
 | GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | `permission.read` | Same rule; `:permission` accepts `resource:action` |
 | DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | `permission.write` | Same rule; clearing cache is a write on the permission subsystem |
-| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | Backed by `Cache::clear()` (affects the whole cache store) |
+| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | Permission caches only (whitelisted prefixes); **no longer** `Cache::clear()`, see 3.4 |
 
 Rules and decisions:
 
@@ -149,6 +149,79 @@ Rules and decisions:
 - **Route middleware parameter format**: declarations under `route/**` use the internal slug form
   (`permission.read`) because `scripts/check-permission-codes.php` forbids `resource:action` (which
   contains `:`) at the route layer. Both forms are normalized inside the middleware and are equivalent.
+
+### 3.4 Permission Cache Invalidation Policy (R1 / ER-06)
+
+> Implementation tasks: R1 (`clearAllCache` used to flush the whole Redis DB), ER-06 (no cache
+> invalidation after an authority change).
+
+#### 3.4.1 Key space and TTL
+
+| Key (logical; the driver prepends `alkaid:` when stored in Redis) | TTL | Producer |
+| --- | --- | --- |
+| `l1:permission:tenant:{t}:user:{u}:permissions` | 60s | `PermissionCacheService` |
+| `l2:permission:tenant:{t}:user:{u}:permissions` | 300s | `PermissionCacheService` |
+| `permission:tenant:{t}:user:{u}:check:{md5(code)}` | 30s | `PermissionCacheService::hasPermission()` |
+| `casbin:check:{u}:{t}:{resource}:{action}` | 300s (`CASBIN_CACHE_TTL`) | `CasbinService::check()` |
+| `casbin:policy:full` | 300s (`policy_cache_enabled`, off by default) | `DatabaseAdapter` |
+
+Real stored form (sampled with phpredis `SCAN`): `alkaid:l1:permission:tenant:9:user:9:permissions`,
+`alkaid:session:verify-r1-abc123`, `alkaid:rl:dev:user:verify-r1:token_bucket`.
+
+#### 3.4.2 Prefix whitelist (the safety boundary)
+
+Purges may **only** hit these prefix families; any other prefix (including the empty string) is
+rejected with an exception:
+
+`l1:permission:` / `l2:permission:` / `permission:` / `casbin:check:` / `casbin:policy:`
+
+The boundary is structural: every permission-related key contains a `permission:` or `casbin:`
+segment, while `session:` (sessions), `rl:` (rate limiting), `lowcode:` and `casbin_last_reload`
+do not. Purging permission caches therefore **cannot** delete sessions or rate-limit counters.
+
+**Never** use `Cache::clear()` for permission caches: ThinkPHP's Redis driver implements it as
+`flushDB()` (the whole DB, and sessions live in the same DB); the File driver implements it as
+`rmdir(cache directory)`. Likewise `KEYS pattern` is forbidden (O(N) and blocking on a
+single-threaded Redis); only `SCAN` + batched `DEL` is allowed.
+
+#### 3.4.3 Driver adaptation
+
+| Driver | Strategy | Notes |
+| --- | --- | --- |
+| Redis (phpredis) | `SCAN` cursor iteration + batched `DEL` (500 per call) | Production path. Prefixes are grouped by their first segment so one `SCAN` pass serves a group |
+| File | Exact deletion through a key index | The File driver stores `md5(key)` on disk (`runtime/cache/ab/cdef….php`), which cannot be reversed; keys written by the permission services are therefore recorded and deleted one by one |
+| Others (Predis / Memory / custom) | Same as File (index) | **Never** degrades to `Cache::clear()`; an empty index only logs a warning and returns 0 |
+
+#### 3.4.4 When invalidation happens and what it covers
+
+Invalidation always runs **after** the write commits (clearing earlier lets concurrent requests
+re-populate the cache from uncommitted data):
+
+| Change | Invalidated | Hook |
+| --- | --- | --- |
+| Role permissions (`syncPermissions`) | **All users** holding the role | `RoleRepository::syncPermissions()` |
+| Role deletion | Members of the role | `RoleRepository::delete()` (members collected first) |
+| User roles (`setRoles`) | That user | `UserController::setRoles()` |
+| User status (`updateStatus` / `update`) | That user | `UserController::updateStatus()/update()` |
+| User deletion | That user | `UserController::delete()` |
+| Permission definition change/deletion | All permission caches | `PermissionRepository::save()/delete()` |
+| Admin "clear all permission caches" | All permission caches | `PermissionCacheService::clearAllCache()` |
+
+Above 100 affected users the invalidation escalates to a whole-family purge: one `SCAN` beats
+assembling thousands of per-user keys.
+
+#### 3.4.5 Failure handling
+
+Cache invalidation is **best effort**: every `PermissionCacheInvalidator` method wraps its work in
+`catch (Throwable)`, logs a `warning` and returns `success=false`. It never re-throws and never
+rolls back the business write — failing a successful revocation because a cache delete failed is
+backwards; the worst case is that stale permissions live for one more TTL.
+
+#### 3.4.6 Known degradation (File driver, development/testing only)
+
+The key index is capped (50k entries) with a 1-hour TTL. When the cap is exceeded the oldest
+entries are dropped with a warning; those keys can only expire via TTL. Production forces Redis
+(`config/cache.php` forces `redis` for `production/prod/stage/staging`), so this does not apply there.
 
 ## 4. Data Security
 

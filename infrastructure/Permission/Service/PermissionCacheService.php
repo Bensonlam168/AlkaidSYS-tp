@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Infrastructure\Permission\Service;
 
+use Infrastructure\Permission\Cache\PermissionCachePurger;
 use think\facade\Cache;
 use think\facade\Config;
 use think\facade\Log;
@@ -18,13 +19,29 @@ use think\facade\Log;
  * - L1 Cache: Application memory cache (60s) | L1 缓存：应用内存缓存（60秒）
  * - L2 Cache: Redis cache (300s) | L2 缓存：Redis 缓存（300秒）
  * - Tenant Isolation: Cache keys with tenant_id prefix | 租户隔离：缓存键带 tenant_id 前缀
- * - Cache Invalidation: Event-driven cache clearing | 缓存失效：事件驱动的缓存清理
+ * - Scoped Invalidation: prefix-whitelisted purge (never `Cache::clear()`) | 作用域失效：按白名单前缀清除（不再 `Cache::clear()`）
  * - Performance Monitoring: QPS, latency, hit rate tracking | 性能监控：QPS、延迟、命中率跟踪
+ *
+ * ## 缓存键与 TTL（失效策略的依据）
+ *
+ * | 键 | TTL | 说明 |
+ * | --- | --- | --- |
+ * | `l1:permission:tenant:{t}:user:{u}:permissions` | 60s | L1 权限集 |
+ * | `l2:permission:tenant:{t}:user:{u}:permissions` | 300s | L2 权限集 |
+ * | `permission:tenant:{t}:user:{u}:check:{md5(code)}` | 30s | 单权限检查结果 |
+ *
+ * 三个族都含 `permission:` 段，而 `session:` / 限流 `rl:` 不含 ——
+ * 这条结构性差异就是「清除权限缓存不会误伤会话」的安全边界（R1 修复）。
  *
  * @package Infrastructure\Permission\Service
  */
 class PermissionCacheService
 {
+    /**
+     * 前缀清除器（驱动自适应，懒加载）
+     */
+    protected ?PermissionCachePurger $purger = null;
+
     /**
      * L1 Cache TTL (seconds) | L1 缓存生存时间（秒）
      */
@@ -110,7 +127,7 @@ class PermissionCacheService
                 $this->stats['l2_hits']++;
 
                 // Promote to L1 cache | 提升到 L1 缓存
-                Cache::set($l1Key, $result, $this->l1Ttl);
+                $this->writeCache($l1Key, $result, $this->l1Ttl);
 
                 $this->recordLatency($startTime);
 
@@ -131,8 +148,8 @@ class PermissionCacheService
             $result = $fetcher();
 
             // Store in both L1 and L2 caches | 存储到 L1 和 L2 缓存
-            Cache::set($l1Key, $result, $this->l1Ttl);
-            Cache::set($l2Key, $result, $this->l2Ttl);
+            $this->writeCache($l1Key, $result, $this->l1Ttl);
+            $this->writeCache($l2Key, $result, $this->l2Ttl);
 
             $this->recordLatency($startTime);
 
@@ -187,7 +204,7 @@ class PermissionCacheService
 
             // Cache for a shorter time (30s) for permission checks
             // 权限检查缓存时间较短（30秒）
-            Cache::set($cacheKey, $result, 30);
+            $this->writeCache($cacheKey, $result, 30);
 
             return $result;
 
@@ -217,12 +234,13 @@ class PermissionCacheService
         $cacheKey = $this->getCacheKey($userId, $tenantId);
 
         try {
-            // Clear both L1 and L2 cache | 清除 L1 和 L2 缓存
-            Cache::delete("l1:{$cacheKey}");
-            Cache::delete("l2:{$cacheKey}");
+            // Clear both L1 and L2 cache (exact keys) | 精确清除 L1 和 L2 缓存
+            $this->purger()->deleteKeys([
+                "l1:{$cacheKey}",
+                "l2:{$cacheKey}",
+            ]);
 
-            // Clear permission check caches for this user
-            // 清除该用户的权限检查缓存
+            // Clear permission check caches for this user | 清除该用户的权限检查缓存
             $this->clearPermissionCheckCaches($userId, $tenantId);
 
             Log::info('Permission cache cleared', [
@@ -231,8 +249,10 @@ class PermissionCacheService
                 'tenant_id' => $tenantId,
             ]);
 
-        } catch (\Exception $e) {
-            Log::error('Permission cache clear failed', [
+        } catch (\Throwable $e) {
+            // 缓存失效是尽力而为：失败只记 warning，不向业务抛
+            // Cache invalidation is best-effort: log a warning instead of throwing
+            Log::warning('Permission cache clear failed', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
@@ -244,22 +264,40 @@ class PermissionCacheService
     /**
      * Clear all permission caches | 清除所有权限缓存
      *
+     * R1 修复：只删白名单前缀（`l1:permission:` / `l2:permission:` / `permission:`）内的键。
+     * 此前这里是 `Cache::clear()`，在 Redis 驱动下等价于 `FLUSHDB`，会把
+     * **整个库**（含 `session:*` 会话、限流计数）一起清掉。
+     *
+     * 驱动适配见 {@see PermissionCachePurger}：Redis 走 `SCAN` + 批量 `DEL`，
+     * 其它驱动走键索引精确删除；**任何情况都不退化为 `Cache::clear()`**。
+     *
      * @return void
      */
     public function clearAllCache(): void
     {
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('perm_', true);
+
         try {
-            // Note: In production, should use Redis SCAN + DEL for better performance
-            // 注意：生产环境中应使用 Redis SCAN + DEL 以获得更好性能
-            Cache::clear();
+            $report = $this->purger()->purge([
+                PermissionCachePurger::PREFIX_L1_PERMISSION,
+                PermissionCachePurger::PREFIX_L2_PERMISSION,
+                PermissionCachePurger::PREFIX_PERMISSION,
+            ]);
 
             // Reset statistics | 重置统计
             $this->resetStats();
 
-            Log::info('All permission caches cleared');
+            Log::info('All permission caches cleared (prefix-scoped)', [
+                'trace_id' => $traceId,
+                'driver' => $report['driver'] ?? null,
+                'strategy' => $report['strategy'] ?? null,
+                'deleted' => $report['deleted'] ?? 0,
+            ]);
 
-        } catch (\Exception $e) {
-            Log::error('Permission cache clear all failed', [
+        } catch (\Throwable $e) {
+            // 失败只记 warning：这是「清缓存」，不该让调用方（管理接口）500
+            Log::warning('Permission cache clear all failed', [
+                'trace_id' => $traceId,
                 'error' => $e->getMessage(),
             ]);
         }
@@ -336,16 +374,49 @@ class PermissionCacheService
     /**
      * Clear permission check caches for user | 清除用户权限检查缓存
      *
+     * 检查缓存的键尾巴是 `md5(权限码)`，无法逐一枚举，因此按「用户级前缀」清除：
+     * `permission:tenant:{t}:user:{u}:check:`。
+     *
+     * 历史实现这里是**空方法**（注释写着「ThinkPHP Cache 不支持模式删除」就跳过了），
+     * 于是单个用户的检查缓存会一直活到 30s TTL —— 撤权后仍能命中「有权限」。
+     *
      * @param int $userId User ID | 用户ID
      * @param int $tenantId Tenant ID | 租户ID
      * @return void
      */
     protected function clearPermissionCheckCaches(int $userId, int $tenantId): void
     {
-        // In production, use Redis KEYS pattern matching
-        // 生产环境中使用 Redis KEYS 模式匹配
-        // For now, we'll skip this as ThinkPHP Cache doesn't support pattern deletion
-        // 现在我们跳过这个，因为 ThinkPHP Cache 不支持模式删除
+        $this->purger()->purge([
+            "permission:tenant:{$tenantId}:user:{$userId}:check:",
+        ]);
+    }
+
+    /**
+     * 写入缓存并登记键（供不可枚举驱动按前缀清理）
+     *
+     * @param string $key 逻辑缓存键
+     * @param mixed $value 缓存值
+     * @param int $ttl 生存时间（秒）
+     * @return void
+     */
+    protected function writeCache(string $key, mixed $value, int $ttl): void
+    {
+        Cache::set($key, $value, $ttl);
+        $this->purger()->trackKey($key);
+    }
+
+    /**
+     * 取前缀清除器（懒加载）
+     *
+     * @return PermissionCachePurger
+     */
+    protected function purger(): PermissionCachePurger
+    {
+        if ($this->purger === null) {
+            $this->purger = new PermissionCachePurger();
+        }
+
+        return $this->purger;
     }
 
     /**

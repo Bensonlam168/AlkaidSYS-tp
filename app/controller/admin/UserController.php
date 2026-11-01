@@ -6,6 +6,7 @@ namespace app\controller\admin;
 
 use app\controller\ApiController;
 use Domain\User\Model\User;
+use Infrastructure\Permission\Cache\PermissionCacheInvalidator;
 use Infrastructure\User\Repository\UserRepository;
 use think\App;
 use think\Response;
@@ -16,15 +17,34 @@ use think\Response;
  *
  * 提供用户 CRUD、状态管理、角色分配等功能
  * Provides user CRUD, status management, role assignment, etc.
+ *
+ * ## 权限缓存失效（ER-06）
+ *
+ * 撤角色 / 停用 / 删除用户后，必须让该用户的权限缓存立刻失效，
+ * 否则最长 300s（L2 TTL）内旧权限仍然生效 —— 「撤权成功但没生效」。
+ *
+ * 为什么挂在控制器而不是 `UserRepository`：
+ * - `UserRepository` 不在本次改动范围（避免与其它改动冲突）；
+ * - 用户级写操作的控制器入口唯一，且都在**写操作返回之后**（`setRoles` 自带事务并已提交），
+ *   时机满足「提交后失效」；
+ * - 失效器 `PermissionCacheInvalidator` 是叶子类（只依赖 Cache/Db），不会造成循环依赖。
+ *
+ * 所有失效调用都**不会抛异常**（内部 try/catch + warning），因此不会把一次成功的写入变成失败。
  */
 class UserController extends ApiController
 {
     protected UserRepository $userRepository;
 
+    /**
+     * 权限缓存失效器（ER-06）
+     */
+    protected PermissionCacheInvalidator $cacheInvalidator;
+
     public function __construct(App $app)
     {
         parent::__construct($app);
         $this->userRepository = new UserRepository();
+        $this->cacheInvalidator = new PermissionCacheInvalidator();
     }
 
     /**
@@ -268,6 +288,13 @@ class UserController extends ApiController
 
         try {
             $this->userRepository->save($user);
+
+            // ER-06：更新分支可能改了 status（停用/锁定），权限缓存必须立刻失效。
+            // 放在 save() 之后：此时写入已提交，避免并发请求用旧数据把缓存重新填满。
+            // 放在 try 之外更保险？不：这里放在 try 内是有意的——失效器自身不抛异常，
+            // 若 save() 抛异常则不会走到这一行。
+            $this->cacheInvalidator->invalidateUser($id, $tenantId);
+
             return $this->success(null, '用户更新成功');
         } catch (\Exception $e) {
             return $this->error('用户更新失败: ' . $e->getMessage());
@@ -303,6 +330,9 @@ class UserController extends ApiController
         try {
             $result = $this->userRepository->delete($id, $tenantId);
             if ($result) {
+                // ER-06：用户已删除，清掉其残留的权限缓存（尽力而为，不影响删除结果）
+                $this->cacheInvalidator->invalidateUser($id, $tenantId);
+
                 return $this->success(null, '用户删除成功');
             }
             return $this->error('用户删除失败');
@@ -351,6 +381,11 @@ class UserController extends ApiController
         try {
             $result = $this->userRepository->updateStatus($id, $tenantId, $status);
             if ($result) {
+                // ER-06：账号被停用/锁定后，权限缓存立即失效。
+                // 与 ER-04 的中间件校验形成双保险：中间件拦「status != active」，
+                // 这里保证即便中间件放行也不会因为缓存命中而继续持有旧权限。
+                $this->cacheInvalidator->invalidateUser($id, $tenantId);
+
                 return $this->success(null, '状态更新成功');
             }
             return $this->error('状态更新失败');
@@ -388,6 +423,12 @@ class UserController extends ApiController
 
         try {
             $this->userRepository->setRoles($id, array_map('intval', $roleIds));
+
+            // ER-06：角色变更后立刻失效该用户的权限缓存。
+            // setRoles() 内部自带事务并在返回前提交，因此这里是「提交后失效」，
+            // 不会出现「清完缓存又被并发请求用未提交数据填满」的窗口。
+            $this->cacheInvalidator->invalidateUser($id, $tenantId);
+
             return $this->success(null, '角色设置成功');
         } catch (\InvalidArgumentException $e) {
             return $this->error($e->getMessage());

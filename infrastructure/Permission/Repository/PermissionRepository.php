@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infrastructure\Permission\Repository;
 
 use Domain\Permission\Model\Permission;
+use Infrastructure\Permission\Cache\PermissionCacheInvalidator;
 use think\facade\Db;
 
 /**
@@ -18,6 +19,22 @@ use think\facade\Db;
 class PermissionRepository
 {
     protected string $table = 'permissions';
+
+    /**
+     * 权限缓存失效器（ER-06）
+     *
+     * 构造注入（默认自建）：生产行为不变，测试可注入「会抛异常的失效器」
+     * 以证明「清缓存失败不影响写入」。
+     */
+    protected PermissionCacheInvalidator $cacheInvalidator;
+
+    /**
+     * @param PermissionCacheInvalidator|null $cacheInvalidator 缓存失效器（默认新建）
+     */
+    public function __construct(?PermissionCacheInvalidator $cacheInvalidator = null)
+    {
+        $this->cacheInvalidator = $cacheInvalidator ?? new PermissionCacheInvalidator();
+    }
 
     /**
      * Find permission by ID | 根据 ID 查找权限
@@ -119,6 +136,10 @@ class PermissionRepository
     /**
      * Save permission | 保存权限
      *
+     * 新建权限时还没有任何角色持有它，无需失效缓存；
+     * **更新**权限可能改动 `resource` / `action`（即对外权限码 `resource:action`），
+     * 所有持有者的缓存都可能是旧的，因此整族失效（ER-06）。
+     *
      * @param Permission $permission Permission entity | 权限实体
      * @return int Permission ID | 权限 ID
      */
@@ -132,6 +153,10 @@ class PermissionRepository
         if ($permission->getId()) {
             $data['updated_at'] = $now;
             Db::name($this->table)->where('id', $permission->getId())->update($data);
+
+            // ER-06：权限定义变更 → 全部权限缓存失效（尽力而为，失败只记 warning）
+            $this->cacheInvalidator->invalidateAll();
+
             return $permission->getId();
         }
 
@@ -143,15 +168,62 @@ class PermissionRepository
     /**
      * Delete permission | 删除权限
      *
+     * 删除前先取「仍持有该权限的用户」，删除后精确失效；取不到时退化为整族失效。
+     *
      * @param int $id Permission ID | 权限 ID
      * @return bool
      */
     public function delete(int $id): bool
     {
+        // 先记录受影响用户：记录删掉之后就查不出来了
+        // Collect affected users before deleting the role_permissions rows
+        $affectedUsers = $this->usersOfPermission((int) $id);
+
         // First delete related role_permissions | 先删除相关的角色权限关联
         Db::name('role_permissions')->where('permission_id', $id)->delete();
 
-        return Db::name($this->table)->where('id', $id)->delete() > 0;
+        $deleted = Db::name($this->table)->where('id', $id)->delete() > 0;
+
+        // ER-06：权限被删除后，所有持有者的权限集都变了
+        if ($deleted) {
+            if ($affectedUsers !== []) {
+                $this->cacheInvalidator->invalidateUsers($affectedUsers);
+            } else {
+                $this->cacheInvalidator->invalidateAll();
+            }
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * 取「持有指定权限的用户及其租户」
+     * Get users (with tenant) holding the given permission
+     *
+     * **刻意的跨租户查询**（`scripts/check-raw-sql-tenant.php` 会标记本方法）：
+     * 删除一个权限后，所有持有者（可能跨多个租户）的缓存都必须失效，
+     * 加 `tenant_id` 过滤会漏掉其它租户的持有者。删除范围不会放大：
+     * 后续按 `users.tenant_id` 组装缓存键，只删这些用户自己的缓存。
+     *
+     * @param int $permissionId 权限 ID
+     * @return array<int, array{user_id: int, tenant_id: int}>
+     */
+    protected function usersOfPermission(int $permissionId): array
+    {
+        try {
+            $rows = Db::table('role_permissions')
+                ->alias('rp')
+                ->join('user_roles ur', 'ur.role_id = rp.role_id')
+                ->join('users u', 'u.id = ur.user_id')
+                ->where('rp.permission_id', $permissionId)
+                ->field('u.id AS user_id, u.tenant_id AS tenant_id')
+                ->select()
+                ->toArray();
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        return is_array($rows) ? $rows : [];
     }
 
     /**
