@@ -33,6 +33,29 @@ use Throwable;
  *      `-5` 会被原样 `setSiteId(-5)`，随后落进 `where('site_id', -5)` 这种永远匹配不到行的条件
  *      （查询静默变空）—— 这是一个从未被校验过的外部输入。
  *
+ * ## 第二类：标识格式合法，但站点在库里的归属/状态不允许继续（归属校验）
+ *
+ * 历史实现只校验格式，`X-Site-ID: 999999`（不存在）、`X-Site-ID: <别的租户的站点>`
+ * 都能一路放行到业务层，靠后续仓储的 `where('site_id', ...)` 撞空结果来「兜底」—— 那不是隔离，
+ * 只是查不到数据。现在这几种情况在入口就拒绝：
+ *
+ *   3. `REASON_SITE_NOT_FOUND`       —— `sites` 表里没有这个 id（纯猜测 / 已删站点）；
+ *   4. `REASON_SITE_TENANT_MISMATCH` —— 站点存在，但 `sites.tenant_id` ≠ 当前请求租户（跨租户探测）；
+ *   5. `REASON_SITE_UNUSABLE`        —— 站点属于本租户，但 `status` 不是 `active`
+ *      （`inactive` / `maintenance`，含枚举外取值，一律 fail-closed）；
+ *   6. `REASON_SITE_ID_OUT_OF_RANGE` —— 数值超出 `sites.id` 的 `int unsigned` 上界（4294967295），
+ *      不可能命中任何行，直接拒绝而不发一次注定失败的查询；
+ *   7. `REASON_TENANT_CONTEXT_MISSING` —— 走到站点归属校验时租户上下文仍为空
+ *      （正常链路上 `TenantIdentify` 在前，理论上不会发生；空了就**拒绝**，不静默放过）。
+ *
+ * ### 为什么「不存在」与「属于别的租户」对外文案完全一致
+ *
+ * `tenant-parameter-contract.md` §3.3 的结论：对外区分「不存在(404)」与「不是你的(403)」
+ * 等于给攻击者一个**站点存在性探测器**。`SiteIdentify` 在 `Auth` 之前执行（此时调用方甚至
+ * 还没认证），所以这里更严格：`REASON_SITE_NOT_FOUND` 与 `REASON_SITE_TENANT_MISMATCH`
+ * 走**同一句**响应文案（「站点不存在，或不属于当前租户」），HTTP 状态码与业务码也完全一致
+ * （403 / 2002）。两者的区别只写在服务端日志的 reason 与日志 tag 里，用于排障。
+ *
  * 对外映射：HTTP 403 + 业务码 2002（`ErrorCode::FORBIDDEN`），与 `TenantIdentify` 对
  * `invalid_tenant_header` 的处理**保持一致**（不新增错误码）。
  * 理由：本仓 `X-Tenant-ID` / `X-Site-ID` 都属于「调用方无权以该身份继续」的入口拒绝，
@@ -57,10 +80,38 @@ class InvalidSiteContextException extends RuntimeException
     public const REASON_NEGATIVE = 'negative';
 
     /**
-     * 触发原因（`REASON_MALFORMED` / `REASON_NEGATIVE`）
+     * 站点不存在：`sites` 表里没有这个 id
+     */
+    public const REASON_SITE_NOT_FOUND = 'site_not_found';
+
+    /**
+     * 站点属于别的租户：`sites.tenant_id` ≠ 当前请求租户
+     */
+    public const REASON_SITE_TENANT_MISMATCH = 'site_tenant_mismatch';
+
+    /**
+     * 站点不可用：`sites.status` 不是 `active`（`inactive` / `maintenance` / 枚举外取值）
+     */
+    public const REASON_SITE_UNUSABLE = 'site_unusable';
+
+    /**
+     * 站点 ID 超出 `sites.id` 的 `int unsigned` 上界
+     */
+    public const REASON_SITE_ID_OUT_OF_RANGE = 'site_id_out_of_range';
+
+    /**
+     * 到达站点归属校验时租户上下文为空（正常链路不该发生，发生即拒绝）
+     */
+    public const REASON_TENANT_CONTEXT_MISSING = 'tenant_context_missing';
+
+    /**
+     * 触发原因（取 `REASON_*` 常量）
      *
-     * 供 `app\ExceptionHandle` 决定日志 tag（两类原因的排查方向不同：
-     * 格式错多半是前端把 `'0'` 之外的字符串塞进 header；负数多半是把 `-1` 当"未设置"哨兵）。
+     * 供 `app\ExceptionHandle` 决定日志 tag（各类原因的排查方向不同：
+     * 格式错多半是前端把 `'0'` 之外的字符串塞进 header；负数多半是把 `-1` 当"未设置"哨兵；
+     * `site_not_found` 多半是调用方写死了一个不存在的站点 id；
+     * `site_tenant_mismatch` 是跨租户探测或租户切换后遗留的旧站点 id；
+     * `site_unusable` 是站点被停用 / 维护，属于运营动作而非调用方缺陷）。
      */
     private string $reason;
 
@@ -151,6 +202,165 @@ class InvalidSiteContextException extends RuntimeException
         }
 
         return new self($message, ErrorCode::FORBIDDEN, self::REASON_NEGATIVE, $rawValue, $previous);
+    }
+
+    /**
+     * 站点不存在：`sites` 表里没有这个 id
+     *
+     * ⚠️ 对外文案与 `forForeignSite()` **完全一致**（见类注释「为什么不存在与属于别的租户
+     * 对外文案完全一致」）—— 不要在这里加「不存在」字样，否则调用方就能用响应正文枚举站点 id。
+     * 区别只体现在 `getReason()`（服务端日志 / `ExceptionHandle` 的日志 tag）上。
+     *
+     * @param string         $rawValue 原始请求头取值
+     * @param int            $siteId   解析出的站点 ID
+     * @param string         $path     当前请求路径
+     * @param Throwable|null $previous 原始异常
+     */
+    public static function forUnknownSite(string $rawValue, int $siteId, string $path = '', ?Throwable $previous = null): self
+    {
+        return new self(
+            self::unresolvedSiteMessage($siteId, $path),
+            ErrorCode::FORBIDDEN,
+            self::REASON_SITE_NOT_FOUND,
+            $rawValue,
+            $previous
+        );
+    }
+
+    /**
+     * 站点属于别的租户：`sites.tenant_id` ≠ 当前请求租户
+     *
+     * 属于「跨租户探测」这一类：租户 A 拿着租户 B 的 `site_id` 访问。对外文案与
+     * `forUnknownSite()` 一致（不暴露该 id 真实存在），reason 不同以便排障。
+     *
+     * @param string         $rawValue 原始请求头取值
+     * @param int            $siteId   解析出的站点 ID
+     * @param string         $path     当前请求路径
+     * @param Throwable|null $previous 原始异常
+     */
+    public static function forForeignSite(string $rawValue, int $siteId, string $path = '', ?Throwable $previous = null): self
+    {
+        return new self(
+            self::unresolvedSiteMessage($siteId, $path),
+            ErrorCode::FORBIDDEN,
+            self::REASON_SITE_TENANT_MISMATCH,
+            $rawValue,
+            $previous
+        );
+    }
+
+    /**
+     * 站点不可用：属于本租户，但 `status` 不是 `active`
+     *
+     * 这里可以如实告知状态：地址里的 `site_id` 本来就是调用方自己租户的站点，
+     * 不存在「泄露他人存在性」的问题，运营也能据此判断是等维护结束还是改用其它站点。
+     *
+     * @param string         $rawValue 原始请求头取值
+     * @param int            $siteId   解析出的站点 ID
+     * @param string         $status   站点当前状态（`inactive` / `maintenance` / 空串等）
+     * @param string         $path     当前请求路径
+     * @param Throwable|null $previous 原始异常
+     */
+    public static function forUnusableSite(
+        string $rawValue,
+        int $siteId,
+        string $status,
+        string $path = '',
+        ?Throwable $previous = null
+    ): self {
+        $message = '站点当前不可用（invalid site context）：站点 ' . $siteId . ' 属于当前租户，但状态为 '
+            . ($status === '' ? '（未知）' : '`' . $status . '`') . '，只有 `active` 的站点可以接收请求。'
+            . '修复方式：请站点管理员把该站点状态改回 `active`；'
+            . '或在 `X-Site-ID` 中改用本租户内其它 `active` 的站点。';
+
+        if ($path !== '') {
+            $message .= '（请求路径：' . $path . '）';
+        }
+
+        return new self($message, ErrorCode::FORBIDDEN, self::REASON_SITE_UNUSABLE, $rawValue, $previous);
+    }
+
+    /**
+     * 站点 ID 超出 `sites.id` 的取值范围（`int unsigned`，上界 4294967295）
+     *
+     * 为什么单独成一种原因，而不是笼统算「不存在」：超出上界的数值**不可能**命中任何行，
+     * 发一次注定失败的查询只是浪费一次数据库往返；而且 `(int)` 强转对超长数字串会溢出成
+     * `PHP_INT_MAX`，把「十万位的垃圾输入」变成「一个看起来正常的巨大 id」，掩盖真实问题。
+     *
+     * @param string         $rawValue  原始请求头取值
+     * @param int            $maxSiteId 允许的最大站点 ID
+     * @param string         $path      当前请求路径
+     * @param Throwable|null $previous  原始异常
+     */
+    public static function forOutOfRangeSiteId(
+        string $rawValue,
+        int $maxSiteId,
+        string $path = '',
+        ?Throwable $previous = null
+    ): self {
+        $message = '站点标识非法（invalid site context）：请求头 `X-Site-ID` 超出站点 ID 的取值范围'
+            . '（1 ~ ' . $maxSiteId . '，即无符号 32 位整数上界），当前取值 '
+            . self::describeRaw($rawValue) . '。'
+            . '该取值不可能对应任何站点，服务端不会为此发起查询。'
+            . '修复方式：传真实存在的站点 ID，或**不发送**该请求头（按全局桶 site_id=0 处理）。';
+
+        if ($path !== '') {
+            $message .= '（请求路径：' . $path . '）';
+        }
+
+        return new self($message, ErrorCode::FORBIDDEN, self::REASON_SITE_ID_OUT_OF_RANGE, $rawValue, $previous);
+    }
+
+    /**
+     * 租户上下文缺失：无法校验站点归属
+     *
+     * 正常链路上 `TenantIdentify` 在 `SiteIdentify` 之前执行，租户一定已写入；
+     * 走到这里说明中间件顺序被改动、或有人绕过了租户识别直接调用本中间件。
+     * 此时**不能**跳过归属校验放行（那就是「带了 site_id 却不校验」的老行为），
+     * 也不能假装租户是 1 —— 只能拒绝并留下可 grep 的原因。
+     *
+     * @param string         $rawValue 原始请求头取值
+     * @param string         $path     当前请求路径
+     * @param Throwable|null $previous 原始异常
+     */
+    public static function forMissingTenantContext(string $rawValue, string $path = '', ?Throwable $previous = null): self
+    {
+        $message = '站点归属无法校验（invalid site context）：请求带了 `X-Site-ID`，'
+            . '但当前请求没有可用的租户上下文（`TenantIdentify` 未执行或未写入租户）。'
+            . '拒绝继续，避免在「不知道该站点属于谁」的情况下放行。'
+            . '修复方式：确认全局中间件顺序为 `TenantIdentify` → `SiteIdentify`；'
+            . '或**不发送** `X-Site-ID`（按全局桶 site_id=0 处理）。';
+
+        if ($path !== '') {
+            $message .= '（请求路径：' . $path . '）';
+        }
+
+        return new self($message, ErrorCode::FORBIDDEN, self::REASON_TENANT_CONTEXT_MISSING, $rawValue, $previous);
+    }
+
+    /**
+     * 「站点无法解析」的统一对外文案（`site_not_found` 与 `site_tenant_mismatch` 共用）
+     *
+     * 刻意**只**出现在这两个工厂方法里：两处文案必须逐字节相同，否则「不存在」与
+     * 「属于别的租户」就能被调用方从响应正文里区分出来（站点存在性探测）。
+     *
+     * @param int    $siteId 解析出的站点 ID
+     * @param string $path   当前请求路径
+     */
+    private static function unresolvedSiteMessage(int $siteId, string $path): string
+    {
+        $message = '站点不可用（invalid site context）：站点 ' . $siteId
+            . ' 不存在，或不属于当前租户。'
+            . '站点归属以服务端 `sites` 表为准（`sites.tenant_id` 必须等于当前请求租户），'
+            . '调用方无法通过该请求头访问其它租户的站点。'
+            . '修复方式：请使用本租户下真实存在的站点 ID；'
+            . '若确实不需要站点维度，请**不要发送** `X-Site-ID`（服务端按全局桶 site_id=0 处理）。';
+
+        if ($path !== '') {
+            $message .= '（请求路径：' . $path . '）';
+        }
+
+        return $message;
     }
 
     /**

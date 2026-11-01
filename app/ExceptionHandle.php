@@ -160,16 +160,28 @@ class ExceptionHandle extends Handle
 
         // 2.7 Invalid site context | 站点标识非法（`X-Site-ID` 校验失败的显式出口）
         //
-        // 来源：`app\middleware\SiteIdentify` 收到非法 `X-Site-ID`（非整数 / 负数）时抛出。
+        // 来源：`app\middleware\SiteIdentify`，分两类原因：
+        //   A. **格式/取值非法**（`malformed` / `negative` / `site_id_out_of_range`）——
+        //      请求头本身不是合法的站点 ID；
+        //   B. **站点归属/状态不允许**（`site_not_found` / `site_tenant_mismatch` /
+        //      `site_unusable` / `tenant_context_missing`）—— 标识格式没问题，
+        //      但该站点在 `sites` 里不存在、不属于当前租户，或状态不是 `active`。
         // 与 `TenantContextMissingException` 的**语义差异**：这不是「缺少上下文」，
-        // 而是「**提供了站点标识，但标识本身非法**」—— 「无站点」是合法的（按 0 全局桶处理），
-        // 因此这里不存在「缺站点」对应的分支。
+        // 而是「**提供了站点标识，但标识本身非法 / 该站点不允许使用**」——
+        // 「无站点」是合法的（按 0 全局桶处理），因此这里不存在「缺站点」对应的分支。
         //
-        // 两个分支按 reason 分开（排查方向不同，tag 也可直接 grep）：
-        //   - REASON_MALFORMED：不是整数（`abc` / `1.5` / `1e3`）→ 多半是前端把非数字塞进 header；
-        //   - REASON_NEGATIVE ：负数（`-5` / `-1`）→ 多半是把 `-1` 当成「未设置」哨兵。
-        // 两者对外映射一致：HTTP 403 + 业务码 2002（与 `invalid_tenant_header` 完全对齐，
+        // 每个 reason 一个独立 tag（排查方向不同，tag 也可直接 grep）：
+        //   - REASON_MALFORMED          ：不是整数（`abc` / `1.5` / `1e3`）→ 前端把非数字塞进 header；
+        //   - REASON_NEGATIVE           ：负数（`-5` / `-1`）→ 多半把 `-1` 当成「未设置」哨兵；
+        //   - REASON_SITE_ID_OUT_OF_RANGE：超出 `int unsigned` 上界 → 客户端算错了 ID；
+        //   - REASON_SITE_NOT_FOUND     ：站点不存在 → 调用方写死了不存在的站点 id；
+        //   - REASON_SITE_TENANT_MISMATCH：站点属于别的租户 → **跨租户探测**，安全事件关注项；
+        //   - REASON_SITE_UNUSABLE      ：站点被停用 / 维护中 → 运营动作，通常成批出现；
+        //   - REASON_TENANT_CONTEXT_MISSING：租户上下文缺失 → 中间件顺序被改动或绕过租户识别。
+        // 对外映射一致：HTTP 403 + 业务码 2002（与 `invalid_tenant_header` 完全对齐，
         // 不新增错误码，保证前端既有的 2002 分支继续生效）。
+        // ⚠️ 注意：`site_not_found` 与 `site_tenant_mismatch` 的**响应正文逐字节相同**，
+        // 差别只在这条日志 tag 与 context.reason 里 —— 对外区分两者等于提供站点存在性探测器。
         if ($e instanceof \app\exception\InvalidSiteContextException) {
             $context = [
                 'reason'    => $e->getReason(),
@@ -180,21 +192,11 @@ class ExceptionHandle extends Handle
                 'trace_id'  => $traceId,
             ];
 
-            if ($e->getReason() === \app\exception\InvalidSiteContextException::REASON_NEGATIVE) {
-                $this->safeLog(
-                    'warning',
-                    '[SITE_CONTEXT_INVALID_NEGATIVE] 站点标识非法：X-Site-ID 为负数，已拒绝'
-                        . '（path=' . ($context['path'] ?? '') . '）',
-                    $context
-                );
-            } else {
-                $this->safeLog(
-                    'warning',
-                    '[SITE_CONTEXT_INVALID_MALFORMED] 站点标识非法：X-Site-ID 不是非负整数，已拒绝'
-                        . '（path=' . ($context['path'] ?? '') . '）',
-                    $context
-                );
-            }
+            $this->safeLog(
+                'warning',
+                $this->siteContextLogTag($e->getReason()) . '（path=' . ($context['path'] ?? '') . '）',
+                $context
+            );
 
             return $this->buildJsonResponse(
                 403,
@@ -304,6 +306,42 @@ class ExceptionHandle extends Handle
         } catch (Throwable) {
             // 日志通道不可用时静默降级，避免异常处理器自己 500
         }
+    }
+
+    /**
+     * 站点上下文异常的日志 tag（按 reason 分流，便于告警规则分档）
+     *
+     * 为什么要在 tag 上分流：`SiteIdentify` 的几条拒绝原因处置方式完全不同 ——
+     * 格式错/超范围是调用方缺陷、`site_not_found` 多半是写死了一个不存在的 id、
+     * `site_tenant_mismatch` 可能是跨租户探测（安全关注）、`site_unusable` 是运营动作
+     * （停用/维护，通常成批出现，不该按「客户端出错」刷告警）。
+     *
+     * 未知 reason 回落到通用 tag：绝不因为「新加了 reason 但忘了加映射」
+     * 就让这条日志失去可检索性。
+     *
+     * @param string $reason `InvalidSiteContextException::REASON_*`
+     * @return string 日志 tag（形如 `[SITE_CONTEXT_INVALID_MALFORMED] 说明文字`）
+     */
+    protected function siteContextLogTag(string $reason): string
+    {
+        $tags = [
+            \app\exception\InvalidSiteContextException::REASON_MALFORMED
+                => '[SITE_CONTEXT_INVALID_MALFORMED] 站点标识非法：X-Site-ID 不是非负整数，已拒绝',
+            \app\exception\InvalidSiteContextException::REASON_NEGATIVE
+                => '[SITE_CONTEXT_INVALID_NEGATIVE] 站点标识非法：X-Site-ID 为负数，已拒绝',
+            \app\exception\InvalidSiteContextException::REASON_SITE_ID_OUT_OF_RANGE
+                => '[SITE_CONTEXT_SITE_ID_OUT_OF_RANGE] 站点标识非法：X-Site-ID 超出无符号 32 位上界，已拒绝',
+            \app\exception\InvalidSiteContextException::REASON_SITE_NOT_FOUND
+                => '[SITE_CONTEXT_SITE_NOT_FOUND] 站点归属校验失败：sites 表中不存在该站点，已拒绝',
+            \app\exception\InvalidSiteContextException::REASON_SITE_TENANT_MISMATCH
+                => '[SITE_CONTEXT_SITE_TENANT_MISMATCH] 站点归属校验失败：站点不属于当前租户，已拒绝（安全关注项）',
+            \app\exception\InvalidSiteContextException::REASON_SITE_UNUSABLE
+                => '[SITE_CONTEXT_SITE_UNUSABLE] 站点归属校验失败：站点状态不是 active，已拒绝',
+            \app\exception\InvalidSiteContextException::REASON_TENANT_CONTEXT_MISSING
+                => '[SITE_CONTEXT_TENANT_MISSING] 站点归属校验失败：缺少租户上下文，已拒绝',
+        ];
+
+        return $tags[$reason] ?? ('[SITE_CONTEXT_INVALID] 站点标识非法：reason=' . $reason . '，已拒绝');
     }
 
     /**

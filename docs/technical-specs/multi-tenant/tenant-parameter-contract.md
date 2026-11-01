@@ -249,6 +249,12 @@ try {
   对「本租户内 `findById` 返回 null」一律回 **404**，文案统一为 `role.not_found`；
 - [ ] 也就是说：**「租户内查不到」和「根本不存在」从对外接口看是同一件事**；
 - [ ] 日志/异常消息里可以区分（便于排障），**HTTP 响应里不可以**。
+- [ ] **同一条原则也适用于入口级的站点校验**（`app/middleware/SiteIdentify.php`）：
+      那里的 `site_not_found`（不存在）与 `site_tenant_mismatch`（属于别的租户）统一回
+      **403 / 2002 且响应正文逐字节相同**（「站点 999 不存在，或不属于当前租户」）。
+      它比业务接口更严格的原因很直接：`SiteIdentify` 在 `Auth` **之前**执行，此时调用方
+      连认证都还没有，一个能区分「这个 id 存在但属于别人」的响应就等于免费的站点枚举器。
+      区别只写在服务端日志 tag 与 `context.reason` 里。
 
 ### 3.4 反例 / 正例：`?? null` 与 `?? 0`
 
@@ -427,6 +433,11 @@ $this->roleRepository->syncPermissions($id, array_map('intval', $data['permissio
   但**不要**把 `null` 传给 `if ($siteId !== null)` 型仓储（如
   `FormSchemaRepository::findByName()`）—— 那里 `null` 的语义是「不过滤」，
   等于把「本站点」放宽成「本租户任意站点」。
+- [ ] `app/middleware/SiteIdentify.php` 里 `site_id === 0` 是**短路放行、完全不查 `sites` 表**的：
+  `0` 不在 `sites` 里（它是业务分区值，不是站点行），所以对它做「存在性校验」必然失败。
+  只有 `site_id > 0` 才走 `SiteRepository::findContextById()` 的归属校验。
+  这也是为什么「把站点维度改成 fail-closed（无站点即抛）」是错的：它会把所有不带
+  `X-Site-ID` 的请求（绝大多数）以及显式 `0` 的请求一起打断。
 
 判据：**问「这个 `0` 是决定『过滤谁的数据』，还是只决定『数据自己贴哪个标签 / 拼哪个名字』」**。
 前者适用本规范，后者不适用。
@@ -568,7 +579,9 @@ docker exec alkaid-backend php scripts/check-docs.php --strict
 | 14 | ⚪ 已知例外：业务默认值 `0` | `TableNameGenerator.php:18`、`SchemaVersionService.php:49` | 现行 |
 | 15 | 🛡 静态守卫 | `tests/Unit/Infrastructure/TenantScopedRepositorySignatureGuardTest.php:56`（规则）/ `:74`（豁免） | 现行 |
 | 16 | ⚠️ 站点维度：`siteId()` 回落 `0` 属「业务默认值」，非「假必填」 | `app/Request.php:175`（`siteId()`）/ `:201`（`siteIdOrNull()`） | 现行 |
-| 17 | ✅ 站点标识非法被入口拒绝（403 / 2002） | `app/middleware/SiteIdentify.php:53` / `app/exception/InvalidSiteContextException.php:47` | 现行 |
+| 17 | ✅ 站点标识非法被入口拒绝（403 / 2002） | `app/middleware/SiteIdentify.php` / `app/exception/InvalidSiteContextException.php` | 现行 |
+| 18 | ✅ 站点归属校验（存在 / 归属 / 状态）在入口完成 | `app/middleware/SiteIdentify.php`（`assertSiteUsable()`）/ `infrastructure/Tenant/Repository/SiteRepository.php` | 现行 |
+| 19 | ✅ 「用于报错的跨租户读」显式命名 | `SiteRepository::findOwnershipHintUnscoped()`（只在拒绝分支调用，不参与放行） | 现行 |
 
 ---
 
@@ -621,10 +634,44 @@ docker exec alkaid-backend php scripts/check-docs.php --strict
       其余保持 `siteId()` —— 尤其 `BaseModel::getSiteContext()` 与
       `FormSchemaManager` 调用链：那边 `null` 的语义是「**不加站点过滤**」，
       换成 `siteIdOrNull()` 等于把「本站点」放宽成「本租户任意站点」，属于站点维度越权。
-- [ ] **站点与租户的归属校验仍未实现**：`SiteIdentify` 目前只校验「格式合法」，
+- [x] ~~**站点与租户的归属校验仍未实现**：`SiteIdentify` 目前只校验「格式合法」，
       不校验「该 `site_id` 是否属于当前租户 / 是否存在 / 是否被停用」。
       需要先补齐 `sites` 表归属模型（默认站点解析、status）才能收紧，
-      否则会把「站点 0 全局桶」与「任意 site_id 都能读写」两个问题混在一起。
+      否则会把「站点 0 全局桶」与「任意 site_id 都能读写」两个问题混在一起。~~
+      —— **已收敛（2026-12-20）：三档处理 + 三项校验**。`app/middleware/SiteIdentify.php` 现在按
+      `X-Site-ID` 分三档，`site_id > 0` 时查 `sites` 表（`infrastructure/Tenant/Repository/SiteRepository.php`）：
+
+      | 输入 | 行为 |
+      | --- | --- |
+      | 无 `X-Site-ID` | 保持原行为：不写值 + `[SITE_IDENTIFY_DEFAULT]` 审计日志（`siteIdOrNull()` 仍为 `null`） |
+      | `site_id === 0` | **放行且不查库** —— `0` 是有语义的「全局 / 无站点」桶，不是站点行 |
+      | `site_id > 0` | 查库校验三项：**存在**（`site_not_found`）/ **归属**（`site_tenant_mismatch`）/ **状态**（`site_unusable`，只放行 `active`） |
+
+      实现要点（读代码时按这些点核对，别只看「403 了」）：
+
+      1. **放行判断只用租户内查询**：`SiteRepository::findContextById(int $siteId, int $tenantId)`，
+         两个 `where` 写在同一个链式调用里（§2.2 的正例形状）；
+      2. **跨租户读只用于选拒绝原因**：`findOwnershipHintUnscoped(int $siteId)` 只在
+         `findContextById()` 返回 null 之后调用一次，结果只决定 reason 是
+         `site_not_found` 还是 `site_tenant_mismatch`（§2.4 已留档的同一模式：
+         「用于报错的跨租户读」不等于「用于放行的跨租户读」）；
+      3. **不泄露存在性**：`site_not_found` 与 `site_tenant_mismatch` 的**响应正文逐字节相同**
+         （「站点 999 不存在，或不属于当前租户」），状态码与业务码也一致（403 / 2002），
+         区别只在服务端日志 tag（`[SITE_CONTEXT_SITE_NOT_FOUND]` /
+         `[SITE_CONTEXT_SITE_TENANT_MISMATCH]`）与 `context.reason` 里（§3.3）；
+      4. **租户上下文缺失即拒绝**：走到归属校验时 `tenantIdOrNull()` 仍为 null →
+         `tenant_context_missing`，不静默放过（正常链路上 `TenantIdentify` 在前，不该发生）；
+      5. **上界处理**：`X-Site-ID` 超过 `sites.id` 的 `int unsigned` 上界（4294967295）→
+         `site_id_out_of_range`，**不发查询**（先按去前导零后的字符串长度判，避免超长数字串
+         `(int)` 溢出成 `PHP_INT_MAX` 后变成一个「看似正常的巨大 id」）；
+      6. **不缓存**：`alkaid-backend` 是 Swoole 常驻进程，`static` 缓存会跨请求存活，
+         而站点会改名 / 停用 —— 缓存住 `active` 等于让停用站点在进程重启前一直可用。
+         一次按主键的等值查询成本可忽略，且**不带该请求头的请求零额外开销**；
+      7. 拒绝出口复用 `InvalidSiteContextException`（**不新增异常类、不新增错误码**），
+         新增 reason 常量 `site_not_found` / `site_tenant_mismatch` / `site_unusable` /
+         `site_id_out_of_range` / `tenant_context_missing`，日志 tag `[SITE_IDENTIFY_REJECTED]`；
+      8. 覆盖用例：`tests/Feature/Middleware/SiteIdentifyTest.php`（10 条，含「属于别的租户」
+         与「inactive / maintenance 站点」两条负向用例、HTTP 层 403/2002 与「不泄露存在性」断言）。
 - [ ] `CollectionManager::create()`（`:59`）与 `update()`（`:180`）对实体可空属性做 `?? 0`，
       缺失租户时静默归入系统模板空间（§5.3）；
 - [ ] `infrastructure/Plugin/PluginManager.php:151 / :166 / :183` 的 `int $tenantId = 0` 不在 `Repository/` 目录下，

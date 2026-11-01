@@ -12,6 +12,15 @@
 | **文档版本** | v1.0 |
 | **创建日期** | 2025-01-19 |
 
+> 🔶 **实现状态**：**部分实现** —— 已实现：`sites` / `sites.tenant_id` 表结构与多站点维度建模、
+> 入口站点识别与**站点归属校验**（`app/middleware/SiteIdentify.php` + `infrastructure/Tenant/Repository/SiteRepository.php`：
+> 校验 `X-Site-ID` 指向的站点**存在 + 属于当前租户 + status = active**，否则 403/2002）、
+> `Request::siteId()` / `siteIdOrNull()` 的站点维度解析、`BaseModel::scopeSite()` 的 `site_id` 过滤。
+> 未实现：**域名识别**（`Site::where('domain', $host)`）、`X-Site-Code` 识别、**默认站点解析**
+> （`slug = 'default'` 回落）、站点配置服务（`SiteConfigService`）、站点管理接口与站点复制，
+> 以及 Nginx 侧的站点域名绑定配置 —— 本文这些章节仍是设计稿，代码里没有对应实现。
+> 实际命名与本文示例的映射见 §「站点识别机制 · 实现对照」。
+
 ## 🎯 多站点设计目标
 
 1. **独立性** - 每个站点独立域名、独立配置
@@ -140,7 +149,34 @@ CREATE TABLE `alkaid_users` (
 
 ## 🔧 站点识别机制
 
-### 站点识别中间件
+### 实现对照（代码为准，2026-12-20）
+
+本文下面的 `SiteIdentify` 是**设计稿**（域名识别 + `X-Site-Code` + 默认站点回落 + 状态校验）。
+仓库里实际实现的只有「按 `X-Site-ID` 请求头识别 + 归属校验」，且**刻意没有**域名/默认站点解析：
+
+| 设计稿里的能力 | 实现状态 | 实际位置 |
+| --- | --- | --- |
+| 从 `X-Site-ID` 解析站点维度 | ✅ 已实现 | `app/middleware/SiteIdentify.php`（全局中间件，`TenantIdentify` 之后） |
+| 校验站点**存在** | ✅ 已实现（403/2002，reason `site_not_found`） | 同上 + `Infrastructure\Tenant\Repository\SiteRepository::findContextById()` |
+| 校验站点**属于当前租户** | ✅ 已实现（403/2002，reason `site_tenant_mismatch`） | 同上（租户内查询命中不到时才做诊断读 `findOwnershipHintUnscoped()`） |
+| 校验站点**状态可用** | ✅ 已实现（只放行 `active`，reason `site_unusable`） | 同上（`inactive` / `maintenance` / 枚举外取值一律拒绝） |
+| `site_id = 0` 全局桶 | ✅ 已实现（放行且**不查库**） | 同上 + `app/Request::siteId()` 回落 0 |
+| 无请求头 → 默认站点解析 | ❌ 未实现（当前按全局桶 0 处理，只记 `[SITE_IDENTIFY_DEFAULT]`） | — |
+| 按域名识别站点（`domain` 列） | ❌ 未实现（`sites.domain` 有列、有唯一索引，但没有解析代码） | — |
+| 按 `X-Site-Code` / `slug` 识别 | ❌ 未实现（`sites.slug` 有列、有唯一索引，但没有解析代码） | — |
+| 站点配置服务 / 站点管理接口 | ❌ 未实现（`sites.config` / `sites.theme` 目前只有列与默认值） | — |
+
+两点实现取舍（与设计稿不同，读设计稿时务必知道）：
+
+1. **站点标识非法 / 站点不可用都是「入口拒绝」，不是「回落默认站点」。** 设计稿在识别失败时
+   会回落到 `code = 'default'` 的默认站点；实现选择了 fail-closed —— 因为「租户 A 请求里写了
+   租户 B 的 site_id」若被静默改写成「本站点」，调用方拿到的数据与他要的不是一回事，
+   而且这类越权不会留下任何痕迹。现在它会 403 并记 `[SITE_IDENTIFY_REJECTED]`（含 reason）。
+2. **不存在与属于别的租户对外文案一致。** 两者都是 403/2002，响应正文逐字节相同，
+   只有服务端日志 tag 不同（`[SITE_CONTEXT_SITE_NOT_FOUND]` / `[SITE_CONTEXT_SITE_TENANT_MISMATCH]`），
+   避免把入口变成站点 id 存在性探测器（依据：`docs/technical-specs/multi-tenant/tenant-parameter-contract.md` §3.3）。
+
+### 站点识别中间件（设计稿，命名与实现不同）
 
 ```php
 <?php

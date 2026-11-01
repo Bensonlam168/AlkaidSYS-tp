@@ -23,6 +23,17 @@ class FormDataControllerMultiTenantTest extends ThinkPHPTestCase
     private ?int $tenant2RowId = null;
     private ?int $tenant1Site2RowId = null;
 
+    /**
+     * 「同租户第二个站点」夹具的站点 ID
+     *
+     * `testSiteIsolationWithinSameTenant()` 用 `X-Site-ID: 2` 验证站点维度隔离，
+     * 而 `SiteIdentify` 自「站点归属校验」落地后会校验该站点**真实存在、属于租户 1 且 active** ——
+     * 测试库默认只有站点 1（`slug = default`），因此这里显式造一个属于租户 1 的站点 2。
+     * 断言保持不变（仍然断言「站点 1 看不到站点 2 的数据」「站点 2 能读自己的数据」），
+     * 变的只是「站点 2 在 sites 表里存在」这个前提。
+     */
+    private const SECOND_SITE_ID = 2;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -40,13 +51,36 @@ class FormDataControllerMultiTenantTest extends ThinkPHPTestCase
         $this->bypassAuthAndPermission();
         $this->createTestTable();
         $this->seedTestData();
+        $this->seedSiteFixture();
     }
 
     protected function tearDown(): void
     {
         Db::execute(sprintf('DROP TABLE IF EXISTS `%s`', $this->tableName));
+        Db::name('sites')->where('id', self::SECOND_SITE_ID)->delete();
         Mockery::close();
         parent::tearDown();
+    }
+
+    /**
+     * 造出「同租户第二个站点」（租户 1 的站点 2，active）
+     *
+     * 先删后建：上一次异常中断可能留下 id = 2 的残留行（或属于别的租户），
+     * 不先删会让「属于租户 1」这个前提不成立。
+     */
+    protected function seedSiteFixture(): void
+    {
+        Db::name('sites')->where('id', self::SECOND_SITE_ID)->delete();
+
+        Db::name('sites')->insert([
+            'id'        => self::SECOND_SITE_ID,
+            'tenant_id' => 1,
+            'name'      => 'FormDataMultiTenant Fixture Site 2',
+            'slug'      => 'form-data-mt-fixture-2',
+            'domain'    => null,
+            'status'    => 'active',
+            'theme'     => 'default',
+        ]);
     }
 
     /**

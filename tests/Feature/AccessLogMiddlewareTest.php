@@ -5,9 +5,27 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use Tests\ThinkPHPTestCase;
+use think\facade\Db;
 
 class AccessLogMiddlewareTest extends ThinkPHPTestCase
 {
+    /**
+     * 多租户上下文用例使用的站点夹具（真实 `sites` 行）
+     *
+     * 为什么需要：`SiteIdentify` 自「站点归属校验」落地后，`X-Site-ID` 指向的站点
+     * 必须真实存在、属于请求租户且 `status = active`，否则请求在入口就被 403
+     * （`AccessLog` 位于 `SiteIdentify` 之后，根本不会被调用，日志也就不会产生）。
+     * 本用例原本用 101/202 这两个**不存在的站点 id** 来验证「日志里记的是请求头里的站点」，
+     * 断言本身是对的，缺的是对应的站点行 —— 因此这里按需造出来，断言一行不改。
+     *
+     * 用显式 id 101 / 202：既有的断言就是拿这两个值比对，改夹具而不改期望值，
+     * 才能证明「多租户上下文写入日志」这条行为本身没变。
+     */
+    private const FIXTURE_SITES = [
+        101 => 1, // 站点 101 → 租户 1
+        202 => 2, // 站点 202 → 租户 2
+    ];
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -28,6 +46,48 @@ class AccessLogMiddlewareTest extends ThinkPHPTestCase
         if (file_exists($routeFile)) {
             include_once $routeFile;
         }
+
+        $this->seedSiteFixtures();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->removeSiteFixtures();
+        parent::tearDown();
+    }
+
+    /**
+     * 造出本用例需要的站点行（先删后建，保证「存在且 active」）
+     *
+     * `sites.tenant_id` 有外键 → `tenants.id`：租户 1 / 2 是测试库既有夹具
+     * （见 `database/seeds/TestPlatformSeed.php` 的产出清单）。
+     */
+    private function seedSiteFixtures(): void
+    {
+        $this->removeSiteFixtures();
+
+        $rows = [];
+        foreach (self::FIXTURE_SITES as $siteId => $tenantId) {
+            $rows[] = [
+                'id'        => $siteId,
+                'tenant_id' => $tenantId,
+                'name'      => 'AccessLog Fixture Site ' . $siteId,
+                'slug'      => 'access-log-fixture-' . $siteId,
+                'domain'    => null,
+                'status'    => 'active',
+                'theme'     => 'default',
+            ];
+        }
+
+        Db::name('sites')->insertAll($rows);
+    }
+
+    /**
+     * 删除站点夹具，避免污染其它用例与「测试库回到基线」的验收
+     */
+    private function removeSiteFixtures(): void
+    {
+        Db::name('sites')->whereIn('id', array_keys(self::FIXTURE_SITES))->delete();
     }
 
     public function test_access_log_written_for_simple_request(): void
