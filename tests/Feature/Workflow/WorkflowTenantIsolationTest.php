@@ -24,7 +24,7 @@ use think\facade\Db;
  * 注意：
  *   - 工作流控制器使用进程内 `protected static array` 存储，必须在每个用例前后清空，
  *     否则前序用例数据会污染本用例结论；
- *   - 工作流定义路由挂载了 `Permission` 中间件（权限码 workflow.definition.*），
+ *   - 工作流定义路由挂载了 `Permission` 中间件（权限码 workflow_definition.*），
  *     本测试按项目既有做法（参考 CasbinControllerTest）在数据库内授予测试用户
  *     相应权限，从而走真实权限校验链路，不绕过中间件。
  *
@@ -340,26 +340,26 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
 
             // 清理上一次异常中断留下的残留数据
 
-            // 权限：workflow.definition.read / write
+            // 权限：workflow_definition.read / write
             // 说明：PermissionService 以 `resource:action` 拼接权限码，
-            // 因此 resource=workflow + action=definition:read 才能匹配中间件的 workflow.definition.read
+            // 因此 resource=workflow_definition + action=read 才能匹配中间件的 workflow_definition.read
             Db::table('permissions')->insertAll([
                 [
                     'id' => $this->readPermissionId,
-                    'name' => 'workflow.definition.read',
-                    'slug' => 'workflow.definition.read',
-                    'resource' => 'workflow',
-                    'action' => 'definition:read',
+                    'name' => 'workflow_definition.read',
+                    'slug' => 'workflow_definition.read',
+                    'resource' => 'workflow_definition',
+                    'action' => 'read',
                     'description' => 'C-7 workflow tenant isolation test permission',
                     'created_at' => $now,
                     'updated_at' => $now,
                 ],
                 [
                     'id' => $this->writePermissionId,
-                    'name' => 'workflow.definition.write',
-                    'slug' => 'workflow.definition.write',
-                    'resource' => 'workflow',
-                    'action' => 'definition:write',
+                    'name' => 'workflow_definition.write',
+                    'slug' => 'workflow_definition.write',
+                    'resource' => 'workflow_definition',
+                    'action' => 'write',
                     'description' => 'C-7 workflow tenant isolation test permission',
                     'created_at' => $now,
                     'updated_at' => $now,

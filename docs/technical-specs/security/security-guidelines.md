@@ -62,6 +62,11 @@ The authorization model is defined in two phases. Both phases share the same ext
   - Internal slug and external code differ only by separator, and are always derived from the same `resource` / `action` pair:
     - Internal: `slug = resource . '.' . action` (e.g., `forms.view`)
     - External: `code = resource . ':' . action` (e.g., `forms:view`)
+  - A slug MUST contain exactly one `.` — the `resource` segment and the `action` segment each form a single token.
+    Multi-word resources are joined with underscores inside the resource segment, never with a second dot:
+    - Correct: `workflow_definition.read` (`resource = workflow_definition`, `action = read`)
+    - Incorrect: `workflow.definition.read` (three segments; rejected by `scripts/check-permission-codes.php`)
+    - Same convention as the existing `form_data.view` / `form_data.write` resources.
   - New code MUST NOT introduce additional permission code formats (such as `AC_xxx`) unless explicitly required by a future design decision.
 
 #### Permission middleware parameter format

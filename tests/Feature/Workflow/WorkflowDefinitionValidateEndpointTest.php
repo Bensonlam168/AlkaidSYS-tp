@@ -267,13 +267,13 @@ class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
             $now = date('Y-m-d H:i:s');
 
             // 说明：PermissionService 以 `resource:action` 拼接权限码，
-            // 因此 resource=workflow + action=definition:read 才能匹配中间件的 workflow.definition.read
+            // 因此 resource=workflow_definition + action=read 才能匹配中间件的 workflow_definition.read
             Db::table('permissions')->insert([
                 'id'          => $this->readPermissionId,
-                'name'        => 'workflow.definition.read',
-                'slug'        => 'workflow.definition.read',
-                'resource'    => 'workflow',
-                'action'      => 'definition:read',
+                'name'        => 'workflow_definition.read',
+                'slug'        => 'workflow_definition.read',
+                'resource'    => 'workflow_definition',
+                'action'      => 'read',
                 'description' => 'workflow validate endpoint test permission',
                 'created_at'  => $now,
                 'updated_at'  => $now,

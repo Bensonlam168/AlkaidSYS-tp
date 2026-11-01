@@ -32,7 +32,7 @@ use think\facade\Db;
  * 注意：
  *   - 工作流任务存放在控制器进程内 `protected static array $tasks`，本测试用反射直接播种，
  *     并在每个用例前后清空，避免用例间互相污染；
- *   - 工作流任务路由挂载了 `Permission` 中间件（workflow.task.read / write），
+ *   - 工作流任务路由挂载了 `Permission` 中间件（workflow_task.read / write），
  *     本测试按项目既有做法在数据库内授予测试用户相应权限，走真实权限校验链路，
  *     不绕过中间件。
  *
@@ -541,24 +541,24 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
             $now = date('Y-m-d H:i:s');
 
             // 权限：PermissionService 以 `resource:action` 拼接权限码，
-            // 因此 resource=workflow + action=task:read 才能匹配中间件的 workflow.task.read
+            // 因此 resource=workflow_task + action=read 才能匹配中间件的 workflow_task.read
             Db::table('permissions')->insertAll([
                 [
                     'id' => $this->readPermissionId,
-                    'name' => 'workflow.task.read',
-                    'slug' => 'workflow.task.read',
-                    'resource' => 'workflow',
-                    'action' => 'task:read',
+                    'name' => 'workflow_task.read',
+                    'slug' => 'workflow_task.read',
+                    'resource' => 'workflow_task',
+                    'action' => 'read',
                     'description' => 'R1 workflow task claim authorization test permission',
                     'created_at' => $now,
                     'updated_at' => $now,
                 ],
                 [
                     'id' => $this->writePermissionId,
-                    'name' => 'workflow.task.write',
-                    'slug' => 'workflow.task.write',
-                    'resource' => 'workflow',
-                    'action' => 'task:write',
+                    'name' => 'workflow_task.write',
+                    'slug' => 'workflow_task.write',
+                    'resource' => 'workflow_task',
+                    'action' => 'write',
                     'description' => 'R1 workflow task claim authorization test permission',
                     'created_at' => $now,
                     'updated_at' => $now,

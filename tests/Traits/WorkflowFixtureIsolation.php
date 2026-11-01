@@ -15,13 +15,13 @@ use think\facade\Log;
  * 背景（问题根因）：
  *   1. `permissions.slug` 上有唯一索引 `idx_slug`；
  *   2. `tests/Feature/Workflow/` 下多个测试类共用同一批权限 slug
- *      （`workflow.task.read`、`workflow.definition.read`、`workflow.task.write` …），
+ *      （`workflow_task.read`、`workflow_definition.read`、`workflow_task.write` …），
  *      却各自使用不同的固定 ID（6101 / 6201 / 6301 / 6421 / 6521 / 6631 / 6721 … 以及 99xxxx）；
  *   3. 各类原先的 `seedFixtures()` 只在**自己的 ID 范围**内「先清理再插入」，
  *      清不掉别的类用不同 ID 写入的同 slug 行；
  *   4. PHPUnit 在 `setUp()` 抛异常时**不会执行** `tearDown()`，
  *      于是「一次失败」就把残留留给后续所有运行，形成级联失败，
- *      必须手工清库才能恢复（典型报错：`Duplicate entry 'workflow.task.read' for key 'permissions.idx_slug'`）。
+ *      必须手工清库才能恢复（典型报错：`Duplicate entry 'workflow_task.read' for key 'permissions.idx_slug'`）。
  *
  * 本 Trait 的解法：
  *   - `purgeWorkflowFixtures()` 同时按「ID 区间 6000-6999」与「自然键」清理夹具，
@@ -30,9 +30,9 @@ use think\facade\Log;
  *     保证 `setUp()` 失败时不留残留。
  *
  * 安全边界（不误删真实数据）：
- *   - 自然键全部是测试专用形态：`workflow.*` 权限 slug、`wf_*` / `workflow_*` 角色 slug、
+ *   - 自然键全部是测试专用形态：`workflow_*` 权限 slug、`wf_*` / `workflow_*` 角色 slug、
  *     `*@workflow-*` 邮箱、`wf_*` / `workflow_*` 用户名；
- *   - `database/seeds/` 中不存在任何 `workflow.*` 权限，真实角色 slug 为
+ *   - `database/seeds/` 中不存在任何 `workflow_*.` / `workflow.*` 权限，真实角色 slug 为
  *     `admin` / `user` / `test_admin` 等，真实用户名为 `test_user` 等，均不匹配上述形态；
  *   - 除自然键外，所有删除条件都限定在 6000-6999 夹具区间内，不触碰区间外的其他数据。
  *
@@ -194,6 +194,17 @@ trait WorkflowFixtureIsolation
                 // 仅按 ID 区间清理会漏掉这些行，从而在插入时撞 permissions.idx_slug 唯一索引
                 switch ($table) {
                     case 'permissions':
+                        // 权限 slug 自本包起由三段式（workflow 命名空间 + 资源 + 动作）改为
+                        // 两段式 `workflow_definition.read`：route/workflow.php 与
+                        // scripts/check-permission-codes.php 都只接受 `resource.action` 两段形态。
+                        // 下划线在 LIKE 中是通配符，必须写成 `\_` 才是字面量，否则
+                        // `workflow_%` 会把 `workflowXYZ` 这类 slug 也一并匹配进来。
+                        $query->whereOr('slug', 'like', 'workflow\_%');
+                        // 同时保留旧三段式形态：历史运行（改名之前）可能已在库里留下
+                        // 以 `workflow.` 开头、其后仍有两段（资源 + 动作）的旧 slug 孤儿行；
+                        // 不兼容清理就会在插入时撞 permissions.idx_slug 唯一索引
+                        // （见本 trait 头部背景第 4 点）。
+                        // 点号在 LIKE 中不是通配符，无需转义。
                         $query->whereOr('slug', 'like', 'workflow.%');
                         break;
 

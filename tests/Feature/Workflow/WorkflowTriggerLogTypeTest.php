@@ -171,10 +171,10 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
 
             Db::table('permissions')->insert([
                 'id' => $this->permissionId,
-                'name' => 'workflow.trigger.write',
-                'slug' => 'workflow.trigger.write',
-                'resource' => 'workflow',
-                'action' => 'trigger:write',
+                'name' => 'workflow_trigger.write',
+                'slug' => 'workflow_trigger.write',
+                'resource' => 'workflow_trigger',
+                'action' => 'write',
                 'description' => 'C-7 回归测试权限（触发器）',
                 'created_at' => $now,
                 'updated_at' => $now,

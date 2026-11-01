@@ -150,13 +150,13 @@ class WorkflowInstanceHistoryTypeTest extends ThinkPHPTestCase
             $now = date('Y-m-d H:i:s');
 
             // 权限：PermissionService 以 `resource:action` 拼接权限码，
-            // 因此 resource=workflow + action=instance:write 才匹配中间件的 workflow.instance.write
+            // 因此 resource=workflow_instance + action=write 才匹配中间件的 workflow_instance.write
             Db::table('permissions')->insert([
                 'id' => $this->permissionId,
-                'name' => 'workflow.instance.write',
-                'slug' => 'workflow.instance.write',
-                'resource' => 'workflow',
-                'action' => 'instance:write',
+                'name' => 'workflow_instance.write',
+                'slug' => 'workflow_instance.write',
+                'resource' => 'workflow_instance',
+                'action' => 'write',
                 'description' => 'C-7 回归测试权限',
                 'created_at' => $now,
                 'updated_at' => $now,

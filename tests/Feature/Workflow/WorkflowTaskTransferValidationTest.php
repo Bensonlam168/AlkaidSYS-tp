@@ -31,7 +31,7 @@ use think\facade\Db;
  * 注意：
  *   - 工作流任务存放在控制器进程内 `protected static array $tasks`，本测试用反射播种，
  *     并在每个用例前后清空，避免用例间互相污染；
- *   - 路由挂载了 `Permission` 中间件（workflow.task.write），按项目既有做法在数据库内
+ *   - 路由挂载了 `Permission` 中间件（workflow_task.write），按项目既有做法在数据库内
  *     授予测试用户相应权限，走真实权限链路，不绕过中间件。
  *
  * @package Tests\Feature\Workflow
@@ -460,24 +460,24 @@ class WorkflowTaskTransferValidationTest extends ThinkPHPTestCase
             $now = date('Y-m-d H:i:s');
 
             // 权限：PermissionService 以 `resource:action` 拼接权限码，
-            // 因此 resource=workflow + action=task:write 才能匹配中间件的 workflow.task.write
+            // 因此 resource=workflow_task + action=write 才能匹配中间件的 workflow_task.write
             Db::table('permissions')->insertAll([
                 [
                     'id' => $this->readPermissionId,
-                    'name' => 'workflow.task.read',
-                    'slug' => 'workflow.task.read',
-                    'resource' => 'workflow',
-                    'action' => 'task:read',
+                    'name' => 'workflow_task.read',
+                    'slug' => 'workflow_task.read',
+                    'resource' => 'workflow_task',
+                    'action' => 'read',
                     'description' => 'P2 workflow task transfer validation test permission',
                     'created_at' => $now,
                     'updated_at' => $now,
                 ],
                 [
                     'id' => $this->writePermissionId,
-                    'name' => 'workflow.task.write',
-                    'slug' => 'workflow.task.write',
-                    'resource' => 'workflow',
-                    'action' => 'task:write',
+                    'name' => 'workflow_task.write',
+                    'slug' => 'workflow_task.write',
+                    'resource' => 'workflow_task',
+                    'action' => 'write',
                     'description' => 'P2 workflow task transfer validation test permission',
                     'created_at' => $now,
                     'updated_at' => $now,
@@ -515,7 +515,7 @@ class WorkflowTaskTransferValidationTest extends ThinkPHPTestCase
                 ],
             ]);
 
-            // 角色：操作用户需要 workflow.task.write 权限
+            // 角色：操作用户需要 workflow_task.write 权限
             Db::table('roles')->insert([
                 'id' => $this->roleId,
                 'tenant_id' => 1,

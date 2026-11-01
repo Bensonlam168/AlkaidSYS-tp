@@ -90,6 +90,11 @@ type: "always_apply"
 
 3. **权限码格式**：
    - 内部权限 slug：`resource.action`，如 `forms.view`（DB 内部字段）。
+   - **恰两段**：`scripts/check-permission-codes.php` 的正则是 `^[a-z0-9_]+\.[a-z0-9_]+$`，只允许一个点。
+     多词资源**必须用下划线合并成一段**，动作段保持单段，例如 `workflow_definition.read`
+     （写成 `workflow.definition.read` 是三段式，门禁直接判不合规）。
+   - `permissions.slug` 必须与 `permissions.resource` / `permissions.action` 自洽：
+     `slug = resource . '.' . action`，动作段不含冒号（如 `workflow_task` + `write`）。
    - 面向前端/客户端权限码：`resource:action`，如 `forms:view`。
    - 路由中间件使用内部 slug，API 返回给前端使用 `resource:action`。
    - 禁止引入新的权限编码体系（如 `AC_xxx` 或其他格式）。
