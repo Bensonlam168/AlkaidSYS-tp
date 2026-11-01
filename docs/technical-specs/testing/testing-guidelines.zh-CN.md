@@ -38,7 +38,8 @@
 # 1) 建表（同时创建 alkaid_sys_test）
 docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think migrate:run'
 
-# 2) 种子：角色 1/2、23 条业务权限（显式 id 1001..1023）、角色授权、
+# 2) 种子：角色 1/2、33 条业务权限（显式 id 1001..1033，
+#    含 route/workflow.php 依赖的 10 条 workflow_*）、角色授权、
 #    默认站点，以及 id=1 的系统用户
 docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think seed:run -s TestPlatformSeed'
 ```

@@ -383,29 +383,21 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
         $this->seedWorkflowFixtures(function (): void {
             $now = date('Y-m-d H:i:s');
 
-            // 权限：PermissionService 以 `resource:action` 拼接权限码
-            Db::table('permissions')->insertAll([
-                [
-                    'id' => $this->taskReadPermissionId,
-                    'name' => 'workflow_task.read',
-                    'slug' => 'workflow_task.read',
-                    'resource' => 'workflow_task',
-                    'action' => 'read',
-                    'description' => 'P3-A workflow tenant strictness test permission',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ],
-                [
-                    'id' => $this->definitionReadPermissionId,
-                    'name' => 'workflow_definition.read',
-                    'slug' => 'workflow_definition.read',
-                    'resource' => 'workflow_definition',
-                    'action' => 'read',
-                    'description' => 'P3-A workflow tenant strictness test permission',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ],
-            ]);
+            // 权限改为「按 slug 确保存在」（R51）：seeder 可能已预建同 slug 行（id 1024..1033），
+            // 此时复用其 id；未预建才按本用例的固定 id 插入。
+            // 说明：PermissionService 以 `resource:action` 拼接权限码
+            $this->taskReadPermissionId = $this->ensureWorkflowPermission(
+                'workflow_task',
+                'read',
+                $this->taskReadPermissionId,
+                'P3-A workflow tenant strictness test permission'
+            );
+            $this->definitionReadPermissionId = $this->ensureWorkflowPermission(
+                'workflow_definition',
+                'read',
+                $this->definitionReadPermissionId,
+                'P3-A workflow tenant strictness test permission'
+            );
 
             // 两个租户各一个用户
             Db::table('users')->insertAll([

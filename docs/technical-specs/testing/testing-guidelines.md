@@ -39,7 +39,8 @@ schema-only database makes every "admin accesses a protected endpoint" test fail
 # 1) schema (creates alkaid_sys_test)
 docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think migrate:run'
 
-# 2) seed: roles 1/2, 23 business permissions (explicit ids 1001..1023),
+# 2) seed: roles 1/2, 33 business permissions (explicit ids 1001..1033,
+#    including the 10 workflow_* permissions route/workflow.php depends on),
 #    role-permission bindings, default site, and the id=1 system user.
 docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think seed:run -s TestPlatformSeed'
 ```

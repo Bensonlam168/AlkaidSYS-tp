@@ -266,18 +266,17 @@ class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
         $this->seedWorkflowFixtures(function (): void {
             $now = date('Y-m-d H:i:s');
 
+            // 权限改为「按 slug 确保存在」（R51）：seeder 可能已预建同 slug 行（id 1024..1033），
+            // 此时直接复用其 id；未预建才按本用例的固定 id 插入。必须用返回值回写属性，
+            // 否则下面 role_permissions 会指向一个不存在的权限 id。
             // 说明：PermissionService 以 `resource:action` 拼接权限码，
             // 因此 resource=workflow_definition + action=read 才能匹配中间件的 workflow_definition.read
-            Db::table('permissions')->insert([
-                'id'          => $this->readPermissionId,
-                'name'        => 'workflow_definition.read',
-                'slug'        => 'workflow_definition.read',
-                'resource'    => 'workflow_definition',
-                'action'      => 'read',
-                'description' => 'workflow validate endpoint test permission',
-                'created_at'  => $now,
-                'updated_at'  => $now,
-            ]);
+            $this->readPermissionId = $this->ensureWorkflowPermission(
+                'workflow_definition',
+                'read',
+                $this->readPermissionId,
+                'workflow validate endpoint test permission'
+            );
 
             Db::table('users')->insert([
                 'id'         => $this->userId,

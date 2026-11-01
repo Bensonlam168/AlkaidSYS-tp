@@ -18,12 +18,13 @@ use think\migration\Seeder;
  *        - 迁移创建的是系统权限：casbin.manage / tenant.* / role.* / permission.* /
  *          user.*（单数）/ dept.* / menu.*，共 19 条；
  *        - 本 seeder 创建的是业务权限：forms.* / form_data.* / collections.* /
- *          users.*（复数）/ roles.*（复数），共 20 条；R50 又补了 lowcode.* 3 条，现共 23 条。
+ *          users.*（复数）/ roles.*（复数），共 20 条；R50 又补了 lowcode.* 3 条，
+ *          R51 再补 workflow_* 10 条，现共 33 条。
  *      删掉本方法会让 forms.* / form_data.* / collections.* 等 12 个权限在任何环境都不存在，
  *      并让 assignPermissionsToRoles() 里给普通用户的那 3 条只读授权变成匹配 0 行的死代码。
  *      现改为逐条 INSERT ... WHERE NOT EXISTS(slug)；
  *      主键自 **R50** 起不再无条件交给 AUTO_INCREMENT（那会让测试库里的行撞进别的用例的清理区间），
- *      改为「能钉 1001..1023 就钉，钉不上才退回自增」——理由见下面 R50 第 1 点。
+ *      改为「能钉 1001..1033 就钉，钉不上才退回自增」——理由见下面 R50 第 1 点。
  *   2. createDefaultTenant / createRoles / createDefaultUser 原先都写死主键且无判重，
  *      第二遍执行必撞主键；现均改为「存在即跳过」，重复执行不产生任何新行。
  *      其中**租户段与站点段是两段独立幂等**：迁移 20251219000003 会先建出租户 1，
@@ -44,15 +45,15 @@ use think\migration\Seeder;
  *   这类脆弱性（属于健壮性改进）。
  *
  * 【R50：业务权限改为带显式 id，并补上 lowcode.* 三条路由级权限】
- *   1. 显式 id（1001..1023）解决的是**跨用例数据破坏**，而不是风格问题：
+ *   1. 显式 id（1001..1033）解决的是**跨用例数据破坏**，而不是风格问题：
  *      测试库里 `permissions` 的 AUTO_INCREMENT 会被 `tests/Unit/Infrastructure/Permission/**`
  *      那些 7xxx/8xxx/9xxx/99xxx 夹具一路撑到 ~99 万，于是本 seeder 插入的业务权限会拿到
  *      99xxxx 的 id；而同一批测试的清理语句是按 id 区间删的 ——
  *      `PermissionServiceIntegrationTest:107` 删 `id >= 7000`、`CasbinServiceTest:116` 删
  *      `id >= 8000`、`DatabaseAdapterTest:128` 删 `id >= 9000`。
- *      实测后果：`seed:run` 刚建好的 23 条权限，会在同一轮 phpunit 里被别的用例顺手删光
+ *      实测后果：`seed:run` 刚建好的业务权限，会在同一轮 phpunit 里被别的用例顺手删光
  *      （39 → 19 行），依赖它们的用例全部退化成「缺种子数据」的红 —— 与 seeder 本身无关。
- *      把 id 钉在 1001..1023（低于工作流夹具 6000-6999 区间，也低于 7000+ 的各清理阈值）
+ *      把 id 钉在 1001..1033（低于工作流夹具 6000-6999 区间，也低于 7000+ 的各清理阈值）
  *      后，这些清理语句再也碰不到它们，seed 结果在同一轮测试里稳定存活。
  *      id 只是「插入时的建议值」：已存在（按 slug 判）就保留原 id 不动；建议 id 被别的行占用时
  *      退回 AUTO_INCREMENT，绝不为了凑 id 去覆盖别人的行。
@@ -62,6 +63,25 @@ use think\migration\Seeder;
  *      这属于「权限数据缺口」，和表单/集合权限一样应由本 seeder 负责。
  *   3. run() 末尾清除受影响用户的权限缓存：权限行变了而缓存还在（L2 TTL 300s），
  *      下一次读取会拿到旧集合 —— 「seed 之后仍然 403」的另一种成因。
+ *
+ * 【R51：补上 workflow_* 十条路由级权限（工作流模块此前对所有用户恒 403）】
+ *   1. 缺口证据：`route/workflow.php` 里 40 条路由**全部**挂了 `Permission` 中间件，
+ *      权限码只有 10 个（workflow_definition.read/write/delete、workflow_instance.read/write、
+ *      workflow_task.read/write、workflow_trigger.read/write/delete）。而迁移链与本 seeder
+ *      此前都没有插过任何 workflow_* 行 —— dev 库与 test 库统计都是 0。
+ *      PermissionService 把权限码拼成 `resource:action` 后与用户的权限集合比对，
+ *      DB 里没有这些行 ⇒ 集合里永远不会有 ⇒ **所有用户（含种子 admin）恒 403**。
+ *      这不是「某个可选权限没配」，而是路由硬依赖的数据缺口，与 R50 的 lowcode.* 同一性质。
+ *   2. 与 lowcode.* 一样，slug 必须用**点号**（`workflow_definition.read`）：
+ *      route/workflow.php 与 scripts/check-permission-codes.php 只接受 `resource.action`；
+ *      `resource` / `action` 两列分别写 `workflow_definition` / `read`，
+ *      因为鉴权链路是「读 resource + action 拼成 `workflow_definition:read`」，不是读 slug。
+ *      两列与 slug 错一位就会表现成「权限行明明存在，接口照样 403」。
+ *   3. 只补权限行、**不改路由码**：权限码此前已收成两段式并定稿，
+ *      本次是让数据追上路由，不是反过来让路由迁就数据。
+ *   4. 普通用户（role 2）**不**获得 workflow_*：USER_READONLY_PERMISSION_SLUGS 保持不变，
+ *      工作流是管理侧能力，只随 admin 的「全表授权」拿到。
+ *   5. 幂等仍由 ensurePermissions() 的「按 slug 判存在」保证：老库重复 seed 只插缺失的行。
  */
 class CorePlatformSeed extends Seeder
 {
@@ -99,7 +119,8 @@ class CorePlatformSeed extends Seeder
 
         // 3. Create permissions | 创建权限
         //    创建迁移链**没有覆盖**的业务权限（forms.* / form_data.* / collections.* /
-        //    users.* / roles.* 共 20 条，R50 起再加 lowcode.read/write/delete 共 23 条）。
+        //    users.* / roles.* 共 20 条，R50 起再加 lowcode.read/write/delete、
+        //    R51 起再加 workflow_* 10 条，合计 33 条）。
         //    它们与迁移创建的 user.* / role.*（单数）等系统权限是
         //    两套不同的 slug，**不是重复数据**，详见类注释第 1 点。
         //
@@ -107,7 +128,7 @@ class CorePlatformSeed extends Seeder
         //    assignPermissionsToRoles() 开头也会调用一次 ensurePermissions()，
         //    使授权逻辑**不依赖 run() 的步骤顺序**（把 4 调到 3 之前也仍然成立）。
         //    两处调用都是幂等的（按 slug 判存在的 INSERT ... WHERE NOT EXISTS），
-        //    重复执行的代价只是 23 条「插 0 行」的 SQL，没有副作用。
+        //    重复执行的代价只是 33 条「插 0 行」的 SQL，没有副作用。
         //    这里保留独立一步，是因为它负责把「本次新增 N 条」这件事打印出来；
         //    assign 内部那次是**静默**确保，避免同一行输出刷两次。
         $this->createPermissions();
@@ -345,13 +366,14 @@ class CorePlatformSeed extends Seeder
      * Create permissions | 创建权限
      *
      * 创建的是**业务权限**：forms.* / form_data.* / collections.* / users.* / roles.* 各 4 条（共 20 条），
-     * 外加 R50 补齐的 lowcode.read / lowcode.write / lowcode.delete（3 条路由级权限），合计 23 条。
+     * 外加 R50 补齐的 lowcode.read / lowcode.write / lowcode.delete（3 条路由级权限），
+     * 以及 R51 补齐的 workflow_* 10 条（工作流路由硬依赖），合计 33 条。
      *
      * 【这套权限与迁移创建的权限是两套不同的 slug，不是重复数据 —— 不要「去重」删掉】
      *   - 迁移链创建的是系统权限（19 条）：casbin.manage、tenant.*、role.*、permission.*、
      *     user.*（单数）、dept.*、menu.*；
-     *   - 本方法创建的是业务权限（23 条）：users.*（复数）、roles.*（复数）、表单/集合权限
-     *     以及 lowcode.*；
+     *   - 本方法创建的是业务权限（33 条）：users.*（复数）、roles.*（复数）、表单/集合权限、
+     *     lowcode.* 以及 workflow_*；
      *   两套 slug 完全不重叠（`user.read` 与 `users.view` 是两个不同的权限）。
      *   删掉本方法的后果：全新库上 forms.* / form_data.* / collections.* 等 12 个权限永久缺失，
      *   且 assignPermissionsToRoles() 里给普通用户的那 3 条只读授权会变成匹配 0 行的死代码。
@@ -361,7 +383,7 @@ class CorePlatformSeed extends Seeder
      * `Duplicate entry '1' for key 'permissions.PRIMARY'` —— 这是**主键**冲突，不是 slug 冲突。
      * 现改为逐条 INSERT ... WHERE NOT EXISTS(slug)；
      * 判重键用 slug 是因为 permissions.slug 上有唯一索引（UNI），它才是权限的业务标识。
-     * R50 起主键改为「优先钉 1001..1023，占用了才退回 AUTO_INCREMENT」，理由见类注释 R50 第 1 点。
+     * R50 起主键改为「优先钉 1001..1033，占用了才退回 AUTO_INCREMENT」，理由见类注释 R50 第 1 点。
      */
     protected function createPermissions(): void
     {
@@ -504,7 +526,7 @@ class CorePlatformSeed extends Seeder
      * 单独抽成方法，是为了让「创建」与「打印条数」两处共用同一份清单，避免两边条数对不上。
      *
      * 【R50：每条都带 id】
-     *   id 取 1001..1023 这个**保留区间**，理由见类注释 R50 第 1 点：
+     *   id 取 1001..1033 这个**保留区间**，理由见类注释 R50 第 1 点：
      *   低于工作流夹具 6000-6999 与各测试 7xxx/8xxx/9xxx/10xxx 的清理阈值。
      *   新增条目请继续往后排，不要把区间打散成孤立数字 —— 连续区间才好一眼看出「这是种子段」。
      *
@@ -556,6 +578,33 @@ class CorePlatformSeed extends Seeder
             ['id' => 1021, 'name' => 'Read Lowcode Resources', 'slug' => 'lowcode.read', 'resource' => 'lowcode', 'action' => 'read'],
             ['id' => 1022, 'name' => 'Write Lowcode Resources', 'slug' => 'lowcode.write', 'resource' => 'lowcode', 'action' => 'write'],
             ['id' => 1023, 'name' => 'Delete Lowcode Resources', 'slug' => 'lowcode.delete', 'resource' => 'lowcode', 'action' => 'delete'],
+
+            // Workflow permissions | 工作流权限（R51 新增 10 条）
+            //
+            // 【这 10 条是 route/workflow.php 40 条路由的硬依赖，不是「可选权限」】
+            //   缺口证据：那 40 条路由全部挂 Permission 中间件，权限码只有下面 10 个；
+            //   而迁移链与旧种子都没有任何 workflow_* 行（dev / test 库统计均为 0），
+            //   于是 PermissionService 拼出的 `workflow_definition:read` 等权限码永远不在
+            //   任何用户（含 admin）的权限集合里 → **工作流接口对所有用户恒 403**。
+            //
+            // 【slug 用点号、resource/action 分列，两处都不能错】
+            //   - slug 是 `resource.action`（route/workflow.php 与 scripts/check-permission-codes.php 的格式）；
+            //   - resource / action 两列是鉴权链路真正读取的字段：
+            //     getUserPermissionsFromDatabase() 用它们拼 `workflow_definition:read`；
+            //     写成 `workflow` + `definition.read` 这类拆法，行虽存在但接口仍然 403。
+            ['id' => 1024, 'name' => 'Read Workflow Definitions', 'slug' => 'workflow_definition.read', 'resource' => 'workflow_definition', 'action' => 'read'],
+            ['id' => 1025, 'name' => 'Write Workflow Definitions', 'slug' => 'workflow_definition.write', 'resource' => 'workflow_definition', 'action' => 'write'],
+            ['id' => 1026, 'name' => 'Delete Workflow Definitions', 'slug' => 'workflow_definition.delete', 'resource' => 'workflow_definition', 'action' => 'delete'],
+
+            ['id' => 1027, 'name' => 'Read Workflow Instances', 'slug' => 'workflow_instance.read', 'resource' => 'workflow_instance', 'action' => 'read'],
+            ['id' => 1028, 'name' => 'Write Workflow Instances', 'slug' => 'workflow_instance.write', 'resource' => 'workflow_instance', 'action' => 'write'],
+
+            ['id' => 1029, 'name' => 'Read Workflow Tasks', 'slug' => 'workflow_task.read', 'resource' => 'workflow_task', 'action' => 'read'],
+            ['id' => 1030, 'name' => 'Write Workflow Tasks', 'slug' => 'workflow_task.write', 'resource' => 'workflow_task', 'action' => 'write'],
+
+            ['id' => 1031, 'name' => 'Read Workflow Triggers', 'slug' => 'workflow_trigger.read', 'resource' => 'workflow_trigger', 'action' => 'read'],
+            ['id' => 1032, 'name' => 'Write Workflow Triggers', 'slug' => 'workflow_trigger.write', 'resource' => 'workflow_trigger', 'action' => 'write'],
+            ['id' => 1033, 'name' => 'Delete Workflow Triggers', 'slug' => 'workflow_trigger.delete', 'resource' => 'workflow_trigger', 'action' => 'delete'],
         ];
     }
 

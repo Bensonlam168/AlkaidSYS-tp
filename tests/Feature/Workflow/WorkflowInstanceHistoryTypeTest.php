@@ -149,18 +149,16 @@ class WorkflowInstanceHistoryTypeTest extends ThinkPHPTestCase
         $this->seedWorkflowFixtures(function (): void {
             $now = date('Y-m-d H:i:s');
 
-            // 权限：PermissionService 以 `resource:action` 拼接权限码，
+            // 权限改为「按 slug 确保存在」（R51）：seeder 可能已预建同 slug 行（id 1024..1033），
+            // 此时复用其 id；未预建才按本用例的固定 id 插入。必须用返回值回写属性。
+            // 说明：PermissionService 以 `resource:action` 拼接权限码，
             // 因此 resource=workflow_instance + action=write 才匹配中间件的 workflow_instance.write
-            Db::table('permissions')->insert([
-                'id' => $this->permissionId,
-                'name' => 'workflow_instance.write',
-                'slug' => 'workflow_instance.write',
-                'resource' => 'workflow_instance',
-                'action' => 'write',
-                'description' => 'C-7 回归测试权限',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
+            $this->permissionId = $this->ensureWorkflowPermission(
+                'workflow_instance',
+                'write',
+                $this->permissionId,
+                'C-7 回归测试权限'
+            );
 
             Db::table('users')->insert([
                 'id' => $this->userId,

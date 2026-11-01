@@ -340,31 +340,22 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
 
             // 清理上一次异常中断留下的残留数据
 
-            // 权限：workflow_definition.read / write
+            // 权限改为「按 slug 确保存在」（R51）：seeder 可能已预建同 slug 行（id 1024..1033），
+            // 此时复用其 id；未预建才按本用例的固定 id 插入。
             // 说明：PermissionService 以 `resource:action` 拼接权限码，
             // 因此 resource=workflow_definition + action=read 才能匹配中间件的 workflow_definition.read
-            Db::table('permissions')->insertAll([
-                [
-                    'id' => $this->readPermissionId,
-                    'name' => 'workflow_definition.read',
-                    'slug' => 'workflow_definition.read',
-                    'resource' => 'workflow_definition',
-                    'action' => 'read',
-                    'description' => 'C-7 workflow tenant isolation test permission',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ],
-                [
-                    'id' => $this->writePermissionId,
-                    'name' => 'workflow_definition.write',
-                    'slug' => 'workflow_definition.write',
-                    'resource' => 'workflow_definition',
-                    'action' => 'write',
-                    'description' => 'C-7 workflow tenant isolation test permission',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ],
-            ]);
+            $this->readPermissionId = $this->ensureWorkflowPermission(
+                'workflow_definition',
+                'read',
+                $this->readPermissionId,
+                'C-7 workflow tenant isolation test permission'
+            );
+            $this->writePermissionId = $this->ensureWorkflowPermission(
+                'workflow_definition',
+                'write',
+                $this->writePermissionId,
+                'C-7 workflow tenant isolation test permission'
+            );
 
             // 租户 1 / 租户 2 各一个用户与角色
             Db::table('users')->insertAll([

@@ -540,30 +540,22 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
         $this->seedWorkflowFixtures(function (): void {
             $now = date('Y-m-d H:i:s');
 
-            // 权限：PermissionService 以 `resource:action` 拼接权限码，
+            // 权限改为「按 slug 确保存在」（R51）：seeder 可能已预建同 slug 行（id 1024..1033），
+            // 此时复用其 id；未预建才按本用例的固定 id 插入。
+            // 说明：PermissionService 以 `resource:action` 拼接权限码，
             // 因此 resource=workflow_task + action=read 才能匹配中间件的 workflow_task.read
-            Db::table('permissions')->insertAll([
-                [
-                    'id' => $this->readPermissionId,
-                    'name' => 'workflow_task.read',
-                    'slug' => 'workflow_task.read',
-                    'resource' => 'workflow_task',
-                    'action' => 'read',
-                    'description' => 'R1 workflow task claim authorization test permission',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ],
-                [
-                    'id' => $this->writePermissionId,
-                    'name' => 'workflow_task.write',
-                    'slug' => 'workflow_task.write',
-                    'resource' => 'workflow_task',
-                    'action' => 'write',
-                    'description' => 'R1 workflow task claim authorization test permission',
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ],
-            ]);
+            $this->readPermissionId = $this->ensureWorkflowPermission(
+                'workflow_task',
+                'read',
+                $this->readPermissionId,
+                'R1 workflow task claim authorization test permission'
+            );
+            $this->writePermissionId = $this->ensureWorkflowPermission(
+                'workflow_task',
+                'write',
+                $this->writePermissionId,
+                'R1 workflow task claim authorization test permission'
+            );
 
             // 用户
             Db::table('users')->insertAll([
