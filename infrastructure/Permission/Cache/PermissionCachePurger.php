@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace Infrastructure\Permission\Cache;
 
 use InvalidArgumentException;
-use think\cache\Driver as CacheDriver;
-use think\cache\driver\Redis as RedisDriver;
+use think\contract\CacheHandlerInterface;
 use think\facade\Cache;
 use think\facade\Log;
 
@@ -45,6 +44,22 @@ use think\facade\Log;
  *   `CacheKeyIndex` 里记录过的键（逐键 `Cache::delete()`）。
  * - **任何情况都不退化为 `Cache::clear()`**：那是本轮要消灭的东西。
  *   无法枚举且索引为空时，只记 warning 并返回 0，绝不放宽成清全库。
+ *
+ * ## Swoole 常驻进程：为什么类型是 `CacheHandlerInterface` 而不是 `think\cache\Driver`
+ *
+ * `Cache::store()` 在 **Swoole 常驻进程**下返回 `think\swoole\pool\proxy\Store`
+ * （`think\swoole\pool\Cache::createDriver()` 把每个 store 都包成连接池代理）。
+ * 它 `extends Proxy implements CacheHandlerInterface`，**不继承** `think\cache\Driver`，
+ * 未声明的方法全靠 `Proxy::__call()` 转发给池里的真实驱动。
+ * 因此属性/参数声明成 `?think\cache\Driver` 会在「在 Swoole 里构造本类」时直接
+ * `TypeError`（`Cannot assign think\swoole\pool\proxy\Store to property ... of type ?think\cache\Driver`），
+ * 表现为「权限缓存被清掉之后的第一批权限检查偶发 500」。
+ *
+ * 两者的唯一共同契约是 {@see CacheHandlerInterface}：接口内的方法（`delete()` 等）一定可用；
+ * 而 `getCacheKey()` / `handler()` 是 `Driver` 的「高级方法」，代理只能靠 `__call` 转发，
+ * 所以**使用前必须能力探测**（{@see self::supports()}），探测不到就走安全分支：
+ * 取不到物理前缀就不做 SCAN（MATCH 模式拼不对等于白扫），退化为索引策略；
+ * 取不到 Redis 客户端就当「不可枚举」。任何一步都不把异常抛给调用方。
  *
  * @package Infrastructure\Permission\Cache
  */
@@ -95,9 +110,13 @@ final class PermissionCachePurger
     private const DELETE_CHUNK_SIZE = 500;
 
     /**
-     * 缓存驱动实例（默认为当前默认 store）
+     * 缓存 store（默认为当前默认 store）
+     *
+     * 类型是**共同接口**，不是 `think\cache\Driver`：Swoole 常驻进程下
+     * `Cache::store()` 返回 `think\swoole\pool\proxy\Store`（实现本接口但不继承 `Driver`），
+     * 详见类注释「Swoole 常驻进程」一节。
      */
-    private ?CacheDriver $store;
+    private ?CacheHandlerInterface $store;
 
     /**
      * 非可枚举驱动的键索引
@@ -110,10 +129,10 @@ final class PermissionCachePurger
     private ?bool $enumerable = null;
 
     /**
-     * @param CacheDriver|null $store 缓存驱动（默认 `Cache::store()`）
+     * @param CacheHandlerInterface|null $store 缓存 store（默认 `Cache::store()`；Swoole 下是连接池代理）
      * @param CacheKeyIndex|null $index 键索引（默认新建）
      */
-    public function __construct(?CacheDriver $store = null, ?CacheKeyIndex $index = null)
+    public function __construct(?CacheHandlerInterface $store = null, ?CacheKeyIndex $index = null)
     {
         $this->store = $store;
         $this->index = $index ?? new CacheKeyIndex();
@@ -197,11 +216,21 @@ final class PermissionCachePurger
         }
 
         $handler = $this->redisHandler();
-        if ($handler !== null) {
-            $store = $this->store();
-            $deleted = (new RedisScanPurger($handler, $store->getCacheKey('')))->purge($prefixes);
+        $physicalPrefix = $handler === null ? null : $this->physicalPrefix();
+
+        if ($handler !== null && $physicalPrefix !== null) {
+            $deleted = (new RedisScanPurger($handler, $physicalPrefix))->purge($prefixes);
 
             return ['driver' => $driver, 'strategy' => 'scan', 'deleted' => $deleted];
+        }
+
+        if ($handler !== null) {
+            // 有 phpredis 客户端却拿不到物理前缀：SCAN 的 MATCH 模式无法拼对，
+            // 硬扫只会「一条都匹配不到」并误报成功，因此明确降级并留下证据
+            Log::warning('权限缓存前缀清除：驱动未暴露键前缀，无法进行 SCAN，降级为索引精确删除', [
+                'driver' => $driver,
+                'prefixes' => $prefixes,
+            ]);
         }
 
         // 非可枚举驱动：只删索引里记录过的键
@@ -252,7 +281,12 @@ final class PermissionCachePurger
         $handler = $this->redisHandler();
         $deleted = 0;
 
-        if ($handler !== null) {
+        // 前置：必须能取到物理前缀。它同时证明 `getCacheKey()` 可调用且不抛
+        // （比再探一次更省一次往返），否则退回接口内的 delete()：
+        // 拿不到前缀还去调 getCacheKey($key)，一旦代理不认这个方法就会把异常抛给调用方。
+        if ($handler !== null && $this->physicalPrefix() !== null) {
+            // 逐键仍走驱动自己的 getCacheKey()：File 之类会把键名 hash 成路径，
+            // 「前缀 + 键名」只对基类实现（`prefix . $name`）成立，不能想当然地替代
             $physicalKeys = [];
             foreach ($keys as $key) {
                 $physicalKeys[] = $store->getCacheKey($key);
@@ -262,6 +296,7 @@ final class PermissionCachePurger
                 $deleted += (int) $handler->del($chunk);
             }
         } else {
+            // 没有 phpredis 客户端（File / 代理不支持 handler()）：逐键走接口内的 delete()
             foreach ($keys as $key) {
                 if ($store->delete($key)) {
                     $deleted++;
@@ -309,11 +344,11 @@ final class PermissionCachePurger
     }
 
     /**
-     * 取缓存驱动实例
+     * 取缓存 store（懒取 `Cache::store()`）
      *
-     * @return CacheDriver
+     * @return CacheHandlerInterface
      */
-    private function store(): CacheDriver
+    private function store(): CacheHandlerInterface
     {
         if ($this->store === null) {
             $this->store = Cache::store();
@@ -323,22 +358,48 @@ final class PermissionCachePurger
     }
 
     /**
-     * 取 phpredis 底层客户端（非 Redis 驱动 / Predis 返回 null）
+     * 能力探测：store 上是否真的可以调用某个「高级方法」
+     *
+     * 为什么用 `is_callable()` 而不用 `method_exists()`：
+     * Swoole 的 `think\swoole\pool\proxy\Store` **没有声明** `handler()` / `getCacheKey()`，
+     * 未声明的一律靠 `Proxy::__call()` 转发到池里的真实驱动。
+     * `method_exists()` 只认类里声明过的符号，对这类代理恒为 false，
+     * 会把「Redis + Swoole」误判成「不支持」，SCAN 路径永远走不到（清除静默失效）；
+     * `is_callable()` 把 `__call()` 视作可调用，判断与运行时行为一致。
+     *
+     * @param string $method 方法名（`handler` / `getCacheKey`）
+     * @return bool
+     */
+    private function supports(string $method): bool
+    {
+        return is_callable([$this->store(), $method]);
+    }
+
+    /**
+     * 取 phpredis 底层客户端（拿不到就返回 null，绝不抛给调用方）
+     *
+     * 判定顺序：能力探测 → 调用（失败即降级） → 必须是 `\Redis` 实例。
+     * 刻意**不要求** store 是 `think\cache\Driver` 的子类（Swoole 代理不是），
+     * 只要它能把 `handler()` 转发到真实驱动、且给出的是 phpredis 客户端即可。
+     *
+     * 为什么要求 `\Redis`：`RedisScanPurger` 用的是 phpredis 的
+     * `scan(&$cursor, $pattern, $count)` 语义；Predis 的 `scan()` 参数形态完全不同
+     * （选项数组成第二参），硬套会扫不到键。判据之外的情况一律按「不可枚举」处理。
      *
      * @return object|null
      */
     private function redisHandler(): ?object
     {
-        $store = $this->store();
-        if (!$store instanceof RedisDriver) {
+        if (!$this->supports('handler')) {
             return null;
         }
 
         try {
-            $handler = $store->handler();
+            $handler = $this->store()->handler();
         } catch (\Throwable $e) {
-            // Redis 不可用：当作「不可枚举」处理，让上层走索引路径而不是抛错中断业务
-            Log::warning('权限缓存清除：Redis 客户端不可用，降级为索引精确删除', [
+            // Redis 不可用 / 连接池连接已释放：当作「不可枚举」处理，让上层走索引路径而不是抛错中断业务
+            Log::warning('权限缓存清除：无法取得 Redis 客户端，降级为索引精确删除', [
+                'store' => get_class($this->store()),
                 'error' => $e->getMessage(),
             ]);
 
@@ -346,6 +407,35 @@ final class PermissionCachePurger
         }
 
         return $handler instanceof \Redis ? $handler : null;
+    }
+
+    /**
+     * 取驱动的物理键前缀（`getCacheKey('')`，如 `alkaid:`）
+     *
+     * 拿不到前缀直接返回 null —— 此时 SCAN 的 MATCH 模式拼不对（一个键都匹配不上），
+     * 调用方必须降级为索引策略，而不是硬拼一个「看起来像」的模式。
+     *
+     * @return string|null
+     */
+    private function physicalPrefix(): ?string
+    {
+        if (!$this->supports('getCacheKey')) {
+            return null;
+        }
+
+        try {
+            $prefix = $this->store()->getCacheKey('');
+        } catch (\Throwable $e) {
+            Log::warning('权限缓存清除：无法取得缓存键前缀，降级为索引精确删除', [
+                'store' => get_class($this->store()),
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        // 空前缀是合法值（驱动没配 prefix 时物理键名等于逻辑键名），只有非字符串才算「取不到」
+        return is_string($prefix) ? $prefix : null;
     }
 
     /**
