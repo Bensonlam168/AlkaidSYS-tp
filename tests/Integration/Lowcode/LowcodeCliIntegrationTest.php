@@ -30,8 +30,31 @@ class LowcodeCliIntegrationTest extends ThinkPHPTestCase
 {
     /**
      * Test tenant ID for integration tests | 集成测试用租户ID
+     *
+     * 该租户由本类**自建、自清理**（见 setUpBeforeClass / tearDownAfterClass），
+     * 不写进 `TestPlatformSeed`：种子是所有测试共享的基线数据，而 99999 只服务本类；
+     * 混进种子会让「租户列表 / 租户计数」类断言莫名多一行，也让删除种子的改动
+     * 悄悄变成「本类前提消失」。
+     *
+     * 为什么必须在库里真的存在这一行：`lowcode_forms.tenant_id` 带外键
+     * `fk_lowcode_forms_tenant_id → tenants.id`（ON DELETE CASCADE），
+     * 而测试库里只有 id=1 / id=2 两个租户。集合用例因为 `lowcode_collections`
+     * 没有租户外键而「恰好」能过，只有建表单的用例会撞 1452。
      */
     protected const TEST_TENANT_ID = 99999;
+
+    /**
+     * Test tenant slug | 测试租户 slug
+     *
+     * `tenants.idx_slug` 是唯一键，必须给一个只属于本类的值，
+     * 否则会和既有租户（`default` / `test-tenant-2`）或其它测试自建的租户撞车。
+     */
+    protected const TEST_TENANT_SLUG = 'lowcode-cli-integration-test';
+
+    /**
+     * Test tenant name | 测试租户名称
+     */
+    protected const TEST_TENANT_NAME = 'Lowcode CLI Integration Test Tenant';
 
     /**
      * Test site ID | 测试站点ID
@@ -61,6 +84,45 @@ class LowcodeCliIntegrationTest extends ThinkPHPTestCase
      * FormSchemaManager instance | FormSchemaManager实例
      */
     protected FormSchemaManager $formManager;
+
+    /**
+     * Set up test class | 建立测试类前置条件
+     *
+     * 只做一件事：**幂等**确保测试租户存在。
+     * 必须排在父类之后 —— 建 App、注入测试库连接配置、做 fail-closed 库名断言
+     * 都在父类的 setUpBeforeClass() 里，早于它就还没有可用的数据库连接。
+     */
+    public static function setUpBeforeClass(): void
+    {
+        parent::setUpBeforeClass();
+
+        self::ensureTestTenant();
+    }
+
+    /**
+     * Tear down test class | 清理测试类痕迹
+     *
+     * 清理顺序（不能随意调换）：
+     *   1. 本租户的低代码集合 —— `lowcode_collections` **没有**租户外键，
+     *      也不会被任何级联带走，还牵着物理表 `lc_*`，必须显式清理；
+     *   2. 本租户的低代码表单 —— 外键是 ON DELETE CASCADE，理论上删租户就会带走，
+     *      这里仍显式删一遍：级联是「数据库行为」，用例里看得见的显式删除才是可读的约定；
+     *   3. 租户行本身。
+     *
+     * 所有语句都按 `tenant_id = 99999` / `id = 99999` 过滤，**不会误删其它租户的数据**。
+     *
+     * 为什么用 try/finally：清理中途抛错时仍必须执行父类的容器状态还原，
+     * 否则本类往容器里塞的实例会泄漏到后续测试类（见 ThinkPHPTestCase 的跨类隔离说明）。
+     * 清理失败**不吞异常** —— 残留租户会让后续运行的首个用例前提失真，必须显式报错。
+     */
+    public static function tearDownAfterClass(): void
+    {
+        try {
+            self::purgeTestTenant();
+        } finally {
+            parent::tearDownAfterClass();
+        }
+    }
 
     /**
      * Set up test | 设置测试
@@ -793,6 +855,143 @@ class LowcodeCliIntegrationTest extends ThinkPHPTestCase
         $this->assertArrayHasKey('description', $array);
         $this->assertArrayHasKey('fields', $array);
         $this->assertCount(2, $array['fields']);
+    }
+
+    // ========================================================================
+    // Helper Methods - Test Tenant Lifecycle | 辅助方法 - 测试租户生命周期
+    // ========================================================================
+
+    /**
+     * 幂等确保测试租户存在 | Ensure the test tenant exists (idempotent)
+     *
+     * 三步：
+     *   1. 已存在（历史残留 / 上次异常中断）→ 直接复用，不重复插入；
+     *   2. 不存在 → 以**显式 id** 插入（自动递增拿不到 99999，本类常量依赖这个确定值）；
+     *   3. 插入失败时再看一次是否已存在 —— 唯一键冲突或并发插入都算「前提已满足」，
+     *      只有「确实没有这一行」才把异常抛出去，避免把真问题伪装成跳过。
+     *
+     * 注意 `tenants` 表的 NOT NULL 约束：`name` / `slug` 必填，`domain` 可空（唯一键允许多个 NULL）。
+     */
+    private static function ensureTestTenant(): void
+    {
+        if (self::testTenantExists()) {
+            return;
+        }
+
+        try {
+            Db::name('tenants')->insert([
+                'id'         => self::TEST_TENANT_ID,
+                'name'       => self::TEST_TENANT_NAME,
+                'slug'       => self::TEST_TENANT_SLUG,
+                'status'     => 'active',
+                'config'     => json_encode([]),
+                'max_sites'  => 10,
+                'max_users'  => 10,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        } catch (\Throwable $e) {
+            if (self::testTenantExists()) {
+                // 唯一键冲突 / 并发插入：前提已满足，视为成功
+                return;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * 测试租户是否已存在 | Whether the test tenant already exists
+     */
+    private static function testTenantExists(): bool
+    {
+        return (int) Db::name('tenants')->where('id', self::TEST_TENANT_ID)->count() > 0;
+    }
+
+    /**
+     * 清除测试租户及其全部低代码数据 | Purge the test tenant and its lowcode data
+     *
+     * 只按 `tenant_id = 99999` / `id = 99999` 过滤，其它租户的数据一行都不碰。
+     */
+    private static function purgeTestTenant(): void
+    {
+        // 1) 集合：没有租户外键，删租户不会带走它，且牵着物理表 lc_*
+        self::purgeTestTenantCollections();
+
+        // 2) 表单：外键 ON DELETE CASCADE，删租户会带走；仍显式删一遍，
+        //    让「本类写过什么、清掉了什么」在代码里一眼可见，而不是藏在级联里
+        Db::name('lowcode_forms')->where('tenant_id', self::TEST_TENANT_ID)->delete();
+
+        // 3) Schema 版本记录：按租户维度记录的低代码元数据，同样只清本租户
+        Db::name('lowcode_schema_versions')->where('tenant_id', self::TEST_TENANT_ID)->delete();
+
+        // 4) 最后删租户行（此后 `tenants` 里不再有 99999）
+        Db::name('tenants')->where('id', self::TEST_TENANT_ID)->delete();
+    }
+
+    /**
+     * 清理测试租户名下的全部集合 | Purge all collections owned by the test tenant
+     *
+     * 优先走 `CollectionManager::delete()` 这条正统路径：它会连带清关系、字段、元数据，
+     * drop 物理表，并清掉 File 缓存键。任何一条失败则退回手写清理 ——
+     * 「跑完不残留」是硬性要求，不能因为一次失败就留一堆物理表与缓存。
+     */
+    private static function purgeTestTenantCollections(): void
+    {
+        $collections = Db::name('lowcode_collections')
+            ->where('tenant_id', self::TEST_TENANT_ID)
+            ->field('id,name,table_name')
+            ->select()
+            ->toArray();
+
+        if ($collections === []) {
+            return;
+        }
+
+        $manager = self::$app?->make(CollectionManager::class);
+
+        foreach ($collections as $row) {
+            $deletedByManager = false;
+
+            if (null !== $manager) {
+                try {
+                    $manager->delete((string) $row['name'], true, self::TEST_TENANT_ID);
+                    $deletedByManager = true;
+                } catch (\Throwable) {
+                    // 交给下面的兜底路径
+                }
+            }
+
+            if (!$deletedByManager) {
+                self::forceDeleteCollection($row);
+            }
+        }
+    }
+
+    /**
+     * 兜底删除单个集合（元数据 + 字段 + 关系 + 物理表）| Force-delete one collection
+     *
+     * 仅在 `CollectionManager::delete()` 失败时使用。所有 DELETE 都带
+     * `tenant_id = 99999` 条件，物理表名来自本租户自己的集合行
+     * （`lowcode_collections.uk_table_name` 全局唯一，不会与别的租户撞名）。
+     *
+     * @param array{id: int|string, name: string, table_name: string} $collection
+     */
+    private static function forceDeleteCollection(array $collection): void
+    {
+        Db::execute('DROP TABLE IF EXISTS `' . $collection['table_name'] . '`');
+        Db::name('lowcode_relationships')
+            ->where('collection_id', $collection['id'])
+            ->where('tenant_id', self::TEST_TENANT_ID)
+            ->delete();
+        Db::name('lowcode_fields')
+            ->where('collection_id', $collection['id'])
+            ->where('tenant_id', self::TEST_TENANT_ID)
+            ->delete();
+        Db::name('lowcode_collections')
+            ->where('id', $collection['id'])
+            ->where('tenant_id', self::TEST_TENANT_ID)
+            ->delete();
     }
 
     // ========================================================================
