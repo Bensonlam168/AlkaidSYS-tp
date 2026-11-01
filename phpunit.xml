@@ -20,6 +20,36 @@
             <directory>tests/E2E</directory>
         </testsuite>
     </testsuites>
+    <!--
+        ============================================================
+        性能预算断言不参与功能回归（方案 C：用 group 分离，不搬文件）
+        ============================================================
+        打了 #[Group('performance')] 的用例，验证的是「本机此刻多快」，不是「行为对不对」。
+        随机顺序全量跑时它们会随机器负载翻红（实测 CasbinControllerTest 的
+        1000ms 预算断言出现过 1029ms / 1114ms），让功能回归的结论不可信。
+
+        约定：
+          - 墙钟阈值类断言（耗时/吞吐/命中率）→ 标 #[Group('performance')]，在这里被排除；
+          - 功能断言（字段是否存在、code/message、是否放行）→ 永远留在普通用例里，不受影响。
+
+        怎么跑被排除的这一组（都在 alkaid-backend 容器内执行）：
+          - 只跑性能预算用例：给 phpunit 加 CLI 的 group 参数，取值为 performance；
+          - 跑性能套件（含基准测试）：./vendor/bin/phpunit -c phpunit.performance.xml
+          - 收紧预算再跑：先导出 CASBIN_RELOAD_BUDGET_MS=1500，再加同一个 group 参数。
+
+        为什么上面没有贴完整命令行：XML 注释里不允许出现双连字符，而 CLI 的 group 参数
+        正是以双连字符开头。可直接照抄的命令写在
+        docs/technical-specs/testing/testing-guidelines.zh-CN.md 的「性能预算断言」一节。
+
+        另外：`tests/Benchmark/` 目前**不在**任何默认套件里（它也不该在）。
+        基准测试要跑就走 phpunit.performance.xml，别把它加进上面的 testsuites，
+        否则每次 CI 都会跑基准，既慢又不稳定。
+    -->
+    <groups>
+        <exclude>
+            <group>performance</group>
+        </exclude>
+    </groups>
     <php>
         <!--
             ============================================================

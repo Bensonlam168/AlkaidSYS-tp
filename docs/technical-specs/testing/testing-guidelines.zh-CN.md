@@ -133,6 +133,77 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 - 性能测试使用 `phpunit.performance.xml` 配置。
 - 退出码 0 表示所有测试通过；非零表示存在失败。
 
+### 7.1 性能预算断言不进功能套件（`performance` 组）
+
+**约定**：断言「这台机器此刻多快」的用例，**不允许**留在功能回归套件里。
+
+- **墙钟阈值类断言**（耗时 / 吞吐 / QPS / 命中率 / 超时）**必须**打 `#[Group('performance')]`，
+  且阈值**必须**可由环境变量覆盖、默认值给足余量。
+- **功能断言**（响应字段是否存在、`code`/`message`、是否放行或拒绝、类型契约）**必须**留在普通用例里，
+  一条都不许挪走或删掉。字段**存在性**属于功能契约（留在功能用例），字段的**具体耗时**不是。
+- **禁止**为了让抖动消失而删除功能断言、收紧其它阈值或跳过用例。
+
+**为什么**：功能回归的结论必须是「行为对不对」，不能是「当时机器有多快」。实测随机顺序全量跑时，
+`CasbinControllerTest::testReloadPolicySuccess` 里的 `assertLessThan(1000, execution_time_ms)`
+在近 3000 条断言的压力下出现过 1029ms / 1114ms，于是功能完全正常的用例变红、整轮结论作废。
+同类问题还有令牌桶用例：`rate = 1.0` 时「耗尽即拒绝」实际等价于「5 次 Redis 调用必须在 1 秒内跑完」。
+
+**默认套件如何排除**：`phpunit.xml` 中声明了组排除，因此 `php think test` 与 CI **永远不会**执行该组：
+
+```xml
+<groups>
+    <exclude>
+        <group>performance</group>
+    </exclude>
+</groups>
+```
+
+`tests/Benchmark/`（`PermissionServiceBenchmarkTest` 等基准）**不在任何默认套件里**，
+不要把它加进 `phpunit.xml` 的 `testsuites` —— 基准只在性能配置下运行。
+
+**怎么跑这一组**（均在 `alkaid-backend` 容器内，注意容器内的工作目录是 `/var/www/html`）：
+
+```bash
+# 只跑 performance 组
+docker exec alkaid-backend ./vendor/bin/phpunit --group performance
+
+# 跑完整性能套件 = tests/Benchmark + tests/Performance + 功能文件里的 performance 用例
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.performance.xml
+
+# 只想跑基准目录
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.performance.xml --testsuite=Benchmark
+```
+
+`phpunit.performance.xml` 用 `<groups><include><group>performance</group></include></groups>`
+挑选用例：打了 `#[Group('performance')]` 的用例自动入选；整份目录都属于性能套件的，用
+`<directory groups="performance">` 打标签。这份配置的 `bootstrap` **必须**是 `vendor/autoload.php`
+（历史版本写的是 `vendor/topthink/framework/src/helper.php`，缺 autoloader 会让所有用例 Class not found）。
+
+**怎么调阈值**：阈值一律从环境变量读、代码里只写默认值；变量为空或非法时**回落默认值**
+（不是「关掉预算」）。现有阈值：
+
+| 用例 | 环境变量 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `CasbinControllerTest::testReloadPolicyExecutionTimeWithinBudget` | `CASBIN_RELOAD_BUDGET_MS` | 3000 | 手动刷新 Casbin 策略的耗时预算（毫秒） |
+
+```bash
+# 在慢机器上放宽 / 在发布验证时收紧
+docker exec alkaid-backend env CASBIN_RELOAD_BUDGET_MS=1500 ./vendor/bin/phpunit --group performance
+```
+
+**新写测试时，什么情况该打 `performance` 组**（按下表顺序判断，能确定性化就不要进组）：
+
+| 情况 | 处置 |
+| --- | --- |
+| 判据是墙钟时间 / 吞吐，且无法改写成确定性断言（P95 延迟、QPS、命中率、大循环总耗时） | 打 `#[Group('performance')]`，阈值走环境变量 + 宽松默认值 |
+| 想把默认值定成「刚好卡住现状」（实测 900ms 就写 1000ms） | **不允许**：预算要留数倍余量，否则等于把负载波动当回归 |
+| 判据是行为（是否放行、字段是否存在、`code` 是否为 0），只是实现里涉及时间 | **不许**打组，改成确定性写法：缩小 `rate` 让「补 1 个令牌」远超用例耗时，或把「等待」换成**有界轮询** |
+| 判断不了 | 先按确定性写；确实做不到才进组，并在用例注释里写清「为什么它只能是概率性验证」 |
+
+参考实现：`CasbinControllerTest` 把预算断言拆成独立用例（阈值可配），
+`RateLimitServiceTest` 把 4 个时间敏感用例改成「`DENY_RATE = 0.01` 的确定性拒绝」
++ 「有界轮询的确定性补充」，因此它们**仍然留在 Unit 套件**里，不需要打组。
+
 ## 8. CI 集成与覆盖率 (T-059)
 
 - CI 流水线 **必须** 在合入受保护分支前执行完整的自动化测试套件。

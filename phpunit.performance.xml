@@ -1,35 +1,86 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-         bootstrap="vendor/topthink/framework/src/helper.php"
+         bootstrap="vendor/autoload.php"
          colors="true"
          failOnRisky="true"
          failOnWarning="true"
-         cacheDirectory=".phpunit.cache">
+         cacheDirectory=".phpunit.cache/performance">
+    <!--
+      ============================================================
+      性能 / 基准套件（默认套件刻意不包含它）
+      ============================================================
+      这份配置的三条约束：
+
+      1. 只指向**真实存在**的目录。此前它写着 tests/Performance、
+         tests/Performance/Benchmark、tests/Performance/Load、tests/Performance/Stress ——
+         其中 Load / Stress 从来不存在，于是 `phpunit -c phpunit.performance.xml`
+         必然以 TestDirectoryNotFoundException 结束（默认跑与 CI 都不会碰它，
+         所以坏掉很久也没人发现）。现在只保留：
+           tests/Benchmark    （PermissionServiceBenchmarkTest）
+           tests/Performance  （CasbinPerformanceTest 与 Support 工具类）
+         套件名只有 Benchmark 一个，跑单套件用 testsuite 参数指定它。
+
+      2. bootstrap 必须是 composer autoload。原来是
+         bootstrap="vendor/topthink/framework/src/helper.php"，只加载助手函数、
+         不注册任何 autoloader，任何继承 Tests\ThinkPHPTestCase 的用例都会
+         Class not found。与 phpunit.xml 保持一致改用 vendor/autoload.php；
+         ThinkPHP 的 helper.php 由 Tests\ThinkPHPTestCase 自己在引导阶段加载。
+
+      3. 性能组用例通过 groups 的 include 纳入。groups 元素是**全局过滤器**：
+         只跑 performance 组的用例。因此：
+           - 打了 #[Group('performance')] 的用例（例如
+             CasbinControllerTest::testReloadPolicyExecutionTimeWithinBudget）自动入选；
+           - 没有该属性、但整份目录都属于性能套件的，用 directory 上的
+             groups="performance" 显式打上组标签（PHPUnit 11 支持在 directory/file
+             上声明 groups）。
+         这样「同一份配置既能跑基准目录、又只挑功能文件里的性能预算用例」，
+         不必为了性能断言去搬动测试文件（搬文件会让 check-phpunit-config 的路径白名单、
+         CI 引用一起漂移）。
+
+      注意：不要打开 beStrictAboutOutputDuringTests。tests/Benchmark 下的用例会 echo
+      性能指标（这是基准测试的正常产物），开启后配合 failOnRisky="true" 会全部变 risky。
+    -->
     <testsuites>
-        <testsuite name="Performance">
-            <directory>tests/Performance</directory>
-        </testsuite>
         <testsuite name="Benchmark">
-            <directory>tests/Performance/Benchmark</directory>
-        </testsuite>
-        <testsuite name="Load">
-            <directory>tests/Performance/Load</directory>
-        </testsuite>
-        <testsuite name="Stress">
-            <directory>tests/Performance/Stress</directory>
+            <directory groups="performance">tests/Benchmark</directory>
+            <directory groups="performance">tests/Performance</directory>
+            <!--
+                下面两个功能文件里只有性能预算用例入选：
+                它们不打 groups 属性，靠用例自身的 #[Group('performance')] 命中 include；
+                同文件里的功能用例属于 default 组，会被下面 groups 的 include 过滤掉。
+                若给 file 硬加 groups="performance"，反而会把整份文件的**所有**用例
+                都打上该组（directory/file 级 groups 会覆盖用例自身的分组）。
+            -->
+            <file>tests/Feature/Admin/CasbinControllerTest.php</file>
+            <!--
+                限流服务用例目前全部做成了**确定性**断言（缩小 rate 而不是标 performance 组），
+                所以这一行今天筛不出任何用例；保留它是因为「性能预算」最可能先出现在这里
+                （例如未来需要断言令牌桶在真实时间下的吞吐）。放进来的成本为零。
+            -->
+            <file>tests/Unit/Infrastructure/RateLimit/RateLimitServiceTest.php</file>
         </testsuite>
     </testsuites>
+    <groups>
+        <include>
+            <group>performance</group>
+        </include>
+    </groups>
     <source>
         <include>
             <directory>app</directory>
-            <directory>Infrastructure</directory>
-            <directory>Domain</directory>
+            <directory>domain</directory>
+            <directory>infrastructure</directory>
         </include>
     </source>
     <php>
+        <!--
+            与 phpunit.xml 一致：连接参数（DB_*）在这里**不声明**，由 Tests\ThinkPHPTestCase
+            解析（进程环境优先，兜底值指向测试库 alkaid_sys_test）。
+            这样这份配置不会把测试指向开发库 alkaid_sys，也不会与
+            scripts/check-phpunit-config.php 的「DB_* 一律不得 force」规则冲突。
+        -->
         <env name="APP_DEBUG" value="false"/>
         <env name="PERFORMANCE_TEST" value="true"/>
     </php>
 </phpunit>
-

@@ -139,6 +139,86 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 - For performance tests, use `phpunit.performance.xml` configuration.
 - Exit code 0 indicates all tests passed; non-zero indicates failures.
 
+### 7.1 Performance-budget assertions do not belong to the functional suite (`performance` group)
+
+**Rule**: a test that asserts *how fast this machine happens to be* **MUST NOT** live in the
+functional regression suite.
+
+- **Wall-clock assertions** (latency / throughput / QPS / hit rate / timeouts) **MUST** carry
+  `#[Group('performance')]`, and their thresholds **MUST** be overridable via environment variables
+  with a generous default.
+- **Functional assertions** (response fields present, `code`/`message`, allowed vs. denied, type
+  contract) **MUST** stay in the regular test. Field *presence* is a functional contract and stays;
+  the field's *value as elapsed time* does not.
+- **Never** delete a functional assertion, tighten an unrelated threshold or skip a test just to make
+  a flaky run green.
+
+**Why**: a functional run must answer "is the behaviour correct?", not "was the machine fast at that
+moment?". In practice, `CasbinControllerTest::testReloadPolicySuccess` used to contain
+`assertLessThan(1000, execution_time_ms)`; under the load of ~3000 assertions it measured
+1029ms / 1114ms, turning a perfectly correct behaviour red and invalidating the whole run.
+The token bucket had the same defect: with `rate = 1.0`, "deny once exhausted" actually asserted
+"five Redis round-trips finish within one second".
+
+**How the default suite excludes it**: `phpunit.xml` declares the group exclusion, so `php think test`
+and CI never execute these tests:
+
+```xml
+<groups>
+    <exclude>
+        <group>performance</group>
+    </exclude>
+</groups>
+```
+
+`tests/Benchmark/` (benchmarks such as `PermissionServiceBenchmarkTest`) is **not** part of any default
+suite — do not add it to `phpunit.xml`'s `testsuites`; benchmarks only run under the performance config.
+
+**Running the group** (inside the `alkaid-backend` container; its working directory is `/var/www/html`):
+
+```bash
+# performance group only
+docker exec alkaid-backend ./vendor/bin/phpunit --group performance
+
+# full performance suite = tests/Benchmark + tests/Performance + performance-group tests in feature files
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.performance.xml
+
+# benchmark directory only
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.performance.xml --testsuite=Benchmark
+```
+
+`phpunit.performance.xml` selects tests with `<groups><include><group>performance</group></include></groups>`:
+tests annotated `#[Group('performance')]` are picked up automatically, and directories that belong to
+the performance suite as a whole are tagged with `<directory groups="performance">`. Its `bootstrap`
+**MUST** be `vendor/autoload.php` (it used to point at `vendor/topthink/framework/src/helper.php`,
+which registers no autoloader and makes every test fail with "Class not found").
+
+**Tuning a threshold**: thresholds are read from the environment, with a default in code; an empty or
+invalid value falls back to the default (it does **not** disable the budget). Current thresholds:
+
+| Test | Environment variable | Default | Meaning |
+| --- | --- | --- | --- |
+| `CasbinControllerTest::testReloadPolicyExecutionTimeWithinBudget` | `CASBIN_RELOAD_BUDGET_MS` | 3000 | Reload-policy latency budget (ms) |
+
+```bash
+# loosen on a slow machine / tighten for a release check
+docker exec alkaid-backend env CASBIN_RELOAD_BUDGET_MS=1500 ./vendor/bin/phpunit --group performance
+```
+
+**When to tag a new test with `performance`** (decide in this order; make it deterministic if you can):
+
+| Situation | Action |
+| --- | --- |
+| Criterion is wall-clock/throughput and cannot be rewritten deterministically (P95 latency, QPS, hit rate, total time of a large loop) | Tag `#[Group('performance')]`; threshold from env + generous default |
+| You want the default to "just barely fit today's measurement" (measured 900ms, assert 1000ms) | **Forbidden**: leave a multiple-factor margin, otherwise load jitter is treated as a regression |
+| Criterion is behaviour (allowed/denied, field present, `code == 0`) and only the implementation involves time | **Do not** tag: make it deterministic — shrink `rate` so refilling one token takes far longer than the test, or replace waiting with **bounded polling** |
+| Undecided | Write it deterministically first; tag only if that is impossible, and document in the test why it can only be probabilistic |
+
+Reference implementations: `CasbinControllerTest` splits the budget into its own test (threshold from
+env), and `RateLimitServiceTest` turns its four time-sensitive tests into "deterministic deny at
+`DENY_RATE = 0.01`" plus "deterministic refill via bounded polling" — so they stay in the **Unit**
+suite and need no group at all.
+
 ## 8. CI Integration and Coverage (T-059)
 
 - The CI pipeline **MUST** run the full automated test suite on every merge into protected branches.
