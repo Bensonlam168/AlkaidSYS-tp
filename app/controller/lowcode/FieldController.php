@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
 use Infrastructure\Lowcode\Collection\Service\FieldManager;
 use Infrastructure\Lowcode\Collection\Field\FieldFactory;
 use think\App;
+use think\exception\HttpResponseException;
 use think\Response;
 
 /**
@@ -40,10 +42,27 @@ use think\Response;
  * `$this->request->tenantId()` 会抛 `Error: Call to a member function tenantId() on null`。
  * `RelationshipController` 一直是正确写法（接收 `App` 并调父构造函数），本类补齐。
  *
+ * ## 运行时 DDL 闸门与空 message（缺陷 B 的同类修复）
+ *
+ * 本类的两个动作都会真跑 DDL，因而都会撞上 `SchemaBuilder::assertCanRunDDL()`：
+ *   - `save`   → `FieldManager::addField()` → `addColumn`（`add_column`）
+ *   - `delete` → `FieldManager::removeField()` → `dropColumn`（`drop_column`）
+ *
+ * 闸门拦截时 `SchemaBuilder` 抛 `think\exception\HttpResponseException`。该异常
+ * **继承 `RuntimeException`**（⇒ `instanceof \Exception` 为真，`catch (\Exception)` 抓得到，
+ * 不会变成 500），但构造函数没有调用父类 ⇒ `getMessage()` 恒为空串。
+ * 于是原来的 `catch (\Exception $e) { return $this->error($e->getMessage()); }`
+ * 把「403 + 5003 + 明确原因」降级成「400 + 空 message」。
+ *
+ * 修法与 `CollectionController` 完全一致，实现集中在
+ * `app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses` trait，本类不再自带副本。
+ *
  * @package app\controller\lowcode
  */
 class FieldController extends ApiController
 {
+    use RuntimeDdlDeniedResponses;
+
     protected CollectionManager $collectionManager;
     protected FieldManager $fieldManager;
 
@@ -102,8 +121,13 @@ class FieldController extends ApiController
             $this->fieldManager->addField($name, $field, $tenantId, $siteId);
 
             return $this->success($field->toArray(), 'Field added successfully');
+        } catch (HttpResponseException $e) {
+            // 加列会真跑 DDL（add_column）。运行环境不允许运行时 DDL 时，
+            // SchemaBuilder 抛的 HttpResponseException 自身 message 为空，
+            // 不能让客户端只看到「没有原因的错误」——统一走共享 trait 的可读响应。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -126,8 +150,11 @@ class FieldController extends ApiController
             $this->fieldManager->removeField($name, $field, $tenantId, $siteId);
 
             return $this->success(null, 'Field removed successfully');
+        } catch (HttpResponseException $e) {
+            // 删列会真跑 DDL（drop_column），同 save()：拦截原因必须回传给调用方。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 }

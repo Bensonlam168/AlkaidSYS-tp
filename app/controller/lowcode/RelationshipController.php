@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses;
 use Domain\Lowcode\Collection\Model\Relationship;
 use Domain\Lowcode\Collection\Enum\RelationType;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
 use Infrastructure\Lowcode\Collection\Service\RelationshipManager;
 use think\App;
+use think\exception\HttpResponseException;
 use think\Response;
 
 /**
@@ -30,10 +32,27 @@ use think\Response;
  * `docs/technical-specs/api/route-reference.md`）是对外契约，URL 形状不应因此改变；
  * 且同一模块里 `CollectionController` / `FormSchemaController` 的形参本来就叫 `$name`。
  *
+ * ## 运行时 DDL 闸门与空 message（缺陷 B 的同类修复）
+ *
+ * 本类的两个动作都可能真跑 DDL，因而都可能撞上 `SchemaBuilder::assertCanRunDDL()`：
+ *   - `save`   → `RelationshipManager::addRelationship()` → 建中间表（`create_table`）
+ *   - `delete` → `RelationshipManager::removeRelationship()` → 删中间表（`drop_table`）
+ *
+ * 闸门拦截时 `SchemaBuilder` 抛 `think\exception\HttpResponseException`。该异常
+ * **继承 `RuntimeException`**（⇒ `instanceof \Exception` 为真，`catch (\Exception)` 抓得到，
+ * 不会变成 500），但构造函数没有调用父类 ⇒ `getMessage()` 恒为空串。
+ * 于是原来的 `catch (\Exception $e) { return $this->error($e->getMessage()); }`
+ * 把「403 + 5003 + 明确原因」降级成「400 + 空 message」。
+ *
+ * 修法与 `CollectionController` 完全一致，实现集中在
+ * `app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses` trait，本类不再自带副本。
+ *
  * @package app\controller\lowcode
  */
 class RelationshipController extends ApiController
 {
+    use RuntimeDdlDeniedResponses;
+
     protected CollectionManager $collectionManager;
     protected RelationshipManager $relationshipManager;
 
@@ -103,8 +122,13 @@ class RelationshipController extends ApiController
             $this->relationshipManager->addRelationship($name, $relationship, $tenantId, $siteId);
 
             return $this->success($relationship->toArray(), 'Relationship added successfully');
+        } catch (HttpResponseException $e) {
+            // belongs_to_many 关系会真建中间表（create_table）。运行环境不允许运行时 DDL 时，
+            // SchemaBuilder 抛的 HttpResponseException 自身 message 为空，
+            // 不能让客户端只看到「没有原因的错误」——统一走共享 trait 的可读响应。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -134,8 +158,11 @@ class RelationshipController extends ApiController
             );
 
             return $this->success(null, 'Relationship removed successfully');
+        } catch (HttpResponseException $e) {
+            // 删中间表会真跑 DDL（drop_table），同 save()：拦截原因必须回传给调用方。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 }
