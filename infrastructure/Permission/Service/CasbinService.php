@@ -180,7 +180,11 @@ class CasbinService
                     // 缓存未命中
                     // Cache miss
                     $this->cacheMisses++;
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
+                    // 【为什么捕 \Throwable】（R4）缓存读失败 → 降级直接调 Enforcer，
+                    // 属纯旁路：缓存坏了不该让「这次鉴权能不能做」跟着坏。
+                    // \TypeError 等 \Error 不继承 \Exception，只捕 \Exception 会让缓存侧类型错误
+                    // 穿透成 HTTP 500（R3 的实测放大路径）。
                     // Redis 故障，记录降级事件
                     // Redis failure, record degradation event
                     $this->recordCacheDegradation($e);
@@ -229,7 +233,14 @@ class CasbinService
                     Cache::set($cacheKey, $result, $cacheTtl);
                     // 登记键：不可枚举驱动（File 等）清理时依赖该索引
                     $this->purger()->trackKey($cacheKey);
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
+                    // 【为什么捕 \Throwable】（R4，本次缺陷的直接放大器）
+                    //   本 try 块里除了 `Cache::set()` 还有 `$this->purger()->trackKey($cacheKey)`。
+                    //   `trackKey` 一旦抛 \TypeError（参数类型/驱动返回值不符），在 PHP 里
+                    //   \TypeError **不继承** \Exception，旧写法 `catch (\Exception)` 抓不到，
+                    //   于是「缓存写失败本应只记 warning」被升级成 HTTP 500 —— 这正是 R3 实测到的
+                    //   现象。缓存写入是纯旁路：结果已经由 Enforcer 算出来了，写不进缓存
+                    //   最坏只是下一次仍走 Enforcer，绝不能影响本次返回值。
                     // 缓存写入失败，记录降级事件但不影响结果返回
                     // Cache write failed, record degradation but don't affect result
                     $this->recordCacheDegradation($e);
@@ -275,7 +286,11 @@ class CasbinService
             }
 
             return $result;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）本 catch **不吞异常**：记完日志就 `throw $e` 原样上抛，
+            // 对调用方可见的结果完全不变（\Error 本来就穿透旧写法）。
+            // 改成 \Throwable 只是让 \TypeError / \Error 也留下带 trace_id 的结构化日志，
+            // 否则这类「代码写错了」的错误在日志里完全没有痕迹，只剩框架的 500。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -356,7 +371,9 @@ class CasbinService
             ]);
 
             return $formattedPermissions;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）同 check()：本 catch 只做「记日志 + 原样上抛」，
+            // 不改变任何对外可见结果；扩到 \Throwable 是为了让 \Error 也进结构化日志。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -424,7 +441,10 @@ class CasbinService
                 'execution_time_ms' => round($executionTime, 2),
                 'timestamp' => time(),
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）本 catch 只做「记日志 + 原样上抛」，不改变结果。
+            // 注意：`loadPolicy()` 失败必须上抛 —— 策略没装好就继续鉴权会得到「全是拒绝」的
+            // 静默错答。这里扩到 \Throwable 只为补齐 \Error 的日志，不是为了让失败变得可忽略。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -687,10 +707,18 @@ class CasbinService
      * 记录缓存降级事件
      * Record cache degradation event
      *
-     * @param \Exception $e 异常对象 | Exception object
+     * 【参数类型必须是 \Throwable，不能是 \Exception】（R4）
+     *   调用点 {@see self::check()} 的两个 catch 已放宽到 `\Throwable`（否则 \TypeError 会穿透成 500）。
+     *   若这里仍声明 `\Exception`，把 \TypeError 传进来时 PHP 会在**实参检查**阶段再抛一个
+     *   \TypeError —— 而那一行位于 catch 块内部、try 之外，没有任何 catch 能接住它，
+     *   于是「降级」又会变成 500，等于白改。参数类型跟着放宽是这次修复的必要组成部分。
+     *
+     * 本方法只用到 getMessage()，\Throwable 与 \Exception 的可用面完全一致。
+     *
+     * @param \Throwable $e 异常或错误对象 | Throwable object (Exception or Error)
      * @return void
      */
-    protected function recordCacheDegradation(\Exception $e): void
+    protected function recordCacheDegradation(\Throwable $e): void
     {
         $this->cacheDegradationCount++;
         $this->lastCacheDegradationTime = time();

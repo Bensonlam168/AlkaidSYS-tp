@@ -163,8 +163,17 @@ class PermissionCacheService
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Cache failure, fallback to direct fetch | 缓存失败，回退到直接获取
+            //
+            // 【为什么捕 \Throwable 而不是 \Exception】（R4）
+            //   这里捕获的是**缓存旁路**的失败：L1/L2 读写、键登记（PermissionCachePurger::trackKey）等。
+            //   这类失败与「用户到底有哪些权限」无关，正确语义就是「缓存不可用 → 直查 DB」。
+            //   而 \TypeError / \Error（例如 trackKey 收到非字符串键、驱动的返回值类型不符）
+            //   在 PHP 里不继承 \Exception —— 只捕 \Exception 会让它们穿透这里，
+            //   把「本应降级」的缓存故障升级为 HTTP 500（R3 实测过的放大器路径）。
+            //   注意：真正决定授权结论的 $fetcher() 若抛 \Error，这里的 catch 仍会再调用一次，
+            //   第二次调用在 try 之外，异常照常上抛，不会被吞。
             $this->recordLatency($startTime);
 
             Log::error('Permission cache failure', [
@@ -208,7 +217,13 @@ class PermissionCacheService
 
             return $result;
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）同上：这里是「检查结果缓存」这一旁路的失败，
+            // 语义是「缓存不可用 → 回退到直接计算」，与授权结论本身无关。
+            // \Error / \TypeError 不继承 \Exception，只捕 \Exception 会让缓存侧的类型错误
+            // 穿透成 500，而它本应只让这次请求失去缓存加速。
+            // 回退语句 `return $checker();` 位于 try 之外：核心判定若真的抛 \Error，
+            // 第二次调用会把异常原样抛给调用方，不会变成「静默放行/静默拒绝」。
             Log::error('Permission check cache failure', [
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,

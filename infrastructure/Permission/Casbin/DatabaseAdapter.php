@@ -138,7 +138,11 @@ class DatabaseAdapter implements Adapter
                 'total_policies' => $roleCount + $permissionCount,
                 'cache' => $cacheEnabled ? 'miss' : 'disabled',
             ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）本 catch 只做「记日志 + 原样上抛」，不吞异常：
+            // `loadPolicy()` 是 Casbin 策略装配的入口，装不出策略就继续鉴权 = 静默全拒绝，
+            // 因此这里**必须**上抛。扩到 \Throwable 只是让 \TypeError / \Error 这类
+            // 「代码写错了」的错误也留下带 trace_id 的结构化日志（旧写法下它们直接穿到框架层）。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
