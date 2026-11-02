@@ -126,7 +126,8 @@
     "inUse": "This permission is in use by roles and cannot be deleted",
     "slugTip": "Permission Slug Guide",
     "slugTipFormat": "Format: resource.action (e.g., user.read)",
-    "slugTipExample": "Examples: tenant.read, role.write, permission.delete"
+    "slugTipExample": "Examples: tenant.read, role.write, permission.delete",
+    "immutableTip": "Permission code (slug / resource / action) cannot be changed after creation. To rename it, please add a new permission and migrate the role bindings."
   },
   "menu": {
     "title": "Menu Management",

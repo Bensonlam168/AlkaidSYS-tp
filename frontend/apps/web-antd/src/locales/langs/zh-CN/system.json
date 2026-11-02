@@ -126,7 +126,8 @@
     "inUse": "该权限正在被角色使用，无法删除",
     "slugTip": "权限标识说明",
     "slugTipFormat": "格式：resource.action（如：user.read）",
-    "slugTipExample": "示例：tenant.read、role.write、permission.delete"
+    "slugTipExample": "示例：tenant.read、role.write、permission.delete",
+    "immutableTip": "权限码（标识 / 资源 / 操作）创建后不可修改，如需变更请走迁移：新增权限后重新绑定角色。"
   },
   "menu": {
     "title": "菜单管理",

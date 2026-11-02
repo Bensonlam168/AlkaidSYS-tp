@@ -96,96 +96,145 @@ class PermissionCacheService
         $startTime = microtime(true);
         $traceId = request()->header('X-Trace-Id') ?: uniqid('perm_', true);
         $cacheKey = $this->getCacheKey($userId, $tenantId);
+        $l1Key = "l1:{$cacheKey}";
+        $l2Key = "l2:{$cacheKey}";
+
+        // ===============================================================
+        // 第 1 段：只读缓存（try 里**只有**缓存读）
+        //
+        // 【为什么把 $fetcher() 挪出 try】（#2）
+        //   旧写法把「缓存读 + 核心取数 $fetcher() + 缓存回写」整段包进一个 try，
+        //   catch 分支又 `return $fetcher();`。于是核心抛 \Error/\TypeError 时：
+        //     1) 核心被**调用两次**（try 内一次 + catch 里一次），多出一次无谓的 DB 查询；
+        //     2) 日志留下「Permission cache failure」—— 把「业务代码崩了」记成「缓存故障」，
+        //        排查时会被引到缓存方向，而真正的缺陷在业务代码里。
+        //   现在 try 只负责缓存读，核心取数在 try 之外（第 2 段），语义变成：
+        //   **缓存故障 → 降级直算；核心故障 → 原样上抛，且只调用一次。**
+        // ===============================================================
+        $cached = null;
+        $hitLevel = null;
 
         try {
             // Try L1 cache first | 首先尝试 L1 缓存
-            $l1Key = "l1:{$cacheKey}";
-            $result = Cache::get($l1Key);
+            $cached = Cache::get($l1Key);
 
-            if ($result !== null) {
-                // L1 cache hit | L1 缓存命中
-                $this->stats['l1_hits']++;
-                $this->recordLatency($startTime);
+            if ($cached !== null) {
+                $hitLevel = 'l1';
+            } else {
+                // L1 cache miss, try L2 cache | L1 缓存未命中，尝试 L2 缓存
+                $this->stats['l1_misses']++;
+                $cached = Cache::get($l2Key);
 
-                Log::debug('Permission cache: L1 hit', [
-                    'trace_id' => $traceId,
-                    'user_id' => $userId,
-                    'tenant_id' => $tenantId,
-                    'cache_key' => $cacheKey,
-                ]);
-
-                return $result;
+                if ($cached !== null) {
+                    $hitLevel = 'l2';
+                } else {
+                    $this->stats['l2_misses']++;
+                }
             }
-
-            // L1 cache miss, try L2 cache | L1 缓存未命中，尝试 L2 缓存
-            $this->stats['l1_misses']++;
-            $l2Key = "l2:{$cacheKey}";
-            $result = Cache::get($l2Key);
-
-            if ($result !== null) {
-                // L2 cache hit | L2 缓存命中
-                $this->stats['l2_hits']++;
-
-                // Promote to L1 cache | 提升到 L1 缓存
-                $this->writeCache($l1Key, $result, $this->l1Ttl);
-
-                $this->recordLatency($startTime);
-
-                Log::debug('Permission cache: L2 hit', [
-                    'trace_id' => $traceId,
-                    'user_id' => $userId,
-                    'tenant_id' => $tenantId,
-                    'cache_key' => $cacheKey,
-                ]);
-
-                return $result;
-            }
-
-            // L2 cache miss, fetch from database | L2 缓存未命中，从数据库获取
-            $this->stats['l2_misses']++;
-            $this->stats['total_queries']++;
-
-            $result = $fetcher();
-
-            // Store in both L1 and L2 caches | 存储到 L1 和 L2 缓存
-            $this->writeCache($l1Key, $result, $this->l1Ttl);
-            $this->writeCache($l2Key, $result, $this->l2Ttl);
-
-            $this->recordLatency($startTime);
-
-            Log::debug('Permission cache: miss (fetched from DB)', [
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable 而不是 \Exception】（R4）
+            //   这里捕获的是**缓存旁路**的失败：L1/L2 读取、驱动的返回值类型不符等。
+            //   这类失败与「用户到底有哪些权限」无关，正确语义就是「缓存不可用 → 直查 DB」。
+            //   而 \TypeError / \Error（例如驱动的返回值类型不符）在 PHP 里不继承 \Exception ——
+            //   只捕 \Exception 会让它们穿透这里，把「本应降级」的缓存故障升级为 HTTP 500
+            //   （R3 实测过的放大器路径）。
+            //   注意：本 catch 只吞「缓存读失败」，此时按「未命中」处理，核心在第 2 段里
+            //   **仍然只调用一次**，且不在任何 catch 的管辖范围内。
+            $cached = null;
+            $hitLevel = null;
+            $this->logCacheFault('read (degraded to direct fetch)', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
                 'cache_key' => $cacheKey,
-                'permissions_count' => count($result),
-            ]);
+            ], $e);
+        }
 
-            return $result;
-
-        } catch (\Throwable $e) {
-            // Cache failure, fallback to direct fetch | 缓存失败，回退到直接获取
-            //
-            // 【为什么捕 \Throwable 而不是 \Exception】（R4）
-            //   这里捕获的是**缓存旁路**的失败：L1/L2 读写、键登记（PermissionCachePurger::trackKey）等。
-            //   这类失败与「用户到底有哪些权限」无关，正确语义就是「缓存不可用 → 直查 DB」。
-            //   而 \TypeError / \Error（例如 trackKey 收到非字符串键、驱动的返回值类型不符）
-            //   在 PHP 里不继承 \Exception —— 只捕 \Exception 会让它们穿透这里，
-            //   把「本应降级」的缓存故障升级为 HTTP 500（R3 实测过的放大器路径）。
-            //   注意：真正决定授权结论的 $fetcher() 若抛 \Error，这里的 catch 仍会再调用一次，
-            //   第二次调用在 try 之外，异常照常上抛，不会被吞。
+        // L1 cache hit | L1 缓存命中：直接返回，绝不触碰核心取数
+        if ($hitLevel === 'l1') {
+            $this->stats['l1_hits']++;
             $this->recordLatency($startTime);
 
-            Log::error('Permission cache failure', [
+            Log::debug('Permission cache: L1 hit', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
-                'error' => $e->getMessage(),
+                'cache_key' => $cacheKey,
             ]);
 
-            // Return fetched data | 返回获取的数据
-            return $fetcher();
+            return $cached;
         }
+
+        // L2 cache hit | L2 缓存命中：先拿到结果，再「尽力」提升到 L1
+        if ($hitLevel === 'l2') {
+            $this->stats['l2_hits']++;
+
+            // Promote to L1 cache | 提升到 L1 缓存
+            //
+            // 提升是纯旁路：写失败最多让下一个请求仍走 L2，**绝不能丢掉已经拿到的 L2 结果**。
+            // 旧写法把这一步和核心取数放在同一个 try 里，写失败会掉进 catch 再查一次 DB。
+            try {
+                $this->writeCache($l1Key, $cached, $this->l1Ttl);
+            } catch (\Throwable $e) {
+                $this->logCacheFault('write (L2→L1 promotion skipped)', [
+                    'trace_id' => $traceId,
+                    'user_id' => $userId,
+                    'tenant_id' => $tenantId,
+                    'cache_key' => $cacheKey,
+                ], $e);
+            }
+
+            $this->recordLatency($startTime);
+
+            Log::debug('Permission cache: L2 hit', [
+                'trace_id' => $traceId,
+                'user_id' => $userId,
+                'tenant_id' => $tenantId,
+                'cache_key' => $cacheKey,
+            ]);
+
+            return $cached;
+        }
+
+        // ===============================================================
+        // 第 2 段：核心取数（**在 try 之外**）
+        //
+        // 这一行就是「用户到底有哪些权限」的唯一来源。它抛出的任何 \Throwable
+        // 都会原样上抛给调用方，且**只被调用这一次** —— 不存在「catch 里再调一次」的路径。
+        // ===============================================================
+        $this->stats['total_queries']++;
+        $result = $fetcher();
+
+        // ===============================================================
+        // 第 3 段：回写缓存（纯旁路）
+        //
+        // 写失败只记一条「缓存故障」，**已算出的结果照常返回** ——
+        // 否则一次 Redis 抖动就会把「查到了权限」变成「这次请求 500」。
+        // ===============================================================
+        try {
+            // Store in both L1 and L2 caches | 存储到 L1 和 L2 缓存
+            $this->writeCache($l1Key, $result, $this->l1Ttl);
+            $this->writeCache($l2Key, $result, $this->l2Ttl);
+        } catch (\Throwable $e) {
+            $this->logCacheFault('write (result still returned)', [
+                'trace_id' => $traceId,
+                'user_id' => $userId,
+                'tenant_id' => $tenantId,
+                'cache_key' => $cacheKey,
+            ], $e);
+        }
+
+        $this->recordLatency($startTime);
+
+        Log::debug('Permission cache: miss (fetched from DB)', [
+            'trace_id' => $traceId,
+            'user_id' => $userId,
+            'tenant_id' => $tenantId,
+            'cache_key' => $cacheKey,
+            'permissions_count' => count($result),
+        ]);
+
+        return $result;
     }
 
     /**
@@ -203,37 +252,58 @@ class PermissionCacheService
         // 对于单个权限检查，我们可以短暂缓存结果
         $cacheKey = $this->getPermissionCheckCacheKey($userId, $tenantId, $permissionCode);
 
+        // ===============================================================
+        // 第 1 段：只读缓存（try 里**只有**这一次 Cache::get）
+        //
+        // 【为什么把 $checker() 挪出 try】（#2）
+        //   旧写法把 `$checker()` 与 `writeCache()` 也包在同一个 try 里，catch 分支再
+        //   `return $checker();` —— 核心判定抛 \Error/\TypeError 时会被**调用两次**，
+        //   并被记成「Permission check cache failure」（把业务缺陷记成缓存故障）。
+        //   现在 try 只做缓存读，核心判定在 try 之外（第 2 段）。
+        // ===============================================================
+        $cached = null;
+
         try {
             $cached = Cache::get($cacheKey);
-            if ($cached !== null) {
-                return (bool) $cached;
-            }
-
-            $result = $checker();
-
-            // Cache for a shorter time (30s) for permission checks
-            // 权限检查缓存时间较短（30秒）
-            $this->writeCache($cacheKey, $result, 30);
-
-            return $result;
-
         } catch (\Throwable $e) {
             // 【为什么捕 \Throwable】（R4）同上：这里是「检查结果缓存」这一旁路的失败，
             // 语义是「缓存不可用 → 回退到直接计算」，与授权结论本身无关。
             // \Error / \TypeError 不继承 \Exception，只捕 \Exception 会让缓存侧的类型错误
             // 穿透成 500，而它本应只让这次请求失去缓存加速。
-            // 回退语句 `return $checker();` 位于 try 之外：核心判定若真的抛 \Error，
-            // 第二次调用会把异常原样抛给调用方，不会变成「静默放行/静默拒绝」。
-            Log::error('Permission check cache failure', [
+            // 失败即按「未命中」处理：往下走第 2 段，核心仍只被调用一次。
+            $cached = null;
+            $this->logCacheFault('check read (degraded to direct check)', [
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
                 'permission_code' => $permissionCode,
-                'error' => $e->getMessage(),
-            ]);
-
-            // Fallback to direct check | 回退到直接检查
-            return $checker();
+            ], $e);
         }
+
+        if ($cached !== null) {
+            return (bool) $cached;
+        }
+
+        // ===============================================================
+        // 第 2 段：核心判定（**在 try 之外**：故障原样上抛，且只调用一次）
+        // ===============================================================
+        $result = $checker();
+
+        // ===============================================================
+        // 第 3 段：写缓存（纯旁路，30s）—— 写失败仍返回已算出的判定
+        // ===============================================================
+        try {
+            // Cache for a shorter time (30s) for permission checks
+            // 权限检查缓存时间较短（30秒）
+            $this->writeCache($cacheKey, $result, 30);
+        } catch (\Throwable $e) {
+            $this->logCacheFault('check write (decided result still returned)', [
+                'user_id' => $userId,
+                'tenant_id' => $tenantId,
+                'permission_code' => $permissionCode,
+            ], $e);
+        }
+
+        return $result;
     }
 
     /**
@@ -404,6 +474,32 @@ class PermissionCacheService
         $this->purger()->purge([
             "permission:tenant:{$tenantId}:user:{$userId}:check:",
         ]);
+    }
+
+    /**
+     * 写一条「缓存故障」日志（只记缓存旁路，不记核心失败）
+     *
+     * 【为什么单独抽一个方法】（#2 的日志语义修正）
+     *   `getUserPermissions()` / `hasPermission()` 旧实现用同一个 catch 兜住「缓存读写」和
+     *   「核心取数/判定」两类失败，于是核心抛 \Error 时也会写一条 message 形如
+     *   「Permission cache failure」的日志 —— 排查时会被引向缓存（本无问题），
+     *   而真正的缺陷（业务代码崩溃）反而没有任何直接线索。
+     *
+     *   现在：**只有缓存侧**的失败走这里，message 统一以
+     *   `Permission cache fault: {stage}` 开头；核心失败不写日志、原样上抛，
+     *   由调用方与框架异常处理器记录（那才是它该出现的地方）。
+     *
+     * @param string $stage 失败阶段（read / write / promotion）
+     * @param array $context 结构化上下文
+     * @param \Throwable $e 缓存侧抛出的异常或错误
+     * @return void
+     */
+    protected function logCacheFault(string $stage, array $context, \Throwable $e): void
+    {
+        Log::error('Permission cache fault: ' . $stage, array_merge($context, [
+            'error_type' => get_class($e),
+            'error' => $e->getMessage(),
+        ]));
     }
 
     /**

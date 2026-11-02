@@ -16,8 +16,17 @@ const emits = defineEmits(['success']);
 const formData = ref<SystemPermissionApi.SystemPermission>();
 const id = ref<number>();
 
+/**
+ * 是否编辑态 | Whether the drawer is in edit mode
+ *
+ * 编辑态下 `slug` / `resource` / `action` 必须置灰：后端把权限码当作不可变字段，
+ * 值不同会返回 422（详见 `../data.ts` 的 `PERMISSION_CODE_FIELDS`）。
+ * 这里用 computed 传给 schema，抽屉切换时会重新求值。
+ */
+const isEditMode = computed(() => Boolean(formData.value?.id));
+
 const [Form, formApi] = useVbenForm({
-  schema: useFormSchema(),
+  schema: useFormSchema({ isEditMode: () => isEditMode.value }),
   showDefaultActions: false,
 });
 
@@ -29,11 +38,9 @@ const [Drawer, drawerApi] = useVbenDrawer({
     drawerApi.lock();
 
     try {
-      if (id.value) {
-        await updatePermission(id.value, values);
-      } else {
-        await createPermission(values);
-      }
+      await (id.value
+        ? updatePermission(id.value, values)
+        : createPermission(values));
       emits('success');
       drawerApi.close();
     } catch {
@@ -73,10 +80,18 @@ const getDrawerTitle = computed(() => {
   <Drawer :title="getDrawerTitle">
     <Form />
 
+    <!-- Immutable Permission Code Tip | 权限码不可变提示（仅编辑态） -->
+    <div
+      v-if="isEditMode"
+      class="mt-4 rounded bg-amber-50 p-3 text-sm text-amber-700"
+    >
+      {{ $t('system.permission.immutableTip') }}
+    </div>
+
     <!-- Slug Format Tip | Slug 格式提示 -->
-    <div class="mt-4 p-3 bg-blue-50 rounded text-sm text-blue-700">
-      <div class="font-medium mb-1">{{ $t('system.permission.slugTip') }}</div>
-      <ul class="list-disc pl-4 space-y-1">
+    <div class="mt-4 rounded bg-blue-50 p-3 text-sm text-blue-700">
+      <div class="mb-1 font-medium">{{ $t('system.permission.slugTip') }}</div>
+      <ul class="list-disc space-y-1 pl-4">
         <li>{{ $t('system.permission.slugTipFormat') }}</li>
         <li>{{ $t('system.permission.slugTipExample') }}</li>
       </ul>

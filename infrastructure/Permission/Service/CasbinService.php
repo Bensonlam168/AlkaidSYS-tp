@@ -420,27 +420,14 @@ class CasbinService
         try {
             // 重新加载策略
             // Reload policy
+            //
+            // 【try 里只放核心调用】（#2 同类收窄）
+            //   收窄前这个 try 同时包住「核心 loadPolicy()」与「旁路 Cache::set()」，
+            //   于是缓存写失败（Redis 抖动 / \TypeError）会被记成「Casbin policy reload failed」
+            //   并**原样上抛** —— 而此刻策略其实已经装好了。方向与 #2 相反，根因相同：
+            //   核心与旁路共用了一个 try，谁失败都会冒充另一个。
+            //   现在核心失败 → 记日志 + 原样上抛（不变）；旁路失败 → 只记 warning（不留假故障）。
             $this->enforcer->loadPolicy();
-
-            // 更新缓存时间戳
-            // Update cache timestamp
-            Cache::set('casbin_last_reload', time());
-
-            // 清除权限检查缓存
-            // Clear permission check cache
-            $this->clearCache();
-
-            // 计算执行时间
-            // Calculate execution time
-            $executionTime = (microtime(true) - $startTime) * 1000; // ms
-
-            // 记录策略刷新结果
-            // Log policy reload result
-            Log::info('Casbin policy reloaded', [
-                'trace_id' => $traceId,
-                'execution_time_ms' => round($executionTime, 2),
-                'timestamp' => time(),
-            ]);
         } catch (\Throwable $e) {
             // 【为什么捕 \Throwable】（R4）本 catch 只做「记日志 + 原样上抛」，不改变结果。
             // 注意：`loadPolicy()` 失败必须上抛 —— 策略没装好就继续鉴权会得到「全是拒绝」的
@@ -465,6 +452,38 @@ class CasbinService
             // Throw exception
             throw $e;
         }
+
+        try {
+            // 更新缓存时间戳
+            // Update cache timestamp
+            //
+            // 旁路：写不进时间戳最坏是「下一次检查再 reload 一遍」（多一次 loadPolicy），
+            // 绝不能让「策略已成功重载」变成异常 —— 那会把一次缓存抖动升级成 HTTP 500，
+            // 且此时 loadPolicy() 早已完成，上抛的异常与真实结果完全不符。
+            Cache::set('casbin_last_reload', time());
+        } catch (\Throwable $e) {
+            Log::warning('Casbin reload timestamp write failed (policy already reloaded)', [
+                'trace_id' => $traceId,
+                'error_type' => get_class($e),
+                'error_message' => $e->getMessage(),
+            ]);
+        }
+
+        // 清除权限检查缓存（clearCache() 内部已自带 try/catch，失败只记 warning）
+        // Clear permission check cache (clearCache() swallows its own failures)
+        $this->clearCache();
+
+        // 计算执行时间
+        // Calculate execution time
+        $executionTime = (microtime(true) - $startTime) * 1000; // ms
+
+        // 记录策略刷新结果
+        // Log policy reload result
+        Log::info('Casbin policy reloaded', [
+            'trace_id' => $traceId,
+            'execution_time_ms' => round($executionTime, 2),
+            'timestamp' => time(),
+        ]);
     }
 
     /**
