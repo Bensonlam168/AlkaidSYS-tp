@@ -19,9 +19,14 @@ use think\console\Output;
  *   php think test                           # Run all tests | 运行所有测试
  *   php think test --testsuite=Unit          # Run Unit tests only | 仅运行单元测试
  *   php think test --testsuite=Feature       # Run Feature tests only | 仅运行功能测试
+ *   php think test --testsuite=Legacy        # Run static guard tests | 仅运行静态守卫测试
  *   php think test --filter=testMethodName   # Filter by method name | 按方法名过滤
- *   php think test --coverage-html=coverage  # Generate HTML coverage | 生成 HTML 覆盖率报告
+ *   php think test --passthru tests/Unit/FooTest.php  # Run one file | 运行单个测试文件
+ *   php think test --coverage-html=coverage  # HTML coverage (needs xdebug/pcov) | 生成 HTML 覆盖率报告（需覆盖率驱动）
  *   php think test -c phpunit.performance.xml # Use custom config | 使用自定义配置
+ *
+ * 注意 | Note：本命令**不接受位置参数**，`php think test tests/Unit/FooTest.php` 会报
+ * `Too many arguments.`。指定文件或目录必须走 `--passthru`（透传给 PHPUnit）。
  *
  * @package app\command
  * @since T-056
@@ -51,7 +56,11 @@ class TestCommand extends Command
                 'testsuite',
                 's',
                 Option::VALUE_OPTIONAL,
-                'Test suite name (Unit/Feature/Performance) | 测试套件名称',
+                // 与 phpunit.xml 实际的 5 个 testsuite 保持一致（Unit/Feature/Integration/E2E/Legacy）。
+                // 此前写作 Unit/Feature/Performance，两处都错：Performance 不是套件
+                // （性能用例是 #[Group('performance')] 被 phpunit.xml 的 <groups><exclude> 排除），
+                // 而真正存在的 Integration / E2E / Legacy 被漏写。
+                'Test suite name (Unit/Feature/Integration/E2E/Legacy) | 测试套件名称',
                 null
             )
             ->addOption(
