@@ -363,4 +363,4 @@ CI 门禁：`.github/workflows/docs-check.yml`，check 名称 `Documentation Con
   - 有无伪键：`php -r '$d = parse_ini_file(".env.example", true, INI_SCANNER_RAW) ?: []; var_dump(array_values(array_filter(array_keys($d), fn ($k) => !preg_match("/^[A-Z][A-Z0-9_]*$/", (string) $k))));'`
     —— 必须输出 `array(0) {}`。非空即说明注释里有半角 `=`。
 - Avoid committing generated artifacts like `vendor/`, `runtime/`, and `node_modules/`.
-- **禁止提交嵌套 `vendor/`**：根 `.gitignore` 的 `/vendor/` 只对根目录生效，`plugins/**/vendor/` 需单独忽略（现存问题见质量审查报告 C-3）。
+- **禁止提交嵌套 `vendor/`**：根 `.gitignore` 的 `/vendor` 是根锚定的，管不到 `plugins/**/vendor/`，故「依赖与构建产物」分组已单独补上 `plugins/**/vendor/`；规则现处于生效状态（`plugins/workflow-engine/vendor` 历史上被跟踪的 4,270 个文件已用 `git rm -r --cached` 出库，改由插件自身的 `composer.json` / `composer.lock` 重建；问题来龙去脉见质量审查报告 C-3）。

@@ -14,6 +14,15 @@
 # 依赖与构建产物
 # ---------------------------------------------------------------------------
 /vendor
+# 插件自带的嵌套 vendor（plugin 是独立 composer 包，各自 composer install 产生）
+# 必须单独写：上面的 /vendor 是**根锚定**的，只挡仓库根下的 vendor，
+# 对 plugins/*/vendor/ 完全无效（历史上 plugins/workflow-engine/vendor 因此入库了 4,270 个文件）。
+# 选 `plugins/**/vendor/` 而不是宽泛的 `vendor/`（任意层级）：
+#   1. 范围锁在 plugins/ 子树内，不会顺手把将来某个「确实想入库」的 vendor 目录
+#      （如 tests/fixtures/vendor、docs 示例里的 vendor 快照）静默忽略掉；
+#   2. `**` 覆盖任意深度，比 `plugins/*/vendor/` 更宽：插件内部再嵌套
+#      （如 plugins/x/packages/y/vendor）也会被挡住，不必每次新增层级就改这一行。
+plugins/**/vendor/
 /node_modules/
 /frontend/node_modules/
 /frontend/dist/
@@ -110,6 +119,35 @@ README.local-merge-backup.md
 
 # 本地容器端口冲突 override（不入库）
 docker-compose.override.local.yml
+
+# ---------------------------------------------------------------------------
+# 跨机器一致的「本机专有文件」规则（下沉自全局 ignore）
+#
+# 下方两条原本只写在本机 `~/.config/git/ignore` 里。全局 ignore 不会随仓库分发，
+# 换台机器 / CI 干净检出 / 新同事克隆后完全不起作用 —— 属于「本机以为挡住了、
+# 别人那边什么都没挡」的僵尸规则：本地 `git status` 干净，别人那儿照样能提交进来。
+# 因此凡是对**代码正确性**或**文档门禁**有影响的忽略规则，一律放进仓库本文件。
+# ---------------------------------------------------------------------------
+
+# Claude Code 本地权限配置（内含本机绝对路径与已授权命令，私有不入库）
+# 刻意保留 **/ 前缀而不是只写 `.claude/`：项目根、frontend/、plugins/*/ 下都可能各有一份
+# 独立工作区配置，任何一个被提交都会泄漏本机信息。`**/x` 与裸 `x` 在 gitignore 里等价
+# （均匹配任意层级），此处写全是为了让「任意层级」这个意图在 diff 里一眼可见。
+**/.claude/settings.local.json
+
+# Qoder 本地个人文件（私有不入库）
+# 吸收自本机全局 ignore 的原规则：AGENTS.local.md、*.local.md
+# 其中 AGENTS.local.md 已由 *.local.md 覆盖，按本文件头部维护约定（一条包含另一条时
+# 只保留范围更广的那条）不再单列，避免同一意图写两遍、改一处漏一处。
+*.local.md
+# 例外：README.local.md 是**入库文档**（git 已跟踪），且它被登记在
+#       scripts/check-docs.php 的 SCAN_FILES 里 —— 该文件的「检查 0」要求
+#       SCAN_FILES 中登记的文件**必须存在**。
+#       若让它被 *.local.md 忽略并取消跟踪：本地因已跟踪不受影响，但 CI 干净检出里
+#       这个文件直接不存在 → Documentation Consistency 会红。
+#       所以这里必须开例外。顺序不可颠倒：`!` 例外必须排在 *.local.md 之后，
+#       放在前面会被后面的 *.local.md 覆盖回去，例外即失效。
+!README.local.md
 
 # ---------------------------------------------------------------------------
 # 工具产物
