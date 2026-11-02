@@ -52,9 +52,9 @@ infrastructure/         # 基础设施层（数据访问、外部服务）
 ```
 
 **多租户架构**
-- 全局租户作用域：[`app/model/BaseModel.php`](app/model/BaseModel.php:1)
-- 租户识别中间件：[`app/middleware/TenantIdentify.php`](app/middleware/TenantIdentify.php:1)
-- 请求上下文管理：[`app/Request.php`](app/Request.php:1)
+- 全局租户作用域：[`app/model/BaseModel.php`](../../app/model/BaseModel.php#L1)
+- 租户识别中间件：[`app/middleware/TenantIdentify.php`](../../app/middleware/TenantIdentify.php#L1)
+- 请求上下文管理：[`app/Request.php`](../../app/Request.php#L1)
 
 #### ⚠️ 设计偏差（基于design-compliance-audit-2025-12-14.md）
 
@@ -77,26 +77,26 @@ infrastructure/         # 基础设施层（数据访问、外部服务）
 
 **JWT双Token机制**
 - Access Token + Refresh Token 机制已实现
-- Token轮换和黑名单机制：[`infrastructure/Auth/JwtService.php`](infrastructure/Auth/JwtService.php:1)
+- Token轮换和黑名单机制：[`infrastructure/Auth/JwtService.php`](../../infrastructure/Auth/JwtService.php#L1)
 - 支持自定义过期时间和刷新策略
 
 **权限中间件**
-- 认证中间件：[`app/middleware/Auth.php`](app/middleware/Auth.php:1) - HTTP 401 + code 2001
-- 权限中间件：[`app/middleware/Permission.php`](app/middleware/Permission.php:1) - HTTP 403 + code 2002
+- 认证中间件：[`app/middleware/Auth.php`](../../app/middleware/Auth.php#L1) - HTTP 401 + code 2001
+- 权限中间件：[`app/middleware/Permission.php`](../../app/middleware/Permission.php#L1) - HTTP 403 + code 2002
 - 统一错误响应结构，包含trace_id
 
 **权限码格式**
 - 内部格式：`resource.action`（如 `forms.view`）
 - 前端格式：`resource:action`（如 `forms:view`）
-- 统一权限服务：[`infrastructure/Permission/Service/PermissionService.php`](infrastructure/Permission/Service/PermissionService.php:1)
+- 统一权限服务：[`infrastructure/Permission/Service/PermissionService.php`](../../infrastructure/Permission/Service/PermissionService.php#L1)
 
 #### 多租户隔离模块 ✅
 **实现状态**: 符合设计要求
 
 **租户识别机制**
 - 基于请求头的租户识别：`X-Tenant-ID`、`X-Tenant-Code`
-- 租户上下文自动注入：[`app/Request.php`](app/Request.php:1)
-- 全局租户作用域：[`app/model/BaseModel.php`](app/model/BaseModel.php:1)
+- 租户上下文自动注入：[`app/Request.php`](../../app/Request.php#L1)
+- 全局租户作用域：[`app/model/BaseModel.php`](../../app/model/BaseModel.php#L1)
 
 **数据隔离**
 - ORM级别自动过滤：`tenant_id`、`site_id`
@@ -107,13 +107,13 @@ infrastructure/         # 基础设施层（数据访问、外部服务）
 **实现状态**: 新旧架构混合，需要进一步统一
 
 **新架构（符合设计）**
-- 领域层：[`domain/Lowcode/Collection/`](domain/Lowcode/Collection/) - 接口定义
-- 基础设施层：[`infrastructure/Lowcode/Collection/`](infrastructure/Lowcode/Collection/) - 具体实现
+- 领域层：[`domain/Lowcode/Collection/`](../../domain/Lowcode/Collection/) - 接口定义
+- 基础设施层：[`infrastructure/Lowcode/Collection/`](../../infrastructure/Lowcode/Collection/) - 具体实现
 - Schema驱动：集合、字段、关系的动态管理
 
 **Legacy架构（需要迁移）**
-- 旧模型：[`domain/Model/Collection.php`](domain/Model/Collection.php:1)
-- 旧管理器：[`infrastructure/Collection/CollectionManager.php`](infrastructure/Collection/CollectionManager.php:1)
+- 旧模型：`domain/Model/Collection.php`（追记：该 legacy 类已于 `15aa2af` 删除，现由 `domain/Lowcode/Collection/Model/Collection.php` 取代）
+- 旧管理器：`infrastructure/Collection/CollectionManager.php`（追记：该 legacy 类已于 `15aa2af` 删除，现由 `infrastructure/Lowcode/Collection/Service/CollectionManager.php` 取代）
 
 ---
 
@@ -172,7 +172,7 @@ infrastructure/         # 基础设施层（数据访问、外部服务）
 **实现状态**:
 - 统一错误码机制
 - 请求签名验证（部分接口）
-- 限流中间件：[`app/middleware/RateLimit.php`](app/middleware/RateLimit.php:1)
+- 限流中间件：[`app/middleware/RateLimit.php`](../../app/middleware/RateLimit.php#L1)
 
 #### CORS配置
 **现状**:
@@ -186,7 +186,7 @@ infrastructure/         # 基础设施层（数据访问、外部服务）
 ### 3.1 测试基础设施 ✅
 
 #### 测试框架配置
-**PHPUnit配置**: [`phpunit.xml`](phpunit.xml:1)
+**PHPUnit配置**: [`phpunit.xml`](../../phpunit.xml#L1)
 ```xml
 <testsuites>
     <testsuite name="Unit">
@@ -204,7 +204,7 @@ infrastructure/         # 基础设施层（数据访问、外部服务）
 </testsuites>
 ```
 
-**性能测试配置**: [`phpunit.performance.xml`](phpunit.performance.xml:1)
+**性能测试配置**: [`phpunit.performance.xml`](../../phpunit.performance.xml#L1)
 - 支持性能基准测试
 - 负载测试和压力测试
 
@@ -222,9 +222,9 @@ docker exec -it alkaid-backend php think test --coverage-html
 
 #### 认证权限测试 ✅
 **关键测试文件**:
-- [`tests/Feature/AuthPermissionIntegrationTest.php`](tests/Feature/AuthPermissionIntegrationTest.php:1) - 认证权限集成测试
-- [`tests/Feature/AuthMiddlewareTest.php`](tests/Feature/AuthMiddlewareTest.php:1) - 认证中间件测试
-- [`tests/Unit/Infrastructure/Permission/PermissionServiceTest.php`](tests/Unit/Infrastructure/Permission/PermissionServiceTest.php:1) - 权限服务单元测试
+- [`tests/Feature/AuthPermissionIntegrationTest.php`](../../tests/Feature/AuthPermissionIntegrationTest.php#L1) - 认证权限集成测试
+- [`tests/Feature/AuthMiddlewareTest.php`](../../tests/Feature/AuthMiddlewareTest.php#L1) - 认证中间件测试
+- [`tests/Unit/Infrastructure/Permission/PermissionServiceTest.php`](../../tests/Unit/Infrastructure/Permission/PermissionServiceTest.php#L1) - 权限服务单元测试
 
 **测试覆盖场景**:
 - JWT Token验证和刷新
@@ -234,8 +234,8 @@ docker exec -it alkaid-backend php think test --coverage-html
 
 #### 多租户测试 ✅
 **关键测试文件**:
-- [`tests/E2E/MultiTenantIsolationTest.php`](tests/E2E/MultiTenantIsolationTest.php:1) - 多租户隔离E2E测试
-- [`tests/Integration/Model/BaseModelScopeIntegrationTest.php`](tests/Integration/Model/BaseModelScopeIntegrationTest.php:1) - 基础模型作用域集成测试
+- [`tests/E2E/MultiTenantIsolationTest.php`](../../tests/E2E/MultiTenantIsolationTest.php#L1) - 多租户隔离E2E测试
+- [`tests/Integration/Model/BaseModelScopeIntegrationTest.php`](../../tests/Integration/Model/BaseModelScopeIntegrationTest.php#L1) - 基础模型作用域集成测试
 
 **测试覆盖场景**:
 - 租户数据隔离验证
@@ -244,8 +244,8 @@ docker exec -it alkaid-backend php think test --coverage-html
 
 #### 低代码测试 ⚠️
 **测试覆盖现状**:
-- [`tests/Feature/Lowcode/CollectionControllerTest.php`](tests/Feature/Lowcode/CollectionControllerTest.php:1) - 集合控制器测试
-- [`tests/Integration/Lowcode/LowcodeCliIntegrationTest.php`](tests/Integration/Lowcode/LowcodeCliIntegrationTest.php:1) - 低代码CLI集成测试
+- [`tests/Feature/Lowcode/CollectionControllerTest.php`](../../tests/Feature/Lowcode/CollectionControllerTest.php#L1) - 集合控制器测试
+- [`tests/Integration/Lowcode/LowcodeCliIntegrationTest.php`](../../tests/Integration/Lowcode/LowcodeCliIntegrationTest.php#L1) - 低代码CLI集成测试
 
 **不足之处**:
 - Legacy代码测试覆盖不足
@@ -607,19 +607,19 @@ docker exec -it alkaid-backend php think test --coverage-html
 ### A. 参考文档列表
 
 #### 设计文档
-- [`design/00-core-planning/`](design/00-core-planning/) - 核心规划文档
-- [`design/01-architecture-design/`](design/01-architecture-design/) - 架构设计文档
-- [`design/02-domain-layer/`](design/02-domain-layer/) - 领域层设计文档
-- [`design/03-data-layer/`](design/03-data-layer/) - 数据层设计文档
-- [`design/04-security-performance/`](design/04-security-performance/) - 安全性能设计文档
-- [`design/05-deployment-testing/`](design/05-deployment-testing/) - 部署测试文档
-- [`design/06-frontend-design/`](design/06-frontend-design/) - 前端设计文档
-- [`design/09-lowcode-framework/`](design/09-lowcode-framework/) - 低代码框架设计文档
+- [`design/00-core-planning/`](../../design/00-core-planning/) - 核心规划文档
+- [`design/01-architecture-design/`](../../design/01-architecture-design/) - 架构设计文档
+- [`design/02-domain-layer/`](../../design/02-domain-layer/) - 领域层设计文档
+- [`design/03-data-layer/`](../../design/03-data-layer/) - 数据层设计文档
+- [`design/04-security-performance/`](../../design/04-security-performance/) - 安全性能设计文档
+- [`design/05-deployment-testing/`](../../design/05-deployment-testing/) - 部署测试文档
+- [`design/06-frontend-design/`](../../design/06-frontend-design/) - 前端设计文档
+- [`design/09-lowcode-framework/`](../../design/09-lowcode-framework/) - 低代码框架设计文档
 
 #### 技术规范
 - [`docs/technical-specs/api/api-specification.md`](../technical-specs/api/api-specification.md) - API规范
 - [`docs/technical-specs/security/security-guidelines.md`](../technical-specs/security/security-guidelines.md) - 安全指南
-- [`docs/technical-specs/multi-tenant/`](docs/technical-specs/multi-tenant/) - 多租户规范
+- [`docs/technical-specs/multi-tenant/`](../../docs/technical-specs/multi-tenant/) - 多租户规范
 - [`docs/technical-specs/testing/testing-guidelines.md`](../technical-specs/testing/testing-guidelines.md) - 测试指南
 
 #### 审查报告
@@ -629,25 +629,25 @@ docker exec -it alkaid-backend php think test --coverage-html
 ### B. 关键文件路径
 
 #### 核心实现文件
-- [`composer.json`](composer.json:1) - 项目依赖配置
-- [`docker-compose.yml`](docker-compose.yml:1) - 容器化部署配置
-- [`phpunit.xml`](phpunit.xml:1) - 测试配置
-- [`.php-cs-fixer.php`](.php-cs-fixer.php:1) - 代码格式配置
+- [`composer.json`](../../composer.json#L1) - 项目依赖配置
+- [`docker-compose.yml`](../../docker-compose.yml#L1) - 容器化部署配置
+- [`phpunit.xml`](../../phpunit.xml#L1) - 测试配置
+- [`.php-cs-fixer.php`](../../.php-cs-fixer.php#L1) - 代码格式配置
 
 #### 认证权限模块
-- [`infrastructure/Auth/JwtService.php`](infrastructure/Auth/JwtService.php:1) - JWT服务
-- [`app/middleware/Auth.php`](app/middleware/Auth.php:1) - 认证中间件
-- [`app/middleware/Permission.php`](app/middleware/Permission.php:1) - 权限中间件
-- [`infrastructure/Permission/Service/PermissionService.php`](infrastructure/Permission/Service/PermissionService.php:1) - 权限服务
+- [`infrastructure/Auth/JwtService.php`](../../infrastructure/Auth/JwtService.php#L1) - JWT服务
+- [`app/middleware/Auth.php`](../../app/middleware/Auth.php#L1) - 认证中间件
+- [`app/middleware/Permission.php`](../../app/middleware/Permission.php#L1) - 权限中间件
+- [`infrastructure/Permission/Service/PermissionService.php`](../../infrastructure/Permission/Service/PermissionService.php#L1) - 权限服务
 
 #### 多租户模块
-- [`app/model/BaseModel.php`](app/model/BaseModel.php:1) - 基础模型
-- [`app/middleware/TenantIdentify.php`](app/middleware/TenantIdentify.php:1) - 租户识别
-- [`app/Request.php`](app/Request.php:1) - 请求上下文
+- [`app/model/BaseModel.php`](../../app/model/BaseModel.php#L1) - 基础模型
+- [`app/middleware/TenantIdentify.php`](../../app/middleware/TenantIdentify.php#L1) - 租户识别
+- [`app/Request.php`](../../app/Request.php#L1) - 请求上下文
 
 #### 低代码模块
-- [`domain/Lowcode/Collection/Model/Collection.php`](domain/Lowcode/Collection/Model/Collection.php:1) - 集合模型
-- [`infrastructure/Lowcode/Collection/Service/CollectionManager.php`](infrastructure/Lowcode/Collection/Service/CollectionManager.php:1) - 集合管理
+- [`domain/Lowcode/Collection/Model/Collection.php`](../../domain/Lowcode/Collection/Model/Collection.php#L1) - 集合模型
+- [`infrastructure/Lowcode/Collection/Service/CollectionManager.php`](../../infrastructure/Lowcode/Collection/Service/CollectionManager.php#L1) - 集合管理
 
 ### C. 测试用例示例
 

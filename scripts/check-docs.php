@@ -10,7 +10,8 @@ declare(strict_types=1);
  * （目前是 AGENTS.md / CLAUDE.md / README.md / README.local.md），覆盖四类问题：
  *   0. 扫描范围不完整（登记项不存在、根目录 md 既未纳入也未豁免）
  *   1. 链接失效 + 本机绝对路径
- *      （相对 .md 链接指向不存在的文件；`file://` 链接泄漏本机绝对路径）
+ *      （相对链接——`.md` / 目录 / 非 .md 文件——解析后不存在；
+ *       `path:行号` 这类会被 GitHub 当成文件名的写法；`file://` 链接泄漏本机绝对路径）
  *   2. 代码围栏不配平（奇数个 ``` 会导致后续内容被吞入代码块）
  *   3. 示例代码引用了不存在的类（设计阶段命名 vs 实际实现）
  *
@@ -24,8 +25,11 @@ declare(strict_types=1);
  *   流程描述过期，本脚本一律看不见，仍需人工与 PHPUnit 守卫覆盖。
  *   检查 1 现在同时覆盖 `](./x.md)`、`](../x.md)` 与**裸相对链接** `](docs/x.md)`，
  *   且会先剥离围栏代码块与行内代码（详见 `checkLinks()` 的注释）。
- *   仍未覆盖：**引用式链接定义**（`[x]: path.md`）、非 .md 目标（目录/图片/.php）、
- *   锚点（`#section`）是否真实存在。
+ *   **非 .md 目标（目录、`.php`、`.yml`、`.sh` 等）与 `.md` 目标同等校验**：
+ *   只要不是协议链接，就按「所在文件目录」解析并对 `is_file() || is_dir()` 求值。
+ *   仍未覆盖：**引用式链接定义**（`[x]: path.md`，实测 0 条）、
+ *   锚点（`#section`）是否真实存在、以及**链接文本与目标形态是否匹配**
+ *   （例如文本写 `Collection.php` 却链到同名目录 —— 本脚本只认「目标存在」，不读文本）。
  *
  * 用法：
  *   php scripts/check-docs.php              # 检查并输出报告
@@ -276,27 +280,41 @@ function readLines(string $path): array
  *
  * ## 支持的链接形态
  *   1. 显式相对：`](./x.md)`、`](../x.md)` —— 历史形态，保持不变
- *   2. 裸相对：  `](x.md)`、`](a/b/x.md)` —— **本次新增**
+ *   2. 裸相对：  `](x.md)`、`](a/b/x.md)`
+ *   3. **目录**：`](../design/06-frontend-design/)` —— 末尾 `/` 只是写法，按目录判存在
+ *   4. **非 .md 文件**：`](../app/Request.php)`、`](scripts/git-workflow-tools.sh)`
  *
- * 两种形态都**按所在文件所在目录解析**（`dirname($file) . '/' . $link`）。
+ * 所有形态都**按所在文件所在目录解析**（`dirname($file) . '/' . $link`）。
  * 这一点是裸链接校验的全部价值：Markdown 相对链接的解析基准是**文档自身位置**，不是仓库根。
  * 因此写在 `docs/report/` 里的 `](docs/x.md)` 在 GitHub 上实际指向
  * `docs/report/docs/x.md` —— 一个**必然不存在**的位置。这类「从仓库根起算」的写法是最常见的
  * 失效形态，且只有真的按目录解析才能被发现。
+ *
+ * ## 目录 / 非 .md 目标：为什么现在也要校验
+ *   此前只判「`.md` 且 `is_file()`」，于是 `.php`、`.yml`、`.json`、目录链接**全部不校验**。
+ *   扩到任意目标后，`docs/report/` 一下子暴露 45 条坏链接（其中 43 条目标真实存在，只是少了
+ *   `../../` 前缀、或把 `:行号` 写进了 URL），说明「只校验 .md」并不是「保守」，而是让
+ *   一大类可修的错写法长期失明。
+ *   判定放宽为 `is_file() || is_dir()`：**目录也是合法目标**，否则所有「目录索引」链接都会误报。
+ *
+ * ## `path:行号` 一律判错（不做剥离）
+ *   `](app/Request.php:1)` 在 GitHub 生成的 href 里，`:1` 会成为**文件名的一部分** → 必然 404。
+ *   因此这里**不**在内部把 `:1` 剥掉再判存在 —— 那会让坏链伪装成好链。
+ *   报错时附带定向提示（`hint = line-suffix`），告诉作者改用 `#L12` / `#L12-L20`。
  *
  * ## 主动跳过（不是缺陷，也不新增错误类别）
  *   - 协议链接：`http://`、`https://`、`mailto:` 等任意 `scheme:` 形式（外网可达性不在本脚本职责内）
  *   - 纯锚点：`](#section)`
  *   - 根绝对：`](/x.md)` —— 语义是「从仓库根解析」，与本地文件系统路径不是一回事；
  *     实测扫描范围内 0 条，故只跳过、不新增报错类别，避免凭空造一条没人验证过的规则
- *   - 非 `.md` 目标（如 `](docs/developer-guides/)`、`![](x.png)`）：本项只校验 `.md` 文档链接，
- *     目录/图片/`.php` 的可达性不在范围内
+ *   - 例外见 `detectLineSuffixLink()`：`composer.json:1` 这种「scheme 名恰好是文件名」的写法
+ *     会先被摘出来按路径判，而不是当成协议（否则整类 `path:行号` 错误会静默消失）
  *
  * ## 单独判错：`file://` 本机绝对路径
  *   `](file:///Users/xxx/project/app/Foo.php#L16-L20)` 在**作者本机**能点开，换台机器、换个人
- *   就必然失效，同时把本机用户名与目录结构泄漏进版本库。该判定与 `.md` 判定**相互独立**
+ *   就必然失效，同时把本机用户名与目录结构泄漏进版本库。该判定与路径判定**相互独立**
  *   （`file://` 可以指向 `.php` 等任意文件），因此同一行里的
- *   `](file:///.../security-guidelines.md)` **只报一次 `file://` 错误，不再被算作 `.md` 失效链接**
+ *   `](file:///.../security-guidelines.md)` **只报一次 `file://` 错误，不再被算作失效链接**
  *   —— 否则同一条问题记两遍，报错账目对不上。
  *
  * ## `docs/report` 策略：**不豁免**（决策记录，改动前请先读这段）
@@ -307,8 +325,15 @@ function readLines(string $path): array
  *      最大的文档目录**永久失明**，与本仓库近年反复治理「假绿检查」的方向相反；
  *   3. 检查 3 的豁免理由是「审计报告会引用**不存在的类**作为证据」，与「链接指向的文件
  *      是否存在」是两码事 —— 前者按定义必然不存在，后者不该不存在。
+ *   4. **扩到非 .md 目标后，这条理由更强，不是更弱**：上一轮 `.md` 口径下该目录只有 6 条
+ *      坏链（全是「少写 `../`」），扩到目录/`.php` 后变成 45 条，其中 **43 条目标真实存在**
+ *      （11 条目录链接缺 `../../`；32 条是 `path:行号` 形态且目标存在，其中 5 条此前被
+ *      「伪协议」正则当成 `composer.json:` 这类 scheme 吞掉、从未进过检查），**只有 2 条**
+ *      指向 `15aa2af` 已删除的 legacy 类。也就是说 45 条里 43 条**都能靠改前缀修好** ——
+ *      豁免它就等于把「可修」当「不可修」。
  *   若将来真出现「指向已删除文件的归档链接」，处置方式是**把链接降级为行内代码**
  *   （`` `docs/xxx.md` ``：保留原文陈述、退出链接校验），而不是按目录一刀切豁免。
+ *   本轮的 2 条 legacy 链接正是按这条策略处置的（见该报告 §1.2 的「Legacy架构」小节）。
  *
  * ## 代码剥离（避免把「说明文字」当成真链接）
  *   扫描前先剥离两类代码，否则描述正则本身的文字会被误报
@@ -322,10 +347,10 @@ function readLines(string $path): array
  *   检查 2 只负责「围栏是否配平」，仍按**行首**（不 trim）判定，本次**未改动**。
  *   本函数为了不漏掉列表内缩进的围栏（实测存在 240 行缩进围栏，如 `design/06-ratelimit/`），
  *   改用 trim 后判定。已在 212 个扫描文件上验证两种判定的结论一致：
- *   每个文件的围栏数在两种判定下均为偶数，且缩进围栏内部含 `.md` 链接 0 条。
+ *   每个文件的围栏数在两种判定下均为偶数，且缩进围栏内部含链接 0 条。
  *
  * @param string[] $files
- * @return array<int, array{file:string, line:int, link:string, kind:string, target:string}>
+ * @return array<int, array{file:string, line:int, link:string, kind:string, target:string, hint:string}>
  */
 function checkLinks(array $files): array
 {
@@ -373,36 +398,91 @@ function checkLinks(array $files): array
  * 判定单个链接目标是否需要报错；返回 `null` 表示「跳过，不是缺陷」
  *
  * `kind` 取值：
- *   - `file-url`：`file://` 本机绝对路径（与 `.md` 判定相互独立，见 checkLinks 注释）
- *   - `missing` ：相对 `.md` 链接按所在目录解析后不存在
+ *   - `file-url`：`file://` 本机绝对路径（与路径判定相互独立，见 checkLinks 注释）
+ *   - `missing` ：相对链接（`.md` / 目录 / 任意非 .md 文件）按所在目录解析后不存在
  *
- * @return array{file:string, line:int, link:string, kind:string, target:string}|null
+ * `hint` 取值（与 `kind` 正交：**同一条问题只记一次**，提示只是附加信息）：
+ *   - `''`           ：无额外提示
+ *   - `line-suffix`  ：链接形如 `xxx:12` / `xxx:12-20`，GitHub 会把 `:12` 当文件名的一部分，
+ *                      需改用 `#L12` / `#L12-L20`。本质仍是 `missing`，不单列成新类别。
+ *
+ * @return array{file:string, line:int, link:string, kind:string, target:string, hint:string}|null
  */
 function inspectLinkTarget(string $file, int $line, string $dir, string $link): ?array
 {
-    // 1) `file://` 本机绝对路径：独立成类，先判（避免同一条再被算成 .md 失效）
+    // 1) `file://` 本机绝对路径：独立成类，先判（避免同一条再被算成普通失效链接）
     if (stripos($link, 'file://') === 0) {
-        return ['file' => $file, 'line' => $line, 'link' => $link, 'kind' => 'file-url', 'target' => ''];
+        return [
+            'file' => $file, 'line' => $line, 'link' => $link,
+            'kind' => 'file-url', 'target' => '', 'hint' => '',
+        ];
     }
 
-    // 2) 协议链接（http/https/mailto/...）、纯锚点、根绝对路径：主动跳过
-    if (preg_match('~^(?:[a-z][a-z0-9+.\-]*:|/|\#)~i', $link) === 1) {
+    // 2) 先摘 `path:行号` 形态（必须在「协议」判定之前，否则下一行的正则会把
+    //    `composer.json:1` 当成 scheme 为 `composer.json` 的协议链接直接跳过）
+    $lineSuffixBare = detectLineSuffixLink($link);
+
+    // 3) 协议链接（http/https/mailto/...）、纯锚点、根绝对路径：主动跳过
+    //    —— 仅当它不是 `path:行号` 形态时才跳过（那类要按路径判，见第 2 步）
+    if ($lineSuffixBare === null
+        && preg_match('~^(?:[a-z][a-z0-9+.\-]*:|/|\#)~i', $link) === 1) {
         return null;
     }
 
-    // 3) 只校验 .md 目标；`#锚点` 不参与解析（锚点是否存在不在本项范围）
+    // 4) 取路径部分：只去掉 `#锚点`（锚点是否存在不在本项范围）
+    //    ⚠️ `:行号` **不剥离** —— GitHub 生成的 href 里 `:12` 是文件名的一部分，必然 404；
+    //    剥掉再判存在会把坏链伪装成好链，因此原样参与下面的存在性判定。
     $pathPart = (string) preg_replace('/#.*$/', '', $link);
-    if ($pathPart === '' || !str_ends_with(strtolower($pathPart), '.md')) {
-        return null;
+    if ($pathPart === '') {
+        return null; // 形如 `#section`（已在第 3 步跳过）或空目标
     }
 
-    // 4) 按**所在文件目录**解析 —— 裸链接与 `./`、`../` 形态共用这一处
+    // 5) 按**所在文件目录**解析（`./`、`../`、裸链接共用这一处）；
+    //    **目录也是合法目标** —— 否则所有「目录索引」链接都会被误报
     $resolved = normalizePath($dir . '/' . $pathPart);
-    if (is_file($resolved)) {
+    if (is_file($resolved) || is_dir($resolved)) {
         return null;
     }
 
-    return ['file' => $file, 'line' => $line, 'link' => $link, 'kind' => 'missing', 'target' => $resolved];
+    return [
+        'file' => $file, 'line' => $line, 'link' => $link,
+        'kind' => 'missing', 'target' => $resolved,
+        'hint' => $lineSuffixBare === null ? '' : 'line-suffix',
+    ];
+}
+
+/**
+ * 识别 `xxx:12` / `xxx:12-20` 形态的「行号后缀」链接，返回冒号前的候选路径
+ *
+ * ## 为什么需要它（真实缺陷，不是理论风险）
+ *   第 3 步的「协议链接」正则是 `^[a-z][a-z0-9+.\-]*:`。而 scheme 名允许 `.`、`+`、`-`，
+ *   于是 `composer.json:1` 恰好被解析成 `scheme=composer.json` + 剩余 `1` → 整条链接被跳过。
+ *   实测 `docs/report/comprehensive-project-audit-report-2025-12-16.md` 有 5 条这样被吞掉
+ *   （`composer.json:1`、`docker-compose.yml:1`、`phpunit.xml:1` ×2、`phpunit.performance.xml:1`），
+ *   它们的真实目标都在仓库根、只是少了 `../../` 前缀 —— 属于**必须报出来**的一类。
+ *
+ * ## 判定规则（保守：宁可判成协议，也不误伤真 URL）
+ *   - 冒号后必须是**纯行号**（`12` 或 `12-20`），其余一律当协议
+ *   - 冒号前含 `://` → 真 URL（`https://host/a.php:12`），不参与路径解析
+ *   - 冒号前既无 `/` 也无 `.` → 没有路径特征（`tel:123`、`mailto:x` 之类），仍按协议跳过
+ *
+ * @return string|null 匹配时返回「冒号前」的候选路径；否则 null（交给协议判定）
+ */
+function detectLineSuffixLink(string $link): ?string
+{
+    if (preg_match('/^(.+):[0-9]+(?:-[0-9]+)?$/', $link, $m) !== 1) {
+        return null;
+    }
+
+    $bare = $m[1];
+    if (str_contains($bare, '://')) {
+        return null; // 真协议：`https://...:12` 的行号语义由平台自己处理
+    }
+    if (!str_contains($bare, '/') && !str_contains($bare, '.')) {
+        return null; // 无路径特征的裸 scheme：`tel:123`
+    }
+
+    return $bare;
 }
 
 /**
@@ -616,7 +696,13 @@ foreach ($linkIssues as $issue) {
     }
     echo '   ' . colorize('[LINK]', 'yellow')
         . " {$issue['file']}:{$issue['line']} -> {$issue['link']}"
-        . "（解析为 {$issue['target']}，不存在）" . PHP_EOL;
+        . "（解析为 {$issue['target']}，不存在）";
+    // `path:行号` 形态额外给定向提示（仍是同一条 `missing` 记录，不重复计数）
+    if ($issue['hint'] === 'line-suffix') {
+        echo '；URL 里不要带 `:行号` 后缀，GitHub 会当成文件名的一部分；'
+            . '要定位行请改用 `#L12` 或 `#L12-L20`';
+    }
+    echo PHP_EOL;
 }
 $totalIssues += count($linkIssues);
 

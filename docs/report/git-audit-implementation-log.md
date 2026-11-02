@@ -20,7 +20,7 @@
 #### 已完成任务
 
 ##### 1. CI/CD流程验证测试 ✅
-**文件**: [`.github/workflows/ci-validation-test.yml`](.github/workflows/ci-validation-test.yml)
+**文件**: [`.github/workflows/ci-validation-test.yml`](../../.github/workflows/ci-validation-test.yml)
 
 **实施内容**:
 - 创建了专门的CI验证测试工作流
@@ -54,7 +54,7 @@ jobs:
 ```
 
 ##### 2. 分支保护工作流性能优化 ✅
-**文件**: [`.github/workflows/branch-protection.yml`](.github/workflows/branch-protection.yml)
+**文件**: [`.github/workflows/branch-protection.yml`](../../.github/workflows/branch-protection.yml)
 
 **实施内容**:
 - 优化了分支保护规则配置
@@ -87,7 +87,7 @@ jobs:
 ```
 
 ##### 3. Git工作流监控指标建立 ✅
-**文件**: [`.github/workflows/git-metrics.yml`](.github/workflows/git-metrics.yml)
+**文件**: [`.github/workflows/git-metrics.yml`](../../.github/workflows/git-metrics.yml)
 
 **实施内容**:
 - 建立了全面的Git工作流指标收集系统
@@ -178,7 +178,7 @@ jobs:
 ```
 
 ##### 5. 本地开发工具集成实施 ✅
-**文件**: [`scripts/git-workflow-tools.sh`](scripts/git-workflow-tools.sh)
+**文件**: [`scripts/git-workflow-tools.sh`](../../scripts/git-workflow-tools.sh)
 
 **实施内容**:
 - 创建了智能化的Git工作流工具脚本
