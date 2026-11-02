@@ -7,6 +7,28 @@
 > **优先级**: P1
 >
 > **审查结论**: ✅ **任务已基本完成**
+>
+> ⚠️ **2026-11-02 追记（原文保留，勿据此判断现状）**
+>
+> §「5.1 CI 配置」的 yaml 代码块里 `run: php think test --filter=LegacyCollectionUsageGuardTest`
+> 在当时的 CI 里是**空跑**：`tests/Legacy` 尚未进入任何 testsuite，而 PHPUnit 只认
+> `phpunit.xml` 登记的套件，按类名 filter 匹配不到任何用例，打印 `No tests executed!`
+> 后**仍以 0 退出**。因此下文两处结论在当时并不成立：
+>   - §「8.1 总体评估」表格里的「CI 保障 9/10 / Guard 测试有效运行」；
+>   - §「8.2 最终结论」第 4 条「CI 阻断机制生效（Legacy Guard 测试通过）」。
+>
+> 注意 §「4.3 Legacy Guard 测试结果」那份 `OK (1 test, 4 assertions)` 是**人工直接运行**
+> 的产物，本身有效 —— 空跑只发生在 CI 那一步，两者不要混为一谈。
+>
+> 现已修正：CI 改为 `php think test --testsuite=Legacy`（跑整个套件，
+> 见 `.github/workflows/backend-php-cs-fixer.yml` 的 `Run Legacy guard suite` 步骤），
+> 并把 `tests/Legacy` 纳入 `phpunit.xml` 的 `Legacy` 套件 + 开启
+> `failOnEmptyTestSuite="true"`（一个用例都没跑就以 exit 1 结束）。
+>
+> 原文位置（行号以本次追记时的文件为准，后续改动可能漂移；检索引文同样可定位）：
+> `--filter=LegacyCollectionUsageGuardTest` 在第 258 行，
+> `Guard 测试有效运行` 在第 347 行、`CI 阻断机制生效` 在第 359 行。
+> 本条注记由后续审计追加，**原文一字未改**。
 
 ---
 

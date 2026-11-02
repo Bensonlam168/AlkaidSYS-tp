@@ -4,6 +4,26 @@
 **完成日期**: 2025-12-18
 **优先级**: P1（高优先级）
 
+> ⚠️ **2026-11-02 追记（原文保留，勿据此判断现状）**
+>
+> 本文 §「A5：CI 阻断规则」的代码块（`run: php think test --filter=LegacyCollectionUsageGuardTest`）
+> 与 §「2. CI 集成验证」中「使用 `--filter=LegacyCollectionUsageGuardTest` 精确执行」这句，
+> 在当时是**空跑**：`tests/Legacy` 尚未进入任何 testsuite，而 PHPUnit 只认 `phpunit.xml`
+> 里登记的套件 —— 按类名 filter 匹配不到任何用例，打印 `No tests executed!` 后**仍以 0 退出**。
+> 结果是 `LegacyCollectionUsageGuardTest` / `WithoutTenantScopeUsageGuardTest` 两个守卫
+> 在 CI 里从未真正执行，本文「CI 集成 Legacy Guard」「CI 阻断新增 Legacy 引用」的结论
+> **在当时的 CI 上并不成立**（本地手工跑该文件是有效的，空跑只发生在 CI 那一步）。
+>
+> 现已修正：CI 改为 `php think test --testsuite=Legacy`（跑整个套件，
+> 见 `.github/workflows/backend-php-cs-fixer.yml` 的 `Run Legacy guard suite` 步骤），
+> 并把 `tests/Legacy` 纳入 `phpunit.xml` 的 `Legacy` 套件、开启
+> `failOnEmptyTestSuite="true"`（一个用例都没跑就以 exit 1 结束）。
+>
+> 定位用引文：`--filter=LegacyCollectionUsageGuardTest` —— 原文见
+> 第 75 行（§「A5：CI 阻断规则」的 yaml 代码块）与第 117 行（§「2. CI 集成验证」），共 2 处；
+> 行号以本次追记时的文件为准，后续改动可能漂移，检索上面的引文即可定位。
+> 本条注记由后续审计追加，**原文一字未改**。
+
 ---
 
 ## 📋 任务概述
