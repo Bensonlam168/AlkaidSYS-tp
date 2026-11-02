@@ -86,3 +86,8 @@ docker-compose.override.local.yml
 
 # Graphify 知识图谱产物（可再生，不入库）
 graphify-out/
+
+# 覆盖率报告产物（可再生，不入库）
+# 刻意不带前导 /：这样同时覆盖仓库根 coverage/（php think test --coverage-html=coverage/）
+# 与 frontend/coverage/（pnpm / vitest 的覆盖率输出目录），避免只挡住其中一边
+coverage/
