@@ -31,6 +31,21 @@ declare(strict_types=1);
  *      （可见性，避免「设了豁免就再也不看」）（R35）。
  *      同时做**反向**检查：豁免条目必须对应仓库内真实存在的配置，否则报 [EXEMPT-STALE]
  *      （删除/改名/移走配置后豁免会变成僵尸条目，永远占着清单也不会有任何提示）（R38）。
+ *   G. 根级「安全属性」与 testsuite 布局：
+ *      G1. 三件套（failOnRisky / failOnWarning / failOnEmptyTestSuite）在**基线**里必须为 true，
+ *          且**不跟随基线漂移**：有人把基线也改成 false 时同样报错 ——
+ *          否则「先改基线、再改变体」两步就能合法化整条链的漂移；
+ *      G2. 基线必须声明 Legacy 套件（守卫型用例的唯一收集入口），且其取样路径在盘上、
+ *          目录里至少有一个 *Test.php；
+ *      G3. 每份受管配置的每个安全属性（含 failOnDeprecation / beStrictAbout* 等）必须与基线**逐项一致**：
+ *          安全属性是一条链，单独关掉 beStrictAboutOutputDuringTests 就等于让 failOnRisky 看不见
+ *          「有输出但没断言」的用例 ——「变体绿」与「基线绿」不再是同一个绿。
+ *          非法字面量（写成 1 / yes / 带空格）单独报错：PHPUnit 会静默回落默认值。
+ *          唯一的例外通道是豁免条目里的 safety_exempt_allowed=true（仍受 review_by 约束），
+ *          且例外配置每次运行都会把差异打印出来，不是「不显示」；
+ *      G4. 受管配置声明的 testsuite 取样路径必须存在、且还能收集到用例 —— 这是
+ *          failOnEmptyTestSuite 的**静态**版：运行期的空跑判定只在「真的跑了一次」时才生效，
+ *          而变体配置（t048/t050）常年没人跑。
  *
  * 缺失配置文件一律**报错**而不是跳过：漏掉一个变体就等于漏检。
  *
@@ -83,19 +98,84 @@ const SCAN_EXCLUDED_DIRS = ['vendor', 'node_modules', '.git', 'runtime'];
  * review_by：豁免到期日（R35）。到期后检查 E 报错，强制重新复核 —— 否则「豁免」会变成
  * 永久的免检通道，某个豁免配置悄悄开始 force 变量也没人知道。
  *
+ * safety_exempt_allowed（可选，默认 false）：是否允许该配置的**根级安全属性**与基线不一致（检查 G）。
+ * 默认 false 是刻意的 fail-closed —— 新登记的豁免不会自动连「安全属性对齐」一起被豁免掉，
+ * 必须显式写 true 表示「我看过这份配置，它确实属于另一条交付链，不走基线的安全口径」。
+ * 写 true 时检查 G 仍会逐项打印它与基线的差异（灰色 [EXEMPT-SAFETY] 提示），
+ * 让每次复核 review_by 的人都能看到自己在批准什么。
+ *
  * 条目必须指向仓库内**真实存在**的配置（R38）：配置一旦删除/改名，豁免就会变成永远不会被
  * 看见、也不会被提醒清理的僵尸条目，检查 E 用 [EXEMPT-STALE] 报错要求删除。
  */
 const EXEMPT_CONFIGS = [
     'phpunit.performance.xml' => [
-        'reason'    => '性能/压测专用配置，只声明不带 force 的 APP_DEBUG / PERFORMANCE_TEST，不属于 T-048/T-050 验收链',
-        'review_by' => '2027-04-30',
+        'reason'                => '性能/压测专用配置，只声明不带 force 的 APP_DEBUG / PERFORMANCE_TEST，不属于 T-048/T-050 验收链',
+        'review_by'             => '2027-04-30',
+        // 该配置目前缺 failOnEmptyTestSuite / beStrictAboutOutputDuringTests（历史形态，改动
+        // 会牵连性能套件的既有行为）；它不参与验收链，因此允许与基线不同，
+        // 但每次运行都会把差异打印出来，下次复核时评估是否对齐。
+        'safety_exempt_allowed' => true,
     ],
     'plugins/workflow-engine/phpunit.xml' => [
-        'reason'    => '插件独立测试域（自带 bootstrap/testsuites，独立运行插件测试），env 全部不带 force，不参与根级强制变量策略',
-        'review_by' => '2027-04-30',
+        'reason'                => '插件独立测试域（自带 bootstrap/testsuites，独立运行插件测试），env 全部不带 force，不参与根级强制变量策略',
+        'review_by'             => '2027-04-30',
+        // 插件自带一份 PHPUnit 11.0 配置，failOn* 三项全未开启：它有自己的交付链与发布节奏，
+        // 由插件维护者按插件规则管理；这里只要求「差异可见」，不要求与根基线一致。
+        'safety_exempt_allowed' => true,
     ],
 ];
+
+/**
+ * 根级「安全属性」清单（检查 G）
+ *
+ * 只收两类：
+ *   1. failOn*：把缺陷（risky / warning / deprecation / 空跑 …）折算成非 0 退出码；
+ *   2. beStrictAbout*：把「有输出」「没断言」这类噪音升级成问题 —— 否则 failOnRisky / failOnWarning
+ *      看不见它们，前一类等于少了一半的入口。
+ *
+ * 取值 = `vendor/phpunit/phpunit/phpunit.xsd`（PHPUnit 11.5）里该属性的 `xs:attribute default`，
+ * 与 `Loader::parseBooleanAttribute()` 传的默认值一致。**未声明的属性按这里的默认值折算**，
+ * 所以这张表写错会让「变体漏声明」被判成「与基线一致」—— 表与 XSD 是否脱节由
+ * `tests/Unit/Scripts/PhpunitConfigSafetyRootConsistencyTest.php` 守着（PHPUnit 升级改了默认值
+ * 或加了新的 failOn* 属性时，那个用例会变红要求重新登记）。
+ *
+ * @var array<string, bool>
+ */
+const SAFETY_ROOT_ATTRIBUTES = [
+    'failOnAllIssues'                         => false,
+    'failOnDeprecation'                       => false,
+    'failOnEmptyTestSuite'                    => false,
+    'failOnIncomplete'                        => false,
+    'failOnNotice'                            => false,
+    'failOnPhpunitDeprecation'                => false,
+    'failOnPhpunitWarning'                    => true,
+    'failOnRisky'                             => false,
+    'failOnSkipped'                           => false,
+    'failOnWarning'                           => false,
+    'beStrictAboutChangesToGlobalState'       => false,
+    'beStrictAboutCoverageMetadata'           => false,
+    'beStrictAboutOutputDuringTests'          => false,
+    'beStrictAboutTestsThatDoNotTestAnything' => true,
+];
+
+/**
+ * 每份受管配置都必须**显式为 true** 的安全属性（检查 G）
+ *
+ * 这三个是「问题必须变红」的地基，而且**不跟随基线漂移**：即使有人把基线也改成 false，
+ * 检查 G 仍报错 —— 否则「先改基线、再改变体」两步就能合法化整条链的漂移。
+ *
+ * 值是该属性缺失时的解释文案（拼进错误信息，说明「关掉它等于放过什么」）。
+ *
+ * @var array<string, string>
+ */
+const REQUIRED_TRUE_ROOT_ATTRIBUTES = [
+    'failOnRisky'          => 'risky 用例（没有任何断言 / 断言未执行）会被当成通过',
+    'failOnWarning'        => 'warning 会被当成通过',
+    'failOnEmptyTestSuite' => '一个用例都没跑（filter 写错 / 套件名写错 / 目录被挪走 / 用例被删空）仍然以 0 退出',
+];
+
+/** 基线必须声明的 testsuite 名：守卫型用例（tests/Legacy）的唯一收集入口（检查 G） */
+const REQUIRED_BASE_TESTSUITE = 'Legacy';
 
 // ---------------------------------------------------------------------------
 // 工具函数
@@ -131,24 +211,24 @@ function formatResult(int $errors, int $warnings = 0): string
 }
 
 /**
- * 读取一份 phpunit 配置里的全部 <env> 声明
+ * 加载 XML 并返回根元素；缺失 / 不可读 / 解析失败都返回 ok=false
  *
- * 只解析 `<phpunit><php><env .../></php></phpunit>` 这一层，不做 schema 校验：
- * 本脚本关心的是「变量名 + 取值 + 是否 force」，其余结构交给 PHPUnit 自己校验。
+ * 三种失败各自的文案与历史行为逐字一致（「配置文件不存在」/「配置文件无法读取」/「XML 解析失败」），
+ * 因为调用方会把 message 原样拼进检查 0 的报错里。
  *
- * @return array{ok:bool, message:string, envs:array<int, array{name:string, value:string, force:bool, forceRaw:?string, line:int}>}
+ * @return array{ok:bool, message:string, root:?DOMElement}
  */
-function readEnvDeclarations(string $path): array
+function loadXmlRoot(string $absolutePath): array
 {
-    $result = ['ok' => false, 'message' => '', 'envs' => []];
+    $result = ['ok' => false, 'message' => '', 'root' => null];
 
-    if (!is_file($path)) {
+    if (!is_file($absolutePath)) {
         $result['message'] = '配置文件不存在';
 
         return $result;
     }
 
-    $content = @file_get_contents($path);
+    $content = @file_get_contents($absolutePath);
     if ($content === false) {
         $result['message'] = '配置文件无法读取';
 
@@ -168,7 +248,32 @@ function readEnvDeclarations(string $path): array
         return $result;
     }
 
-    foreach ($dom->documentElement->childNodes as $php) {
+    $result['ok'] = true;
+    $result['root'] = $dom->documentElement;
+
+    return $result;
+}
+
+/**
+ * 读取一份 phpunit 配置里的全部 <env> 声明
+ *
+ * 只解析 `<phpunit><php><env .../></php></phpunit>` 这一层，不做 schema 校验：
+ * 本脚本关心的是「变量名 + 取值 + 是否 force」，其余结构交给 PHPUnit 自己校验。
+ *
+ * @return array{ok:bool, message:string, envs:array<int, array{name:string, value:string, force:bool, forceRaw:?string, line:int}>}
+ */
+function readEnvDeclarations(string $path): array
+{
+    $result = ['ok' => false, 'message' => '', 'envs' => []];
+
+    $loaded = loadXmlRoot($path);
+    if (!$loaded['ok']) {
+        $result['message'] = $loaded['message'];
+
+        return $result;
+    }
+
+    foreach ($loaded['root']->childNodes as $php) {
         if (!$php instanceof DOMElement || $php->nodeName !== 'php') {
             continue;
         }
@@ -192,6 +297,208 @@ function readEnvDeclarations(string $path): array
     $result['ok'] = true;
 
     return $result;
+}
+
+/**
+ * 读取一份配置的「根级安全属性原始值」+「<testsuites> 声明」（检查 G）
+ *
+ * 只取 SAFETY_ROOT_ATTRIBUTES 里登记的属性；**未声明的记 null**，由 effectiveSafetyValue()
+ * 折算成 PHPUnit 的默认值 —— 「没写」与「写了 false」在 PHPUnit 眼里是一回事，
+ * 但在报告里必须能区分，否则「属性被删掉」会看起来像「值没变」。
+ *
+ * testsuites 只收 `<testsuites><testsuite>` 下的一层 directory / file / exclude；
+ * phpunit.performance.xml 的 `<source><include><directory>` 不在 <testsuites> 下面，不会被误收。
+ * 同名套件后一个覆盖前一个（PHPUnit 本身会把两者都收集，此处只用于取「Legacy 在不在」，
+ * 不参与「有几个套件」的判定）。
+ *
+ * @return array{ok:bool, message:string, attributes:array<string, ?string>, suites:array<string, array{line:int, paths:array<int, array{type:string, value:string, line:int}>}>}
+ */
+function readRootStructure(string $path): array
+{
+    $result = ['ok' => false, 'message' => '', 'attributes' => [], 'suites' => []];
+
+    $loaded = loadXmlRoot($path);
+    if (!$loaded['ok']) {
+        $result['message'] = $loaded['message'];
+
+        return $result;
+    }
+
+    $root = $loaded['root'];
+
+    foreach (array_keys(SAFETY_ROOT_ATTRIBUTES) as $attribute) {
+        $result['attributes'][$attribute] = $root->hasAttribute($attribute)
+            ? $root->getAttribute($attribute)
+            : null;
+    }
+
+    foreach ($root->childNodes as $testsuites) {
+        if (!$testsuites instanceof DOMElement || $testsuites->nodeName !== 'testsuites') {
+            continue;
+        }
+        foreach ($testsuites->childNodes as $suite) {
+            if (!$suite instanceof DOMElement || $suite->nodeName !== 'testsuite') {
+                continue;
+            }
+            $paths = [];
+            foreach ($suite->childNodes as $entry) {
+                if (!$entry instanceof DOMElement) {
+                    continue;
+                }
+                if (!in_array($entry->nodeName, ['directory', 'file', 'exclude'], true)) {
+                    continue;
+                }
+                $paths[] = [
+                    'type'  => $entry->nodeName,
+                    'value' => trim($entry->textContent),
+                    'line'  => $entry->getLineNo(),
+                ];
+            }
+            $result['suites'][$suite->getAttribute('name')] = [
+                'line'  => $suite->getLineNo(),
+                'paths' => $paths,
+            ];
+        }
+    }
+
+    $result['ok'] = true;
+
+    return $result;
+}
+
+/**
+ * 把根级属性的原始文本折算成 PHPUnit **实际生效**的布尔值
+ *
+ * 与 `Xml\Loader::booleanFromString()` 逐字一致：只有 true / false（大小写不敏感，**不做 trim**）
+ * 会被采纳，其它取值一律回落给该属性的默认值。于是 `failOnRisky="1"` 等于 false ——
+ * 这是最隐蔽的一种「以为开了其实没开」，所以 literal=false 必须被单独报出来，
+ * 不能只按生效值比较（那样它会被当成「值是 false」，与基线不一致时报的信息会误导人）。
+ *
+ * @return array{value:bool, literal:bool} literal=false 表示字面量非法（已回落默认值）
+ */
+function effectiveSafetyValue(?string $raw, bool $default): array
+{
+    if ($raw === null) {
+        return ['value' => $default, 'literal' => true];
+    }
+
+    $normalized = strtolower($raw);
+    if ($normalized === 'true') {
+        return ['value' => true, 'literal' => true];
+    }
+    if ($normalized === 'false') {
+        return ['value' => false, 'literal' => true];
+    }
+
+    return ['value' => $default, 'literal' => false];
+}
+
+/**
+ * 把「原始值 + 生效值」渲染成人类可读的一段话，用于报错与豁免提示
+ *
+ * 「未声明」与「写了 false」都生效为 false，但成因完全不同（漏写 vs 明确关闭），
+ * 报错时必须能一眼看出来，否则修的人会去改一个根本不存在的属性。
+ */
+function describeSafetyValue(?string $raw, bool $effective): string
+{
+    $flag = $effective ? 'true' : 'false';
+
+    return $raw === null ? "未声明（生效 {$flag}）" : "\"{$raw}\"（生效 {$flag}）";
+}
+
+/**
+ * 统计目录下 *Test.php 的数量（检查 G 的静态空跑判定用）
+ *
+ * 默认后缀取自 PHPUnit 的 testSuffixes 默认值（`Test.php`）。不跟随符号链接。
+ * 目录不存在时返回 0 —— 由调用方先判 file_exists，不在这里制造两种失败。
+ */
+function countTestFiles(string $absolutePath): int
+{
+    if (!is_dir($absolutePath)) {
+        return 0;
+    }
+
+    try {
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($absolutePath, FilesystemIterator::SKIP_DOTS)
+        );
+    } catch (UnexpectedValueException $e) {
+        return 0;
+    }
+
+    $count = 0;
+    foreach ($iterator as $file) {
+        if ($file instanceof SplFileInfo && $file->isFile() && str_ends_with($file->getFilename(), 'Test.php')) {
+            $count++;
+        }
+    }
+
+    return $count;
+}
+
+/**
+ * 校验一份配置里某个 testsuite 的取样路径（检查 G 的静态部分）
+ *
+ * 为什么静态再查一遍：failOnEmptyTestSuite 只在「真的跑了一次」时才把空跑变红，
+ * 而变体配置（t048/t050）常年没人跑 —— 只在报覆盖率时被想起来。路径被挪走、用例被删空时，
+ * 静态布局检查是唯一会在日常 PR 上触发的那层。
+ *
+ * 相对路径的解析基准是**配置文件所在目录**（与 PHPUnit 一致），不是仓库根：
+ * 子目录里的配置（plugins/xxx/phpunit.xml）写 `<directory>tests</directory>`
+ * 指的是插件自己的 tests，按仓库根解析会误报。
+ *
+ * @param array{line:int, paths:array<int, array{type:string, value:string, line:int}>} $suite
+ * @return array<int, array{tag:string, msg:string}>
+ */
+function auditSuitePaths(string $configName, string $suiteName, array $suite): array
+{
+    $configDir = dirname($configName);
+    $prefix = ($configDir === '.' || $configDir === '') ? '' : $configDir . '/';
+    $issues = [];
+
+    $collectable = 0;
+    if ($suite['paths'] === []) {
+        $issues[] = [
+            'tag' => 'SUITE-EMPTY',
+            'msg' => "{$configName}:{$suite['line']} 套件「{$suiteName}」没有声明任何 directory / file，"
+                . '永远收集不到用例（PHPUnit 只会打印 No tests executed!）',
+        ];
+
+        return $issues;
+    }
+
+    foreach ($suite['paths'] as $path) {
+        if ($path['type'] === 'exclude') {
+            continue;
+        }
+        $isAbsolute = str_starts_with($path['value'], '/');
+        $absolute = $isAbsolute ? $path['value'] : REPO_ROOT . '/' . $prefix . $path['value'];
+        $display = $isAbsolute ? $path['value'] : $prefix . $path['value'];
+
+        if (!file_exists($absolute)) {
+            $issues[] = [
+                'tag' => 'SUITE-PATH',
+                'msg' => "{$configName}:{$path['line']} 套件「{$suiteName}」的 {$path['type']} {$path['value']} "
+                    . "不存在（按配置所在目录解析为 {$display}）：该套件的取样范围已经空了",
+            ];
+
+            continue;
+        }
+
+        if ($path['type'] === 'file' || countTestFiles($absolute) > 0) {
+            $collectable++;
+        }
+    }
+
+    if ($collectable === 0 && $issues === []) {
+        $issues[] = [
+            'tag' => 'SUITE-NO-TEST',
+            'msg' => "{$configName}:{$suite['line']} 套件「{$suiteName}」声明的路径里没有任何 *Test.php："
+                . '路径都在，但用例已经空了（运行期只能靠 failOnEmptyTestSuite 才发现）',
+        ];
+    }
+
+    return $issues;
 }
 
 /**
@@ -307,12 +614,15 @@ $registered = array_merge($required, array_keys(EXEMPT_CONFIGS));
 
 // 读取所有已发现的配置；required 里缺失的补占位，保证「缺失即报错」
 $configs = [];
+$structures = [];   // 检查 G 用：每份配置的根级安全属性 + testsuites 声明
 foreach ($discovered as $name) {
     $configs[$name] = readConfig($name);
+    $structures[$name] = readRootStructure(REPO_ROOT . '/' . $name);
 }
 foreach ($required as $name) {
     if (!isset($configs[$name])) {
         $configs[$name] = ['ok' => false, 'message' => '配置文件不存在', 'envs' => []];
+        $structures[$name] = ['ok' => false, 'message' => '配置文件不存在', 'attributes' => [], 'suites' => []];
     }
 }
 
@@ -574,6 +884,168 @@ foreach ($eNotices as $notice) {
     echo '   ' . colorize('[EXEMPT-REVIEW]', 'gray') . " {$notice}" . PHP_EOL;
 }
 $errorCount += count($eIssues);
+
+// --- 检查 G：根级安全属性 + testsuite 布局 ---
+// 事故背景：上一轮给 phpunit.xml 开了 failOnEmptyTestSuite 并新增 Legacy 套件，两份任务变体没跟上。
+// 由此有两个同源的静默退化，A~E 全都看不见（它们只解析 <php><env>）：
+//   1. 变体的 <testsuite> 一旦指向被挪走 / 改名的目录，PHPUnit 只打印 No tests executed! 就 exit 0，
+//      「T-048/T-050 覆盖率 ≥80%」的验收样本可以在一个用例都没跑的情况下照常出数；
+//   2. Legacy 套件若从基线里被删掉，两个守卫会重新变回没人跑的死文件。
+$gIssues = [];    // list<array{tag:string, msg:string}>
+$gNotices = [];   // list<string>
+
+// 受「与基线逐项一致」约束的配置：门禁链（基线 + 变体）+ **未**显式声明安全属性例外的豁免配置。
+// safety_exempt_allowed !== true 的豁免条目按门禁配置对待 —— 这是 fail-closed：
+// 新登记的豁免不会连「安全属性对齐」一起被默默豁免掉，必须显式写 true 才算表过态。
+$safetyGated = array_merge([BASE_CONFIG], VARIANT_CONFIGS);
+foreach (EXEMPT_CONFIGS as $name => $meta) {
+    if (!is_array($meta) || ($meta['safety_exempt_allowed'] ?? false) !== true) {
+        $safetyGated[] = $name;
+    }
+}
+
+$baseStructure = $structures[BASE_CONFIG]
+    ?? ['ok' => false, 'message' => '未读取', 'attributes' => [], 'suites' => []];
+$baseSafety = [];   // attribute => array{value:bool, literal:bool}
+$baseSuites = [];
+
+if (($baseStructure['ok'] ?? false) !== true) {
+    // 基线读不出来时检查 0 已计过错误，但 G 不能因此显示 OK（那会被读成「已校验」）
+    $gIssues[] = [
+        'tag' => 'BASE-STRUCT',
+        'msg' => BASE_CONFIG . ' 根级结构读取失败（' . ($baseStructure['message'] ?? '未知原因')
+            . '）：检查 G 无法比较',
+    ];
+} else {
+    foreach (SAFETY_ROOT_ATTRIBUTES as $attribute => $default) {
+        $baseSafety[$attribute] = effectiveSafetyValue($baseStructure['attributes'][$attribute], $default);
+    }
+    $baseSuites = $baseStructure['suites'];
+
+    // G1：三件套在基线里必须为 true（**不跟随基线漂移**：先改基线再改变体不能合法化漂移）
+    foreach (REQUIRED_TRUE_ROOT_ATTRIBUTES as $attribute => $consequence) {
+        if ($baseSafety[$attribute]['value'] === true) {
+            continue;
+        }
+        $gIssues[] = [
+            'tag' => 'BASELINE-SAFETY',
+            'msg' => BASE_CONFIG . " 的 {$attribute} 未开启（"
+                . describeSafetyValue($baseStructure['attributes'][$attribute], $baseSafety[$attribute]['value'])
+                . "）：{$consequence}",
+        ];
+    }
+
+    // G2：基线必须声明 Legacy 套件，且它的取样路径真的还能收集到用例
+    if (!array_key_exists(REQUIRED_BASE_TESTSUITE, $baseSuites)) {
+        $gIssues[] = [
+            'tag' => 'BASE-SUITE',
+            'msg' => BASE_CONFIG . ' 缺少 testsuite「' . REQUIRED_BASE_TESTSUITE . '」：'
+                . 'tests/Legacy 的守卫型用例不会被任何套件收集，php think test 与 CI 都会静默跳过它们'
+                . '（PHPUnit 不报「套件不存在」，只跑 0 个用例）。现有套件：'
+                . ($baseSuites === [] ? '（一个都没有）' : implode(' / ', array_keys($baseSuites))),
+        ];
+    } else {
+        foreach (auditSuitePaths(BASE_CONFIG, REQUIRED_BASE_TESTSUITE, $baseSuites[REQUIRED_BASE_TESTSUITE]) as $issue) {
+            $gIssues[] = $issue;
+        }
+    }
+}
+
+foreach ($safetyGated as $name) {
+    if ($name === BASE_CONFIG) {
+        continue;
+    }
+    if (($structures[$name]['ok'] ?? false) !== true) {
+        // 不可读：门禁必需配置由检查 0 计错，陈旧豁免由检查 E 报错。
+        // 这里不重复报同一个问题，结果行用 missingSuffix 标注「未参与本项检查」。
+        continue;
+    }
+    $structure = $structures[$name];
+
+    // G3：安全属性与基线逐项一致（含「基线开了、本配置没声明」这种最隐蔽的一类）
+    if ($baseSafety !== []) {
+        foreach (SAFETY_ROOT_ATTRIBUTES as $attribute => $default) {
+            $raw = $structure['attributes'][$attribute];
+            $current = effectiveSafetyValue($raw, $default);
+
+            if (!$current['literal']) {
+                $gIssues[] = [
+                    'tag' => 'SAFETY-ATTR',
+                    'msg' => "{$name} 的 {$attribute}=\"{$raw}\" 不是 true/false，PHPUnit 会回落默认值 "
+                        . ($default ? 'true' : 'false') . ' 而不是按字面量理解（等于悄悄换掉了本项语义）',
+                ];
+
+                continue;
+            }
+
+            $base = $baseSafety[$attribute];
+            if ($current['value'] === $base['value']) {
+                continue;
+            }
+            $gIssues[] = [
+                'tag' => 'SAFETY-DRIFT',
+                'msg' => "{$name} 的 {$attribute} 与基线不一致："
+                    . BASE_CONFIG . '=' . describeSafetyValue($baseStructure['attributes'][$attribute], $base['value'])
+                    . ' / 本配置=' . describeSafetyValue($raw, $current['value'])
+                    . '（安全属性属于测试语义，漂移后「变体绿」与「基线绿」不再是同一个绿）',
+            ];
+        }
+    }
+
+    // G4：套件取样路径必须存在且还能收集到用例（failOnEmptyTestSuite 的静态版 ——
+    // 运行期判定只在「真的跑了一次」时生效，而变体配置常年没人跑）
+    if ($structure['suites'] === []) {
+        $gIssues[] = [
+            'tag' => 'SUITE-ABSENT',
+            'msg' => "{$name} 没有声明任何 <testsuites>：跑起来一个用例都没有",
+        ];
+    }
+    foreach ($structure['suites'] as $suiteName => $suite) {
+        foreach (auditSuitePaths($name, (string) $suiteName, $suite) as $issue) {
+            $gIssues[] = $issue;
+        }
+    }
+}
+
+// 豁免配置（safety_exempt_allowed=true）：不判错，但把与基线的差异逐项打印出来 ——
+// 复核 review_by 的人必须能看见自己在批准什么，而不是「豁免了所以什么都不显示」。
+foreach (EXEMPT_CONFIGS as $name => $meta) {
+    if (!is_array($meta) || ($meta['safety_exempt_allowed'] ?? false) !== true) {
+        continue;
+    }
+    if (($structures[$name]['ok'] ?? false) !== true || $baseSafety === []) {
+        continue;   // 文件不存在由 EXEMPT-STALE 报；基线不可用已在上面报
+    }
+    $deltas = [];
+    foreach (SAFETY_ROOT_ATTRIBUTES as $attribute => $default) {
+        $raw = $structures[$name]['attributes'][$attribute];
+        $current = effectiveSafetyValue($raw, $default);
+        if (!$current['literal']) {
+            $deltas[] = "{$attribute}=\"{$raw}\"（非法值，按默认 " . ($default ? 'true' : 'false') . ' 处理）';
+
+            continue;
+        }
+        if ($current['value'] === $baseSafety[$attribute]['value']) {
+            continue;
+        }
+        $deltas[] = $attribute . '（基线=' . ($baseSafety[$attribute]['value'] ? 'true' : 'false')
+            . ' / 本配置=' . describeSafetyValue($raw, $current['value']) . '）';
+    }
+    if ($deltas === []) {
+        continue;
+    }
+    $gNotices[] = "{$name} 与基线的安全属性差异（已由豁免覆盖，review_by="
+        . ($meta['review_by'] ?? '缺失') . '）：' . implode('；', $deltas);
+}
+
+printf("检查 G  根级安全属性与套件      %s%s\n", formatResult(count($gIssues)), $missingSuffix);
+foreach ($gIssues as $issue) {
+    echo '   ' . colorize("[{$issue['tag']}]", 'red') . " {$issue['msg']}" . PHP_EOL;
+}
+foreach ($gNotices as $notice) {
+    echo '   ' . colorize('[EXEMPT-SAFETY]', 'gray') . " {$notice}" . PHP_EOL;
+}
+$errorCount += count($gIssues);
 
 echo str_repeat('-', 64) . PHP_EOL;
 

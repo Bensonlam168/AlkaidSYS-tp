@@ -205,6 +205,42 @@ docker exec alkaid-backend env CASBIN_RELOAD_BUDGET_MS=1500 ./vendor/bin/phpunit
 `RateLimitServiceTest` 把 4 个时间敏感用例改成「`DENY_RATE = 0.01` 的确定性拒绝」
 + 「有界轮询的确定性补充」，因此它们**仍然留在 Unit 套件**里，不需要打组。
 
+### 7.2 任务变体配置（`phpunit.t048.xml` / `phpunit.t050.xml`）与根级安全属性
+
+T-048 / T-050 的「覆盖率 ≥80%」是**按取样目录**验收的，因此根层有两份任务变体配置：
+
+| 配置 | 取样范围 | 用途 |
+| --- | --- | --- |
+| `phpunit.t048.xml` | `tests/Unit/Domain/Lowcode`、`tests/Unit/Schema`、`tests/Unit/Infrastructure/Lowcode`、`tests/Integration/Lowcode` | ORM / 低代码覆盖率 |
+| `phpunit.t050.xml` | `tests/Unit/Lowcode/FormDesigner` | 表单验证器覆盖率 |
+
+改这两份配置前先读下面三条约定：
+
+1. **变体是「任务子集」，不是「基线的裁剪版」**。它们只声明 T-048 / T-050 相关目录，
+   **不含** `Legacy` 套件：两个守卫要递归扫全仓数千个 PHP 文件（约 8 秒/个），对覆盖率数字零贡献；
+   而且它们在基线 `phpunit.xml` 的 `Legacy` 套件里已经跑到了（CI 单独一步 + 本地 `php think test`）。
+   把 `Legacy` 加进变体属于纯重复，**不要**当成「漏了」去补全。
+2. **根级安全属性必须与基线逐项一致**：`failOnRisky` / `failOnWarning` /
+   `failOnEmptyTestSuite` / `beStrictAboutOutputDuringTests`。其中缺 `failOnEmptyTestSuite`
+   的后果最隐蔽：取样目录被挪走、改名或用例被删空时，PHPUnit 只打印 `No tests executed!`
+   就以 0 退出，覆盖率报告照常输出，而样本其实是 0 个用例。
+3. 上面两条由 **`php scripts/check-phpunit-config.php --strict` 的「检查 G」**守着
+   （对应 CI 的 `PHPUnit Config Consistency`）：
+   - 三件套（`failOnRisky` / `failOnWarning` / `failOnEmptyTestSuite`）在基线里必须为 `true`，
+     变体的每个安全属性必须与基线一致（非法字面量如 `"1"` / `"yes"` 单独报错，PHPUnit 会静默回落默认值）；
+   - 基线必须声明 `Legacy` 套件，其取样路径必须在盘上、目录里至少有一个 `*Test.php`；
+   - 变体声明的每个 `directory` / `file` 必须存在且还能收集到用例 —— 这是
+     `failOnEmptyTestSuite` 的**静态**版（运行期判定只在「真的跑了一次」时才生效）。
+   确需例外时走脚本里的 `EXEMPT_CONFIGS`（必须写 `reason` 与 `review_by` 到期日），
+   **不要**为了让检查变绿去改基线或删断言。
+
+```bash
+# 变体配置自检（均在 alkaid-backend 容器内）
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.t048.xml
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.t050.xml
+docker exec alkaid-backend php scripts/check-phpunit-config.php --strict
+```
+
 ## 8. CI 集成与覆盖率 (T-059)
 
 - CI 流水线 **必须** 在合入受保护分支前执行完整的自动化测试套件。

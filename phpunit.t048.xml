@@ -5,7 +5,31 @@
          colors="true"
          beStrictAboutOutputDuringTests="true"
          failOnRisky="true"
-         failOnWarning="true">
+         failOnWarning="true"
+         failOnEmptyTestSuite="true">
+    <!--
+      ============================================================
+      根级安全属性与基线 phpunit.xml 逐项对齐
+      ============================================================
+      failOnEmptyTestSuite="true"：本文件声明的 <testsuite> 是「T-048 覆盖率 ≥80%」的取样范围。
+      一旦下面的目录被挪走 / 改名 / 用例被删空，PHPUnit 只会打印 No tests executed! 并以 0 退出，
+      覆盖率报告照常输出，但样本是 0 个用例 —— 数字不再有任何意义，而且没有任何东西会变红。
+      打开本项后「一个用例都没跑」一律 exit 1。
+
+      其余安全属性（failOnRisky / failOnWarning / beStrictAboutOutputDuringTests）与基线一致；
+      这几项由 scripts/check-phpunit-config.php 的「根级安全属性与套件」检查守着 ——
+      变体漏一项就报错，不会再出现「基线开了、变体没开」的静默漂移。
+
+      为什么本文件**不含** Legacy 套件（不是漏了，别再顺手加上）：
+        1. 本文件的设计意图是「任务子集」：只统计 T-048 相关目录的覆盖率（见下方注释）。
+           塞进全仓扫描型守卫会改变它的语义 —— 它不再是「T-048 的取样范围」，
+           而是「T-048 的取样范围 + 两个与 T-048 无关的守卫」；
+        2. 两个守卫各要递归扫全仓数千个 PHP 文件（实测约 8 秒/个），对覆盖率数字零贡献，只增加耗时；
+        3. 它们已经在基线 phpunit.xml 的 Legacy 套件里，CI（单独一步）与本地全量（php think test）
+           都会跑到，在这里再跑一遍是纯重复。
+      若将来确实需要在变体里跑守卫，请连本段注释一起改，并在 check-phpunit-config 里补充
+      「变体可以含 Legacy」的判定，而不是把套件复制一份了事。
+    -->
     <!--
       T-048 专用覆盖率配置：
       仅统计 ORM/低代码相关目录，避免被无关模块稀释，作为验收“覆盖率≥80%”的量化依据。
