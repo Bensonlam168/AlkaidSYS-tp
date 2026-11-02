@@ -117,7 +117,7 @@ const EXEMPT_CONFIGS = [
         'safety_exempt_allowed' => true,
     ],
     'plugins/workflow-engine/phpunit.xml' => [
-        'reason'                => '插件独立测试域（自带 bootstrap/testsuites，独立运行插件测试），env 全部不带 force，不参与根级强制变量策略',
+        'reason'                => '插件独立测试域（自带 testsuites，bootstrap 指向插件自己的 vendor/autoload.php，独立运行插件测试），env 仅剩不带 force 的 APP_ENV（原 DB_* 与 WORKFLOW_* 全是死配置，已于 2026-11-02 删除），不参与根级强制变量策略',
         'review_by'             => '2027-04-30',
         // 插件自带一份 PHPUnit 11.0 配置，failOn* 三项全未开启：它有自己的交付链与发布节奏，
         // 由插件维护者按插件规则管理；这里只要求「差异可见」，不要求与根基线一致。

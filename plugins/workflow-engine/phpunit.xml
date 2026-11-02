@@ -23,15 +23,42 @@
     </source>
 
     <php>
+        <!--
+            ============================================================
+            本块只保留 APP_ENV，其余 env 已于 2026-11-02 删除
+            ============================================================
+            APP_ENV 是真被读的：src/Expression/Context/ExpressionContext.php 里
+                'env' => getenv('APP_ENV') ?: 'production'
+            依赖它，所以留着（且不加 force，与根基线一致）。
+
+            为什么删掉其余 env
+            1. 它们**没有任何读取者**。DB_CONNECTION / DB_HOST / DB_PORT / DB_DATABASE /
+               DB_USERNAME / DB_PASSWORD 这 6 条 DB_* 与 WORKFLOW_DB_PREFIX /
+               WORKFLOW_TENANT_ENABLED / WORKFLOW_DEBUG 这 3 条 WORKFLOW_*，
+               在插件 src/ 里一遍都读不到（src/ 唯一的 env 调用是
+               src/Container/ServiceFactory.php 的 env('APP_DEBUG', false)）。
+               全插件唯一提到它们的是 tests/bootstrap.php，而本文件的 bootstrap 指向
+               vendor/autoload.php，那份 bootstrap **从未被载入**；何况它里面也只是
+               给 $_ENV 赋值，并不会去读 PHPUnit 注入的 env。
+               即：这 9 条声明是死配置，删掉不改变任何用例的行为。
+            2. 那套 DB 值与本仓库真实测试库**三处不符**，留着只会误导下一个读配置的人：
+               主机名 写的是 127.0.0.1，但 alkaid-backend 容器里 127.0.0.1:3306 是
+               Connection refused（实测），容器网络里的服务名是 mysql；
+               库名 写的是 alkaidsys_test，真实测试库是 alkaid_sys_test（alkaid 与 sys
+               之间少了一个下划线）；
+               键名 用的是 DB_DATABASE / DB_USERNAME / DB_PASSWORD，而根 phpunit.xml
+               与 .env 用的是 DB_NAME / DB_USER / DB_PASS。
+               也就是说这几个键即便被读，也一个都命中不了根配置的口径。
+            3. 结论：不是在 127.0.0.1 与 mysql 之间二选一的问题，两个都是硬编码，
+               换个环境就错。真正的问题是整块本身是死配置。
+
+            若将来插件测试真要连库
+            **必须遵守根 phpunit.xml 的契约：连接类参数永远不要加 force。**
+            PHPUnit 11 的语义是不加 force 时「已存在的 $_ENV / getenv 值胜出」，
+            加了 force 容器里的 127.0.0.1 就会成为权威值，把真实环境值盖掉。
+            届时请指向真实测试库 alkaid_sys_test，主机用容器服务名 mysql，
+            账号键用 DB_USER / DB_PASS，并优先复用根配置而不是另抄一份。
+        -->
         <env name="APP_ENV" value="testing"/>
-        <env name="DB_CONNECTION" value="mysql"/>
-        <env name="DB_HOST" value="127.0.0.1"/>
-        <env name="DB_PORT" value="3306"/>
-        <env name="DB_DATABASE" value="alkaidsys_test"/>
-        <env name="DB_USERNAME" value="root"/>
-        <env name="DB_PASSWORD" value=""/>
-        <env name="WORKFLOW_DB_PREFIX" value="alkaid_"/>
-        <env name="WORKFLOW_TENANT_ENABLED" value="true"/>
-        <env name="WORKFLOW_DEBUG" value="true"/>
     </php>
 </phpunit>
