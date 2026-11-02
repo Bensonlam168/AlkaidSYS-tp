@@ -9,7 +9,8 @@ declare(strict_types=1);
  * 检查 design/ 与 docs/ 下的 Markdown 文档，**以及 `SCAN_FILES` 登记的根目录文档**
  * （目前是 AGENTS.md / CLAUDE.md / README.md / README.local.md），覆盖四类问题：
  *   0. 扫描范围不完整（登记项不存在、根目录 md 既未纳入也未豁免）
- *   1. 相对链接失效（指向不存在的 .md 文件）
+ *   1. 链接失效 + 本机绝对路径
+ *      （相对 .md 链接指向不存在的文件；`file://` 链接泄漏本机绝对路径）
  *   2. 代码围栏不配平（奇数个 ``` 会导致后续内容被吞入代码块）
  *   3. 示例代码引用了不存在的类（设计阶段命名 vs 实际实现）
  *
@@ -21,7 +22,10 @@ declare(strict_types=1);
  *   本脚本只校验**结构**（链接目标存在、围栏成对、示例类存在），**不校验散文事实**。
  *   例如「`php think test` 支持指定文件」这类命令用法错误、或「某检查是两段式」这类
  *   流程描述过期，本脚本一律看不见，仍需人工与 PHPUnit 守卫覆盖。
- *   另外检查 1 只匹配 `](./x.md)` / `](../x.md)`，**裸相对链接** `](docs/x.md)` 不在其内。
+ *   检查 1 现在同时覆盖 `](./x.md)`、`](../x.md)` 与**裸相对链接** `](docs/x.md)`，
+ *   且会先剥离围栏代码块与行内代码（详见 `checkLinks()` 的注释）。
+ *   仍未覆盖：**引用式链接定义**（`[x]: path.md`）、非 .md 目标（目录/图片/.php）、
+ *   锚点（`#section`）是否真实存在。
  *
  * 用法：
  *   php scripts/check-docs.php              # 检查并输出报告
@@ -268,32 +272,152 @@ function readLines(string $path): array
 }
 
 /**
- * 检查 1：相对链接有效性
+ * 检查 1：相对链接有效性 + 本机绝对路径（`file://`）判错
+ *
+ * ## 支持的链接形态
+ *   1. 显式相对：`](./x.md)`、`](../x.md)` —— 历史形态，保持不变
+ *   2. 裸相对：  `](x.md)`、`](a/b/x.md)` —— **本次新增**
+ *
+ * 两种形态都**按所在文件所在目录解析**（`dirname($file) . '/' . $link`）。
+ * 这一点是裸链接校验的全部价值：Markdown 相对链接的解析基准是**文档自身位置**，不是仓库根。
+ * 因此写在 `docs/report/` 里的 `](docs/x.md)` 在 GitHub 上实际指向
+ * `docs/report/docs/x.md` —— 一个**必然不存在**的位置。这类「从仓库根起算」的写法是最常见的
+ * 失效形态，且只有真的按目录解析才能被发现。
+ *
+ * ## 主动跳过（不是缺陷，也不新增错误类别）
+ *   - 协议链接：`http://`、`https://`、`mailto:` 等任意 `scheme:` 形式（外网可达性不在本脚本职责内）
+ *   - 纯锚点：`](#section)`
+ *   - 根绝对：`](/x.md)` —— 语义是「从仓库根解析」，与本地文件系统路径不是一回事；
+ *     实测扫描范围内 0 条，故只跳过、不新增报错类别，避免凭空造一条没人验证过的规则
+ *   - 非 `.md` 目标（如 `](docs/developer-guides/)`、`![](x.png)`）：本项只校验 `.md` 文档链接，
+ *     目录/图片/`.php` 的可达性不在范围内
+ *
+ * ## 单独判错：`file://` 本机绝对路径
+ *   `](file:///Users/xxx/project/app/Foo.php#L16-L20)` 在**作者本机**能点开，换台机器、换个人
+ *   就必然失效，同时把本机用户名与目录结构泄漏进版本库。该判定与 `.md` 判定**相互独立**
+ *   （`file://` 可以指向 `.php` 等任意文件），因此同一行里的
+ *   `](file:///.../security-guidelines.md)` **只报一次 `file://` 错误，不再被算作 `.md` 失效链接**
+ *   —— 否则同一条问题记两遍，报错账目对不上。
+ *
+ * ## `docs/report` 策略：**不豁免**（决策记录，改动前请先读这段）
+ *   检查 3（示例类引用）确实豁免了 `docs/report/`，但**检查 1 不跟进豁免**：
+ *   1. 失效的 6 条裸链接里，目标文件**全部真实存在** —— 这是「路径写法错误」，不是
+ *      「历史快照失真」；加一层 `../` 就修好，属于**能被修的问题**，不该被豁免成看不见；
+ *   2. `docs/report/` 是裸链接最密集的目录（实测 32 条），一刀切豁免等于让本仓库
+ *      最大的文档目录**永久失明**，与本仓库近年反复治理「假绿检查」的方向相反；
+ *   3. 检查 3 的豁免理由是「审计报告会引用**不存在的类**作为证据」，与「链接指向的文件
+ *      是否存在」是两码事 —— 前者按定义必然不存在，后者不该不存在。
+ *   若将来真出现「指向已删除文件的归档链接」，处置方式是**把链接降级为行内代码**
+ *   （`` `docs/xxx.md` ``：保留原文陈述、退出链接校验），而不是按目录一刀切豁免。
+ *
+ * ## 代码剥离（避免把「说明文字」当成真链接）
+ *   扫描前先剥离两类代码，否则描述正则本身的文字会被误报
+ *   （实例：`docs/report/doc-review-design-docs-2026-10-30.md` 里那行表格，
+ *   反引号内写着 `](...md)` 作为**检查规则说明**，并不是链接）：
+ *   - **围栏代码块**：状态机逐行切换，判定用 `str_starts_with(trim($line), '```')`；
+ *     围栏行自身也不参与扫描（它是语法标记，不是内容）
+ *   - **行内代码 span**：见 `isInsideInlineCode()`
+ *
+ * ## 与检查 2 的关系
+ *   检查 2 只负责「围栏是否配平」，仍按**行首**（不 trim）判定，本次**未改动**。
+ *   本函数为了不漏掉列表内缩进的围栏（实测存在 240 行缩进围栏，如 `design/06-ratelimit/`），
+ *   改用 trim 后判定。已在 212 个扫描文件上验证两种判定的结论一致：
+ *   每个文件的围栏数在两种判定下均为偶数，且缩进围栏内部含 `.md` 链接 0 条。
  *
  * @param string[] $files
- * @return array<int, array{file:string, link:string}>
+ * @return array<int, array{file:string, line:int, link:string, kind:string, target:string}>
  */
 function checkLinks(array $files): array
 {
     $issues = [];
+
     foreach ($files as $file) {
         $dir = dirname($file);
-        $lines = readLines($file);
-        foreach ($lines as $line) {
-            // 匹配 ](./x.md) 与 ](../x.md)，允许带 #锚点
-            if (!preg_match_all('/\]\((\.{1,2}\/[^)#]+\.md)(?:#[^)]*)?\)/', $line, $matches)) {
+        $inFence = false;
+
+        foreach (readLines($file) as $index => $line) {
+            // --- 剥离 1：围栏代码块（状态机；围栏行自身跳过）---
+            if (str_starts_with(trim($line), '```')) {
+                $inFence = !$inFence;
                 continue;
             }
-            foreach ($matches[1] as $link) {
-                $target = normalizePath($dir . '/' . $link);
-                if (!is_file($target)) {
-                    $issues[] = ['file' => $file, 'link' => $link];
+            if ($inFence) {
+                continue;
+            }
+
+            // 抓取 `](target)` 里的 target（不取空白，从而天然忽略 `(x.md "标题")` 的标题部分）
+            if (!preg_match_all('/\]\(\s*([^)\s]+)\s*\)/u', $line, $matches, PREG_OFFSET_CAPTURE)) {
+                continue;
+            }
+
+            foreach ($matches[1] as $i => $match) {
+                $link = $match[0];
+
+                // --- 剥离 2：行内代码 span（近似判定，见 isInsideInlineCode）---
+                if (isInsideInlineCode($line, (int) $matches[0][$i][1])) {
+                    continue;
+                }
+
+                $issue = inspectLinkTarget($file, $index + 1, $dir, $link);
+                if ($issue !== null) {
+                    $issues[] = $issue;
                 }
             }
         }
     }
 
     return $issues;
+}
+
+/**
+ * 判定单个链接目标是否需要报错；返回 `null` 表示「跳过，不是缺陷」
+ *
+ * `kind` 取值：
+ *   - `file-url`：`file://` 本机绝对路径（与 `.md` 判定相互独立，见 checkLinks 注释）
+ *   - `missing` ：相对 `.md` 链接按所在目录解析后不存在
+ *
+ * @return array{file:string, line:int, link:string, kind:string, target:string}|null
+ */
+function inspectLinkTarget(string $file, int $line, string $dir, string $link): ?array
+{
+    // 1) `file://` 本机绝对路径：独立成类，先判（避免同一条再被算成 .md 失效）
+    if (stripos($link, 'file://') === 0) {
+        return ['file' => $file, 'line' => $line, 'link' => $link, 'kind' => 'file-url', 'target' => ''];
+    }
+
+    // 2) 协议链接（http/https/mailto/...）、纯锚点、根绝对路径：主动跳过
+    if (preg_match('~^(?:[a-z][a-z0-9+.\-]*:|/|\#)~i', $link) === 1) {
+        return null;
+    }
+
+    // 3) 只校验 .md 目标；`#锚点` 不参与解析（锚点是否存在不在本项范围）
+    $pathPart = (string) preg_replace('/#.*$/', '', $link);
+    if ($pathPart === '' || !str_ends_with(strtolower($pathPart), '.md')) {
+        return null;
+    }
+
+    // 4) 按**所在文件目录**解析 —— 裸链接与 `./`、`../` 形态共用这一处
+    $resolved = normalizePath($dir . '/' . $pathPart);
+    if (is_file($resolved)) {
+        return null;
+    }
+
+    return ['file' => $file, 'line' => $line, 'link' => $link, 'kind' => 'missing', 'target' => $resolved];
+}
+
+/**
+ * 判断某一位置是否落在**行内代码 span** 内（近似判定）
+ *
+ * 规则：该行此位置之前出现**奇数个**反引号 → 认为处于行内代码内 → 跳过。
+ *
+ * 为什么是近似而非完整 CommonMark：完整规则要处理 `\`` 转义、以及「N 个反引号开头
+ * 必须 N 个反引号闭合」的等长配对。这里刻意取最简判定，理由是**够用**：
+ * 全仓实测「行内代码里的 .md 链接」只有 1 条，且是单反引号包裹的说明文字。
+ * 若将来出现嵌套多反引号的行内代码导致漏报/误报，再升级为逐字符状态机。
+ */
+function isInsideInlineCode(string $line, int $offset): bool
+{
+    return substr_count(substr($line, 0, max(0, $offset)), '`') % 2 === 1;
 }
 
 /**
@@ -484,7 +608,15 @@ $totalIssues = count($coverageIssues);
 $linkIssues = checkLinks($files);
 printf("检查 1  相对链接有效性        %s\n", formatResult(count($linkIssues)));
 foreach ($linkIssues as $issue) {
-    echo '   ' . colorize('[LINK]', 'yellow') . " {$issue['file']} -> {$issue['link']}" . PHP_EOL;
+    if ($issue['kind'] === 'file-url') {
+        echo '   ' . colorize('[FILE-URL]', 'yellow')
+            . " {$issue['file']}:{$issue['line']} -> {$issue['link']}"
+            . '（本机绝对路径，他人无法打开；请改成从文档所在目录出发的相对链接）' . PHP_EOL;
+        continue;
+    }
+    echo '   ' . colorize('[LINK]', 'yellow')
+        . " {$issue['file']}:{$issue['line']} -> {$issue['link']}"
+        . "（解析为 {$issue['target']}，不存在）" . PHP_EOL;
 }
 $totalIssues += count($linkIssues);
 

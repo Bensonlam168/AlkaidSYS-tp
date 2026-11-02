@@ -617,14 +617,14 @@ docker exec -it alkaid-backend php think test --coverage-html
 - [`design/09-lowcode-framework/`](design/09-lowcode-framework/) - 低代码框架设计文档
 
 #### 技术规范
-- [`docs/technical-specs/api/api-specification.md`](docs/technical-specs/api/api-specification.md) - API规范
-- [`docs/technical-specs/security/security-guidelines.md`](docs/technical-specs/security/security-guidelines.md) - 安全指南
+- [`docs/technical-specs/api/api-specification.md`](../technical-specs/api/api-specification.md) - API规范
+- [`docs/technical-specs/security/security-guidelines.md`](../technical-specs/security/security-guidelines.md) - 安全指南
 - [`docs/technical-specs/multi-tenant/`](docs/technical-specs/multi-tenant/) - 多租户规范
-- [`docs/technical-specs/testing/testing-guidelines.md`](docs/technical-specs/testing/testing-guidelines.md) - 测试指南
+- [`docs/technical-specs/testing/testing-guidelines.md`](../technical-specs/testing/testing-guidelines.md) - 测试指南
 
 #### 审查报告
-- [`docs/report/design-compliance-audit-2025-12-14.md`](docs/report/design-compliance-audit-2025-12-14.md) - 设计契合度审查
-- [`docs/todo/development-backlog-2025-11-25.md`](docs/todo/development-backlog-2025-11-25.md) - 开发待办事项
+- [`docs/report/design-compliance-audit-2025-12-14.md`](design-compliance-audit-2025-12-14.md) - 设计契合度审查
+- [`docs/todo/development-backlog-2025-11-25.md`](../todo/development-backlog-2025-11-25.md) - 开发待办事项
 
 ### B. 关键文件路径
 

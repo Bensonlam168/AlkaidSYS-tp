@@ -72,7 +72,7 @@ PUT    /v1/lowcode/forms/:name     // 更新表单
 DELETE /v1/lowcode/forms/:name     // 删除表单
 ```
 
-**统一响应格式** ✅ **已验证** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/controller/ApiController.php#L16-L20))：
+**统一响应格式** ✅ **已验证** ([证据](../../app/controller/ApiController.php#L16-L20))：
 ```json
 {
   "code": 0,           // 0=成功, 非0=失败
@@ -83,7 +83,7 @@ DELETE /v1/lowcode/forms/:name     // 删除表单
 }
 ```
 
-**分页响应格式** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/controller/ApiController.php#L57-L67))：
+**分页响应格式** ([证据](../../app/controller/ApiController.php#L57-L67))：
 ```json
 {
   "code": 0,
@@ -100,7 +100,7 @@ DELETE /v1/lowcode/forms/:name     // 删除表单
 
 ### 1.3 关键对接点
 
-**错误码体系** ✅ **已验证** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/middleware/Auth.php#L45), [Permission](file:///Users/Benson/Code/AlkaidSYS-tp/app/middleware/Permission.php#L46-L77))：
+**错误码体系** ✅ **已验证** ([证据](../../app/middleware/Auth.php#L45), [Permission](../../app/middleware/Permission.php#L46-L77))：
 
 | HTTP状态 | 业务Code | 含义 | 使用场景 |
 |---------|---------|------|----------|
@@ -143,7 +143,7 @@ interface LoginResult {
 }
 ```
 
-**Backend实际** ✅ **已验证** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/controller/AuthController.php#L42-L98)):
+**Backend实际** ✅ **已验证** ([证据](../../app/controller/AuthController.php#L42-L98)):
 ```json
 POST /v1/auth/login
 Body: { "email": "...", "password": "..." }
@@ -201,7 +201,7 @@ interface UserInfo {
 }
 ```
 
-**Backend实际** ✅ **已验证** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/controller/AuthController.php#L278-L303)):
+**Backend实际** ✅ **已验证** ([证据](../../app/controller/AuthController.php#L278-L303)):
 ```json
 GET /v1/auth/me
 Response: {
@@ -264,7 +264,7 @@ export async function getUserInfoApi() {
 ```
 
 #### Token刷新 API
-⚠️ **已修正** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/controller/AuthController.php#L177-L268)):
+⚠️ **已修正** ([证据](../../app/controller/AuthController.php#L177-L268)):
 
 **Backend机制**（复杂度高于预期）:
 1. 需要在Authorization header中传递**Refresh Token**（非Access Token）
@@ -287,8 +287,8 @@ export async function refreshTokenApi() {
 ```
 
 **Refresh Token生命周期**（7天）：
-- Access Token: 2小时 ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/infrastructure/Auth/JwtService.php#L38))
-- Refresh Token: 7天 ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/infrastructure/Auth/JwtService.php#L43))
+- Access Token: 2小时 ([证据](../../infrastructure/Auth/JwtService.php#L38))
+- Refresh Token: 7天 ([证据](../../infrastructure/Auth/JwtService.php#L43))
 
 ### 2.2 权限相关API
 
@@ -364,7 +364,7 @@ export async function getAccessCodesApi() {
 
 ### 3.1 Permission Slug → Access Code映射表
 
-⚠️ **权限格式规范差异** ([Technical Spec](file:///Users/Benson/Code/AlkaidSYS-tp/docs/technical-specs/security/security-guidelines.md#L43) vs [实际代码](file:///Users/Benson/Code/AlkaidSYS-tp/app/middleware/Permission.php#L108-L110)):
+⚠️ **权限格式规范差异** ([Technical Spec](../technical-specs/security/security-guidelines.md#L43) vs [实际代码](../../app/middleware/Permission.php#L108-L110)):
 
 **Technical Specs定义**：
 - 格式：`resource:action`（冒号分隔）
@@ -396,7 +396,7 @@ export async function getAccessCodesApi() {
 | `roles.view` | `roles:view` | 查看角色 |
 | `roles.update` | `roles:update` | 更新角色 |
 
-**映射规则** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/database/seeds/CorePlatformSeed.php#L111-L137)):
+**映射规则** ([证据](../../database/seeds/CorePlatformSeed.php#L111-L137)):
 ```
 内部：slug = resource.action
 对外：code = resource:action
@@ -404,7 +404,7 @@ export async function getAccessCodesApi() {
 ```
 
 
-⚠️ **重要说明** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/middleware/Permission.php#L98-L123))：
+⚠️ **重要说明** ([证据](../../app/middleware/Permission.php#L98-L123))：
 
 Backend Permission中间件**直接使用permission.slug**（如`forms.view`），不使用AC_格式。
 
@@ -749,7 +749,7 @@ export const useAuthStore = defineStore('auth', {
 
 ## 📝 第六部分：开发环境配置
 
-### 环境变量说明 ✅ **已验证** ([证据](file:///Users/Benson/Code/AlkaidSYS-tp/app/middleware/Auth.php#L36-L38))
+### 环境变量说明 ✅ **已验证** ([证据](../../app/middleware/Auth.php#L36-L38))
 
 Backend支持开发环境跳过认证/权限检查：
 

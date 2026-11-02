@@ -2,11 +2,15 @@ name: Docs Check
 
 # 文档一致性门禁 | Documentation consistency gate
 #
-# 检查 design/ 与 docs/ 下的 Markdown：
-#   1. 相对链接有效性
+# 检查 design/ 与 docs/ 下的 Markdown，**以及 SCAN_FILES 登记的根目录文档**
+# （AGENTS.md / CLAUDE.md / README.md / README.local.md）：
+#   0. 扫描范围完整性（根目录 md 既未纳入扫描也未豁免 → 报错）
+#   1. 链接失效：相对 .md 链接指向不存在的文件（含裸相对链接，按所在目录解析）；
+#      `file://` 本机绝对路径判错（他人无法打开）
 #   2. 代码围栏配平
 #   3. 示例代码引用不存在的类（已声明「设计阶段命名」的文档豁免）
 #
+# 检查 1 会先剥离围栏代码块与行内代码，避免把「描述链接规则的说明文字」误报为失效链接。
 # 详情见 scripts/check-docs.php
 
 # R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose

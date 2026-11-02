@@ -133,7 +133,7 @@ jobs:
 ```
 
 ##### 4. 团队培训材料创建 ✅
-**文件**: [`docs/training/git-workflow-training.md`](docs/training/git-workflow-training.md)
+**文件**: [`docs/training/git-workflow-training.md`](../training/git-workflow-training.md)
 
 **实施内容**:
 - 创建了全面的Git工作流培训文档
