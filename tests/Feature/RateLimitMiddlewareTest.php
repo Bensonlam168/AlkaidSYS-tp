@@ -45,10 +45,11 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
      * 测试环境没有设置该变量 => 中间件直接 return $next($request) 全程直通，
      * 不覆盖配置的用例根本不会触碰任何限流维度（历史上「限额内不拒绝」用例就是这样空转的）。
      *
-     * @param int   $capacity 桶容量（最大令牌数）
-     * @param float $rate     令牌补充速率（令牌/秒）
+     * @param int          $capacity       桶容量（最大令牌数）
+     * @param float        $rate           令牌补充速率（令牌/秒）
+     * @param list<string> $trustedProxies 可信代理列表（ER-09：默认空 = 不信任任何 XFF）
      */
-    private function useLowCapacityIpScope(int $capacity = 5, float $rate = 0.001): void
+    private function useLowCapacityIpScope(int $capacity = 5, float $rate = 0.001, array $trustedProxies = []): void
     {
         $override = $this->originalRateLimitConfig;
         $override['enabled']   = true;
@@ -67,6 +68,35 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
         foreach (['user', 'tenant', 'route'] as $scope) {
             $override['scopes'][$scope]['enabled'] = false;
         }
+
+        // ER-09：客户端 IP 的解析完全由可信代理列表决定，用例必须显式声明
+        $override['trusted_proxies'] = $trustedProxies;
+
+        Config::set($override, 'ratelimit');
+    }
+
+    /**
+     * 把限流配置覆盖为「仅启用 user 维度 + 低容量」，用于验证 user scope 的边界（ER-09）
+     *
+     * @param int $capacity 桶容量
+     */
+    private function useLowCapacityUserScope(int $capacity = 1): void
+    {
+        $override = $this->originalRateLimitConfig;
+        $override['enabled']   = true;
+        $override['algorithm'] = 'token_bucket';
+        $override['scopes']['user'] = [
+            'enabled'  => true,
+            'limit'    => $capacity,
+            'period'   => 60,
+            'capacity' => $capacity,
+            'rate'     => 0.0001,
+        ];
+        foreach (['tenant', 'ip', 'route'] as $scope) {
+            $override['scopes'][$scope]['enabled'] = false;
+        }
+        // 可信代理与本用例无关，显式清空，避免环境注入影响结论
+        $override['trusted_proxies'] = [];
 
         Config::set($override, 'ratelimit');
     }
@@ -107,12 +137,11 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
         $request = new \app\Request();
         $request->setMethod('GET');
         $request->setPathinfo($path);
-        // 必须用 withHeader() 真正写入请求头：
-        // think\Request::header($name, $default) 只是「带默认值的读取」，不会写入任何头，
-        // 原写法 $request->header('X-Forwarded-For', '198.51.100.1') 因此从未设置过 XFF，
-        // 中间件只能回落到 $request->ip()（测试进程中 REMOTE_ADDR 为空 => '0.0.0.0'），
-        // 于是本用例从未命中过预期的那个 ip 维度标识。
-        $request->withHeader(['X-Forwarded-For' => $clientIp]);
+        // ER-09 之后的语义：客户端 IP **不再**从 X-Forwarded-For 里取（那是客户端可伪造的头），
+        // 而是取自 TCP 对端，即 REMOTE_ADDR。因此这里用 withServer() 模拟「客户端直连后端」。
+        // 历史写法是 withHeader(['X-Forwarded-For' => $clientIp])：改前确实能改变标识，
+        // 但那恰恰是缺陷 —— 任何客户端换一个 XFF 就换一个桶。
+        $request->withServer(['REMOTE_ADDR' => $clientIp]);
 
         $response = $this->runHttp($request);
 
@@ -149,12 +178,10 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
         // 用例内覆盖限流配置：ip 维度容量 5、补充速率 0.001，其余维度关闭
         $this->useLowCapacityIpScope();
 
-        // 客户端 IP：中间件优先取 X-Forwarded-For 的第一段作为 ip 维度的标识
+        // 客户端 IP：ER-09 之后取自 TCP 对端（REMOTE_ADDR），不再取自 X-Forwarded-For
         $clientIp = '203.0.113.10';
 
         // 清理本用例使用的 ip 令牌桶，消除历史运行（同一 Redis 实例）残留令牌的影响。
-        // 注意：think\Request::header($name, $default) 只是“带默认值的读取”，不会写入请求头，
-        // 因此这里用 withHeader() 真正设置 X-Forwarded-For。
         $bucketKey = RateLimitService::buildKey((string) env('APP_ENV', 'dev'), 'ip', $clientIp);
         (new RateLimitService())->reset($bucketKey);
 
@@ -165,7 +192,7 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
             $request = new \app\Request();
             $request->setMethod('GET');
             $request->setPathinfo($path);
-            $request->withHeader(['X-Forwarded-For' => $clientIp]);
+            $request->withServer(['REMOTE_ADDR' => $clientIp]);
 
             $lastResponse = $this->runHttp($request);
         }
@@ -206,5 +233,170 @@ class RateLimitMiddlewareTest extends ThinkPHPTestCase
         }
 
         $this->assertTrue($foundRateLimited, 'Expected at least one rate_limited=true entry in access log');
+    }
+
+    /**
+     * ER-09 用例 1：伪造 X-Forwarded-For **不能**换桶（对端不可信 → 整条 XFF 被忽略）
+     *
+     * 这是本次修复的核心证据。改前取 XFF 最左值，攻击者每次换一个伪造 IP 就能无限绕过
+     * 按 IP 的限流；改后标识只来自 TCP 对端，换多少个伪造值都会落进同一个桶 ——
+     * 因此第 capacity+1 次请求必须 429，且命中标识是**对端地址**而不是伪造值。
+     */
+    public function test_forged_xff_cannot_change_the_ip_bucket(): void
+    {
+        $path   = 'ratelimit-test-forged-xff';
+        $peerIp = '198.51.100.50';
+
+        // 默认姿态：不信任任何代理
+        $this->useLowCapacityIpScope(3, 0.0001, []);
+
+        $bucketKey = RateLimitService::buildKey((string) env('APP_ENV', 'dev'), 'ip', $peerIp);
+        (new RateLimitService())->reset($bucketKey);
+
+        $codes        = [];
+        $lastResponse = null;
+
+        // 每次换一个伪造 IP：改前每次都是新桶（永远 200），改后必须共用对端 IP 的桶
+        for ($i = 1; $i <= 6; $i++) {
+            $request = new \app\Request();
+            $request->setMethod('GET');
+            $request->setPathinfo($path);
+            $request->withServer(['REMOTE_ADDR' => $peerIp]);
+            $request->withHeader(['X-Forwarded-For' => '9.9.9.' . $i]);
+
+            $lastResponse = $this->runHttp($request);
+            $codes[]      = $lastResponse->getCode();
+        }
+
+        // 容量 3：前 3 次放行、第 4 次起必须 429 —— 伪造头换桶的路径已被封死。
+        // 注：这里只断言「有没有被限流」，不锁定前 3 次的业务状态码
+        // （该测试路径本身没有对应路由，正常是 404，与限流无关）。
+        $this->assertSame(
+            [429, 429, 429],
+            array_slice($codes, 3),
+            '伪造 X-Forwarded-For 不应改变限流桶：期望第 4 次起被限流，实际 ' . json_encode($codes)
+        );
+        foreach ([0, 1, 2] as $index) {
+            $this->assertNotSame(
+                429,
+                $codes[$index],
+                '容量 3：第 ' . ($index + 1) . ' 次不应被限流，实际 ' . json_encode($codes)
+            );
+        }
+
+        $body = json_decode((string) $lastResponse->getContent(), true);
+        $this->assertIsArray($body);
+        $this->assertSame('ip', $body['data']['scope'] ?? null);
+        $this->assertSame(
+            $peerIp,
+            $body['data']['identifier'] ?? null,
+            '限流标识必须是对端地址，而不是客户端伪造的 X-Forwarded-For'
+        );
+    }
+
+    /**
+     * ER-09 用例 2：对端可信时，按 XFF 中「从右往左第一个不可信地址」建桶
+     *
+     * 模拟 nginx 的真实行为：客户端带来的 XFF 在最左，nginx 追加真实客户端 IP 在最右，
+     * TCP 对端则是 nginx 自己。此时限流标识应当是真实客户端 IP。
+     */
+    public function test_trusted_proxy_resolves_real_client_ip_for_bucket(): void
+    {
+        $path       = 'ratelimit-test-trusted-proxy';
+        $proxyIp    = '10.0.0.1';
+        $realClient = '198.51.100.77';
+
+        // 只信任 nginx 那一个地址
+        $this->useLowCapacityIpScope(3, 0.0001, [$proxyIp]);
+
+        $bucketKey = RateLimitService::buildKey((string) env('APP_ENV', 'dev'), 'ip', $realClient);
+        (new RateLimitService())->reset($bucketKey);
+
+        $lastResponse = null;
+        for ($i = 1; $i <= 4; $i++) {
+            $request = new \app\Request();
+            $request->setMethod('GET');
+            $request->setPathinfo($path);
+            // TCP 对端 = 可信代理
+            $request->withServer(['REMOTE_ADDR' => $proxyIp]);
+            // 最左是客户端伪造值，最右是代理追加的真实客户端地址
+            $request->withHeader(['X-Forwarded-For' => '9.9.9.' . $i . ', ' . $realClient]);
+
+            $lastResponse = $this->runHttp($request);
+        }
+
+        $this->assertSame(429, $lastResponse->getCode(), '容量 3，第 4 次应被限流');
+
+        $body = json_decode((string) $lastResponse->getContent(), true);
+        $this->assertIsArray($body);
+        $this->assertSame(
+            $realClient,
+            $body['data']['identifier'] ?? null,
+            '可信代理场景下应取「从右往左第一个不可信地址」，而不是最左的伪造值'
+        );
+
+        // 反向证明：桶确实是按 $realClient 建的（令牌被消费过）
+        $info = (new RateLimitService())->getRateLimitInfo($bucketKey);
+        $this->assertLessThan(1.0, $info['tokens'], '预期真实客户端 IP 的桶已被耗尽');
+    }
+
+    /**
+     * ER-09 用例 3：user scope 不再静默共用桶
+     *
+     * 认证前（本中间件位置）必须**跳过** user 维度：即使把容量压到 1、请求 5 次也不能 429，
+     * 因为那会把「所有用户」的配额合成一条全局配额。
+     * 同时验证「一旦 Auth 写入 userId，user 维度就真的按用户生效」——
+     * 说明算法本身没问题，缺的只是执行位置。
+     */
+    public function test_user_scope_is_skipped_before_auth_and_works_after_user_id_is_set(): void
+    {
+        $path = 'ratelimit-test-user-scope';
+
+        $this->useLowCapacityUserScope(1);
+
+        // 1) 未认证（RateLimit 的真实执行位置）：5 次都必须放行，且不消耗任何 user 桶
+        for ($i = 0; $i < 5; $i++) {
+            $request = new \app\Request();
+            $request->setMethod('GET');
+            $request->setPathinfo($path);
+            $request->withServer(['REMOTE_ADDR' => '198.51.100.60']);
+
+            $response = $this->runHttp($request);
+
+            $this->assertNotSame(
+                429,
+                $response->getCode(),
+                '认证前 user scope 必须被跳过，绝不能退化成「所有人共用一个桶」'
+            );
+        }
+
+        // 2) 已认证（模拟 Auth 之后）：容量 1，第 2 次必须 429 且标识为该用户
+        $userId    = 424242;
+        $bucketKey = RateLimitService::buildKey((string) env('APP_ENV', 'dev'), 'user', (string) $userId);
+        (new RateLimitService())->reset($bucketKey);
+
+        $responses = [];
+        for ($i = 0; $i < 2; $i++) {
+            $request = new \app\Request();
+            $request->setMethod('GET');
+            $request->setPathinfo($path);
+            $request->withServer(['REMOTE_ADDR' => '198.51.100.60']);
+            // 等价于 Auth 中间件解析完 JWT 后写入的身份
+            $request->setUserId($userId);
+
+            $responses[] = $this->runHttp($request);
+        }
+
+        $this->assertNotSame(429, $responses[0]->getCode(), '容量 1：第 1 次应放行');
+        $this->assertSame(429, $responses[1]->getCode(), '容量 1：第 2 次应被限流（说明 user 维度按用户生效）');
+
+        $body = json_decode((string) $responses[1]->getContent(), true);
+        $this->assertIsArray($body);
+        $this->assertSame('user', $body['data']['scope'] ?? null);
+        $this->assertSame(
+            (string) $userId,
+            $body['data']['identifier'] ?? null,
+            'user 维度的标识必须是真实用户 id，而不是空串'
+        );
     }
 }

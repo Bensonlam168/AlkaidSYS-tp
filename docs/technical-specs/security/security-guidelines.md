@@ -472,6 +472,108 @@ Rate limiting is defined in two phases. Both phases share the same error respons
     - `X-RateLimit-Reset`: Time when the current window resets.
   - Details of the concrete token bucket configuration and migration plan SHOULD be kept in design documents and deployment playbooks, and this section MUST be updated once the Phase 2 algorithm is active in production.
 
+#### 5.1.1 Rate-limit identifiers and trusted proxies (ER-09)
+
+Rate limiting is only as good as the identifier it buckets on. The rules below are implemented in
+`app/middleware/RateLimit.php`; the switch lives in `config/ratelimit.php` (`trusted_proxies`)
+and `.env.example` (`TRUSTED_PROXIES`).
+
+**(1) `X-Forwarded-For` is untrusted by default**
+
+`X-Forwarded-For` (XFF) is fully client-controlled: a client may send several values or pure garbage.
+The previous implementation always took the **left-most** value, which means:
+
+- an attacker rotates one forged IP per request and every request lands in a fresh bucket → IP limiting is bypassed entirely;
+- or the attacker forges a victim's IP and pushes that IP into the throttle window.
+
+The default is therefore **no trust at all** (`TRUSTED_PROXIES` empty): the identifier is the TCP peer
+address (`REMOTE_ADDR`). This default only costs "per real client separation" — behind a reverse proxy
+every client shares one ip bucket — so configure `TRUSTED_PROXIES` **before** enabling the ip scope.
+
+**(2) Resolution algorithm (right to left)**
+
+| Step | Condition | Result |
+|------|-----------|--------|
+| 1 | TCP peer is **not** in the trusted list | Ignore the whole XFF header, return the peer address |
+| 2 | Peer trusted, but XFF missing / invalid (garbage, empty segment, port suffix, too long, too many entries) | Return the peer address |
+| 3 | Peer trusted and XFF valid | Scan **right to left**, skip trusted proxies, return the first untrusted address |
+| 4 | Every hop in XFF is a trusted proxy | Return the peer address (no client-side hop is available) |
+
+Why right to left: nginx's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` means
+`$http_x_forwarded_for, $remote_addr` — it **appends on the right**. The right-most entry is therefore always
+written by the trusted proxy closest to the backend (not forgeable); the further left, the closer to the client
+and the less trustworthy. "The first non-trusted address scanning from the right" is the machine that actually
+connected to the first proxy. Taking the left-most value means taking the client's own claim.
+
+Invalid XFF is dropped **as a whole** rather than "skip the bad entry and keep scanning left": otherwise an
+attacker only has to append garbage after a forged value to push the resolution result further left.
+
+**(3) Configuration: `TRUSTED_PROXIES`**
+
+- Comma-separated IP / CIDR list; IPv4 and IPv6 both supported, e.g. `10.0.0.0/8,2001:db8::/32`.
+- Single IPs and CIDRs are compared at the binary level (`10.0.0.0/8` contains `10.255.255.255`, not `11.0.0.1`).
+- Invalid entries are **ignored with a warning**; the other entries keep working. Skipping is still safe because
+  "not in the list" simply means "not trusted".
+- This repository's docker compose setup: run `docker network inspect alkaidsys-tp_default` and read the
+  `alkaid-nginx` container's IPv4Address (currently `172.18.0.6`). Do **not** just trust the whole
+  `172.18.0.0/16` subnet: the backend publishes port 9501 to the host, so direct connections to it appear
+  as the docker gateway `172.18.0.1`, and trusting the subnet makes that nginx-bypassing path forgeable again.
+- Container IPs can change on recreation; behaviour then degrades to "XFF not trusted" (the safe direction).
+
+**(4) IPv6 and `::ffff:1.2.3.4`**
+
+- Addresses are normalised before comparison: IPv6 is lower-cased and zero-compressed
+  (`2001:DB8::1` and `2001:db8::1` share one bucket).
+- `::ffff:1.2.3.4` (IPv4-mapped IPv6) is folded into `1.2.3.4`: the same host may appear in both forms, and
+  without folding it would hold two buckets (double quota) and would silently defeat a v4-only trusted entry.
+- Port suffixes (`1.2.3.4:80`), brackets (`[::1]`) and zone ids (`fe80::1%eth0`) are treated as invalid →
+  fall back to the peer address.
+
+**(5) Is `X-Real-IP` trusted? No**
+
+Only XFF is used, for three reasons:
+
+- nginx sends both, and right-to-left XFF already yields the correct answer; `X-Real-IP` adds no information.
+- Trusting two headers introduces the ambiguity of "which one wins on conflict", and ambiguity in a security
+  decision is a vulnerability.
+- The backend publishes port 9501 to the host, so a client can bypass nginx and forge `X-Real-IP`; honouring it
+  would again require "peer is trusted" first — the same gate as XFF, so the extra variable buys nothing.
+
+**(6) The `user` scope boundary: unusable at this position**
+
+`RateLimit` is a **global** middleware while `Auth` is **route-level**, so `$request->userId()` is always empty
+when the limiter runs. The previous implementation turned "no user" into an empty string, collapsing every
+request (including anonymous ones) into one shared `user` bucket — not per-user limiting but a **global quota
+wearing a user-scope label**: whoever fills it first locks everybody else out (`/v1/auth/login` is the worst case).
+
+Current state (option A, implemented):
+
+- `scopes.user.enabled` defaults to `false` (the config now honestly says "this scope is inactive");
+- even if it is switched to `true`, `resolveIdentifier('user')` returns null with a warning and the scope is
+  **skipped** — a shared bucket can no longer be created;
+- the `user` rule under `/v1/auth/login` was therefore removed; the real protection there is the `ip` rule.
+
+Not implemented (option B, needs its own task):
+
+- **B1**: add a **route-level** rate limiter mounted after `Auth`, reusing the implementation and rules of
+  `app/middleware/RateLimit.php`. Cost: re-working route middleware ordering and whitelist semantics, plus
+  de-duplicating against the global limiter (otherwise every request is counted twice).
+- **B2**: parse the JWT subject inside the global limiter — that is **re-implementing authentication**
+  (signature, expiry, session version, revocation list) and can disagree with `Auth`
+  (limiter says authenticated, `Auth` says unauthenticated). Highest cost and risk; **not recommended**.
+
+The right substitute for the `user` dimension today is per-login-name counting at the business layer
+(not implemented), with `ip` / `tenant` / `route` as the primary scopes.
+
+**(7) Known leftovers (out of ER-09 scope)**
+
+- `app/middleware/AccessLog.php` still writes the left-most XFF value into `client_ip`. That only affects log
+  truthfulness (forgeable audit data); it takes part in no rate-limit or authz decision — but do not treat it
+  as a trustworthy source when debugging.
+- The `tenant` scope degrades to a shared empty-string bucket when no tenant context exists at all. That is a
+  deliberate pre-existing trade-off (see `App\Request::tenantIdOrNull()`), and it differs from the `user` case:
+  `TenantIdentify` is a global middleware, so normal traffic does have a tenant.
+
 ### 5.2 API Signatures (High Security - Optional)
 - For critical/third-party APIs requiring enhanced security
 - Required Headers:
