@@ -648,6 +648,9 @@ importers:
 
   apps/web-antd:
     dependencies:
+      '@alkaidsys/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@vben/access':
         specifier: workspace:*
         version: link:../../packages/effects/access
@@ -1819,6 +1822,18 @@ importers:
       vue-i18n:
         specifier: 'catalog:'
         version: 11.1.12(vue@3.5.24(typescript@5.9.3))
+
+  packages/plugin-sdk:
+    dependencies:
+      '@vben/stores':
+        specifier: workspace:*
+        version: link:../stores
+      pinia:
+        specifier: ^3.0.3
+        version: 3.0.4(typescript@5.9.3)(vue@3.5.24(typescript@5.9.3))
+      vue:
+        specifier: ^3.5.24
+        version: 3.5.24(typescript@5.9.3)
 
   packages/preferences:
     dependencies:
