@@ -72,10 +72,11 @@ Frontend:
 | --- | --- | --- | --- | --- | --- |
 | 文档一致性 | `.github/workflows/docs-check.yml` | `Docs Check` | `docs-check` | **Documentation Consistency** | `php scripts/check-docs.php --strict` |
 | PHPUnit 配置一致性 | `.github/workflows/phpunit-config-check.yml` | `PHPUnit Config Check` | `phpunit-config-check` | **PHPUnit Config Consistency** | `php scripts/check-phpunit-config.php --strict` |
-| `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict` → `composer install` → `./vendor/bin/phpunit tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php`（后半段是本 check 的自我校验，见下） |
+| `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict`（**零依赖、秒级**，不需要 `composer install`；含检查 D0 对 `catalog.template_required` 的自校验，见下） |
 | 语言包一致性 | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `lang-check` | **Language Pack Consistency Check (i18n)** | `php think lang:check` |
 | 迁移安全（**仅静态**） | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migrations-check` | **Migration Safety Check** | `php scripts/check-migrations.php --strict --no-db`（只跑 A/C，见下） |
 | 迁移数据一致性 | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migration-data-check` | **Migration Data Consistency Check** | 起 MySQL + Redis service → `php think migrate:run` → `php scripts/check-migration-data.php --strict`（**不带** `--no-db`，见下） |
+| **测试套件（建议设为 required）** | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `phpunit` | **PHPUnit Tests** | `migrate:run` → `seed:run -s TestPlatformSeed` → `--testsuite=Unit` / `Feature` / `Legacy` → `route:verify`（**无 `needs`**，因此不会被上游跳过；见下） |
 
 `check-migrations`（`scripts/check-migrations.php`）**已有工作流**（R41），但**CI 的静态 job 只跑 A/C**：
 `check A` 迁移版本唯一性、`check C` 的 up()/down() 与 change() 规则 —— 这两项与环境无关。
@@ -124,13 +125,19 @@ Settings → Branches → Branch protection rule（或 Rulesets）
 现已**删除这三份工作流的 `paths:` 过滤**（`push.branches` 保留 `develop` / `main` 不变），
 因此这三个 check 对每个 PR 都会给出结论，可以安全地勾选为 required。
 代价：每个 PR 都会多跑三次配置类校验，CI 分钟数影响可忽略。
-其中 `docs-check` 与 `phpunit-config-check` 是**秒级纯静态**校验（只读 Markdown / XML / 源码，无 DB、无网络）；
-`env-check` 是**两段式**：前半段同样静态（解析 `.env.example` / `.env.production.example`），
-后半段 `composer install` + 跑一个 PHPUnit 用例文件（约 1 分钟，需要网络取依赖）。
-后半段不可省：检查 D 的键清单来自 `EnvRequirementCatalog::templateRequiredKeys()`，
-把 catalog 的 `template_required` 清空时脚本会跟着少查键、**原地保持绿色** ——
-门禁自己看不见自己被废掉，只有那 6 个一致性用例能看见
-（见 `.github/workflows/env-check.yml` 头部注释）。
+其中 `docs-check`、`phpunit-config-check` 与 `env-check` 都是**秒级纯静态**校验（只读 Markdown / XML / `.env*` / PHP 源码，无 DB、无网络、不需要 `composer install`）。
+
+`env-check` 曾经是**两段式**（后半段 `composer install` + 跑一个 PHPUnit 用例文件，约 1 分钟并需要网络取依赖），现已回到**单段**。
+原因与代价都要记住：一个 **required** check 依赖 packagist，网络抖动就会阻塞合并，而它挡的并不是业务代码。改法是把保护移进脚本自身：
+
+- **漂移**（catalog 里写错键名，如 `DB_HOST` → `DB_HOSTX`）：检查 D 自己就会红 —— 它拿清单去两份模板里找，找不到即 `[MISSING-KEY]`；
+- **清空**（`template_required` 被改成空数组）：检查 D 会无事可做、原地保持绿色，因此加了检查 D0 的 `[CATALOG-EMPTY]` 非空断言；
+- **变少但仍非空**（删掉其中一两个键）：检查 D **也看不见**（它只回答「清单里的键在不在模板里」，不回答「清单本该有哪些键」），
+  因此 D0 另加 `[CATALOG-SHRUNK]` 下限断言（`count(template_required) >= TEMPLATE_REQUIRED_MIN_KEYS`，当前 6）。
+  用下限而不是再抄一份清单：清单的权威定义只能有一处；下限的作用是**逼人显式表态** —— 真要下线某个键，必须同时把下限改小，那次改动会出现在 diff 里。
+- **键集合被换成另外 N 个键**：脚本层看不见（下限只约束数量），只有 `tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest`
+  的「钉死 6 键与顺序」能抓 —— 它跑在 `PHPUnit Tests`，因此**把 `PHPUnit Tests` 设为 required 才能让这一类阻断合并**（见下方 §把 `PHPUnit Tests` 设为 required）。
+  
 R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述三份保持一致。
 
 历史说明（为什么当初会有这条）：三份工作流原本用 `paths:` 省 CI 分钟数 ——
@@ -146,11 +153,59 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 且**唯一 owner 自己发起的 PR 无法自己 approve 自己**，单维护者仓库开启前需先加第二位有 write 权限的协作者
 （详见该文件头部注释）。
 
+#### 把 `PHPUnit Tests` 设为 required（步骤）
+
+**为什么需要它**：上表的门禁全是**静态**检查，没有一条真正跑业务测试。具体到这个仓库最近修的一类问题——
+`EnvRequirementCatalog::template_required` 的键集合**被换成另外 N 个键**（数量不变、键名不同）——
+脚本层的检查 D 与 D0 下限断言都看不见（下限只约束数量），只有
+`tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest` 里「钉死 6 键与顺序」那条能抓，
+而它跑在 `PHPUnit Tests`。不把它设为 required，这类改动就是「红了但不阻断合并」。
+
+**前置条件（不满足就不要设）**
+
+- [ ] **先在真实 CI 上确认 `PHPUnit Tests` 是绿的**。required 的语义是「必须出现且为 success」，
+      一个**永远不会 success** 的 check 被设为 required，等于把仓库锁死（同 R40 的 `Expected` 教训）。
+      做法：随便开一个 PR（或往 `develop` 推一次），等 `Backend CI` 跑完，看 `PHPUnit Tests` 的结论。
+      当前本地全量基线是 `810 tests / 4768 assertions / 0 errors / 0 failures`；
+      CI 与本地环境的差异（PHP 补丁版本、无 `.env`、service 启动耗时）只有实跑能证明。
+- [ ] 若首次实跑是红的：**不要设 required**，先把失败修掉。把红的检查设成 required 只会让所有人绕过它。
+
+**它为什么不会被「跳过」（这三点是本仓库已经改过的，别改回去）**
+
+- 该 job **没有 `needs:`**（见 `.github/workflows/backend-php-cs-fixer.yml`）。此前是
+  `needs: [php-cs-fixer, lang-check]`，而风格检查当前恒红 → `phpunit` 被 skip → 测试信号完全丢失，
+  且 skip 会让 required check 永久 pending。解耦的来龙去脉见上文 R40 段。
+- 不声明 `paths:`（`grep -cE '^[[:space:]]*paths:' .github/workflows/backend-php-cs-fixer.yml` 应为 `0`）。
+- `phpunit.xml` 已开 `failOnEmptyTestSuite="true"`：套件名打错 / 一个用例都没跑也会红，
+  不会出现「跑了 0 个用例但绿」的 required check。
+
+**设置步骤（GitHub 网页，代码侧无法强制）**
+
+1. 进入仓库 **Settings** → **Branches**（或 **Rulesets**）。
+2. 对 **`develop`** 与 **`main`** **分别**编辑规则（只设默认分支等于没设——大多数 PR 合进 `develop`）。
+3. 勾选 **Require status checks to pass before merging**。
+4. 在搜索框里按**准确的 check 名称**搜索并勾选：**`PHPUnit Tests`**
+   （名称取自 `.github/workflows/backend-php-cs-fixer.yml` 的 `jobs.phpunit.name`；
+   不是 YAML 文件名，也不是 job id `phpunit`）。
+5. 同时把上表另外六个名称一并勾上（若尚未勾选）。
+6. 保存后**实测一次**：开一个只改 `app/` 一个字（或加一行注释）的 PR，确认
+   ① `PHPUnit Tests` 出现在 checks 列表里、② 它**不是** `Expected` 而是真的在跑、
+   ③ 把它手动标红时合并按钮确实被禁用。
+
+**已知边界**
+
+- 该 job 带 `if: github.repository == 'Bensonlam168/AlkaidSYS-tp'`。**来自 fork 的 PR 不会触发它**
+  → 对 fork PR 而言它永远是「缺失」，会被判为 pending。当前是单仓库开发、无 fork PR 流，
+  所以不构成问题；**若将来接收 fork PR，必须先把这条 `if:` 去掉**（代价是 fork PR 会消耗本仓库 CI 分钟数）。
+- 该 job 会跑 `migrate:run` + `seed:run -s TestPlatformSeed`，比静态门禁慢一个数量级（分钟级）。
+  这是它的价值所在，不要为了省时间把它改成 `--testsuite=Unit` 单套件。
+
 #### 人工核对清单（改 CI / 分支策略后逐项确认）
 
 - [ ] `develop` 与 `main` **都**建了 branch protection rule（或 ruleset），不只默认分支
 - [ ] 已勾选 `Require status checks to pass before merging`
 - [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`、`Migration Data Consistency Check`（后两者分别只覆盖「静态 A/C」与「全新库的数据一致性」，见上文 ⚠️）
+- [ ] 已确认 `PHPUnit Tests` **先在真实 CI 上跑绿**，再按上文「把 `PHPUnit Tests` 设为 required」的步骤勾选（红的 check 设为 required = 锁死仓库）
 - [ ] 已确认四份工作流（上表前三个 + `migrations-check.yml`）**不再有** `paths:`（R40 已完成；`grep -cE '^[[:space:]]*paths:' .github/workflows/docs-check.yml .github/workflows/phpunit-config-check.yml .github/workflows/env-check.yml .github/workflows/migrations-check.yml` 均应为 `0`，注释里提到 `paths:` 不算），不会出现永久 `Expected`
 - [ ] 已勾选 `Require review from Code Owners`，且已排除「owner 本人无法合并」的单人瓶颈
 - [ ] `check B` / `check D` / `check E` / `check F` 无法在静态 job 里覆盖（需要 applied 状态），已确认**本地跑过全量**：`docker exec alkaid-backend php scripts/check-migrations.php --strict`
