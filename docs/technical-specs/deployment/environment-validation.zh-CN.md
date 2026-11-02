@@ -5,7 +5,8 @@
 > `php scripts/check-env-production.php`（**生产预检，不启动 App**，因此不依赖 Redis / DB）、
 > `php think env:check`（运行期检查，含生产必需项的取值规则与条件必需项告警）、
 > 生产必需项的**单一真相源** `app\support\EnvRequirementCatalog`（命令与预检脚本共用一份规则）、
-> 生产类环境的失败退出码与脱敏输出。
+> 生产类环境的失败退出码与脱敏输出、
+> **boot 期失败 ⇒ 控制台进程退出码非 0 的通用机制（R51，见 §11）**。
 > 未实现：`docs/deployment/environment-variables.md` 仍由 `env:check --generate` 生成，
 > 尚未包含 `DEFAULT_TENANT_ID` / `APP_ENV` 的新增行（该文件不在本规范维护范围内）；
 > `scripts/check-env-example.php` 的 `REQUIRED_KEYS` 仍是一份独立清单（它是「模板必须有这些键」，
@@ -149,7 +150,7 @@ $ PHP_ENV_NAME=<production profile> php think env:check
   [RuntimeException]
   Redis health check failed (host=127.0.0.1, port=6399): Connection refused
 $ echo $?
-0        # 命令体一行都没执行（没有 == Summary ==、没有通过结论），但退出码仍是 0
+1        # R51 之前这里是 0（命令体一行都没执行，却报「成功」）；现在部署脚本能看见失败
 
 $ php scripts/check-env-production.php --env-file=<same profile>
 检查 A  文件存在且可解析          OK
@@ -163,11 +164,12 @@ $ echo $?
 两个结论：
 
 1. **运行期检查在依赖不通时不可用**（异常发生在 `App::initialize()` 阶段，命令体执行不到）；
-2. **该路径下 `php think env:check` 的退出码仍是 0** —— 框架只渲染异常、不设置退出码
-   （`app\AppService` 只为「`.env` 解析失败」那条路径注册了 `exit(1)` 的 shutdown 钩子）。
+2. 该路径下 `php think env:check` 的退出码**曾经是 0** —— 框架只渲染异常、不设置退出码。
    也就是说，部署脚本用 `env:check || exit 1` 判断，在「生产配置根本起不来」时**看到的是成功**。
-   §9 的 CI 接入建议因此优先接**生产预检脚本**，而不是只在 CI 里跑 `env:check`。
-   这条退出码问题本身尚未修复（属 `app/provider/**` 的启动期行为，需单独评审）。
+   **R51 已修复**：boot 期守卫抛异常前会调用 `AppService::markBootFailed()`，由唯一的 shutdown
+   钩子把控制台进程的退出码改成 1（机制与新 Guard 的接入约定见 §11）。
+   §9 的 CI 接入建议仍然优先接**生产预检脚本**，因为「依赖不通时 `env:check` 根本执行不到」这条
+   限制与退出码无关：能失败、但给不出逐键结论。
 
 ---
 
@@ -383,7 +385,7 @@ app/support/EnvRequirementCatalog.php        ← 唯一一份：8 个键 + 规�
 | 维度 | 生产预检脚本 | `env:check` |
 | --- | --- | --- |
 | 依赖 | 无（不启动 App） | 生产类环境要求 Redis 可达 |
-| 失败退出码 | 恒为 1（含解析失败 / 文件缺失） | 生产类环境不合格为 1，但**启动期异常路径实测退出码为 0**（§3.4） |
+| 失败退出码 | 恒为 1（含解析失败 / 文件缺失） | 生产类环境不合格为 1；**启动期异常路径自 R51 起也是 1**（此前实测为 0，见 §3.4 / §11） |
 | 能指定文件 | `--env-file` | 只能读 `.env` / `PHP_ENV_NAME` |
 | 输出 | 逐条列出 + 修复建议 | 同（更详细，含 27 个键的全量体检） |
 
@@ -398,10 +400,133 @@ app/support/EnvRequirementCatalog.php        ← 唯一一份：8 个键 + 规�
    真实存在性由 `/readyz` 与首个业务请求暴露。
 2. **`env:check` 在生产类环境依赖 Redis 可达**（§2 前提 1）；Redis 不可达时命令执行不到。
    生产预检脚本可以在这种时刻跑，但它看不到「实际生效值」，两者不能互相替代（§3.3）。
-3. **启动期异常路径的退出码问题是既有缺陷**：实测 `php think env:check` 在 Redis 自检失败时
-   以 **0** 退出（§3.4）。修复点在 `app/provider/**` 的启动期行为，需单独评审后再动。
+3. **启动期异常的退出码**：R51 之前 `php think env:check` 在 Redis 自检失败时以 **0** 退出（§3.4）。
+   **已修复**：boot 期失败统一走 `AppService::markBootFailed()`，控制台进程退出码为 1（§11）。
+   仍未覆盖的是**非 `boot()` 路径**的启动期异常（`app/common.php` / `app/event.php` /
+   `config/*.php` 求值期抛错）—— 它们也会被全局异常处理器渲染成 exit 0，见 §11.5。
 4. **`--strict` 的语义变化**：`warn` 级提示（如 dev 的 `JWT_SECRET` 占位符）在 `--strict` 下会失败。
    先前在 dev 跑 `--strict` 是绿的，现在会红 —— 这是刻意的：严格模式就是「按生产标准判」。
 5. **`docs/deployment/environment-variables.md` 由 `env:check --generate` 生成**，
    新增的 `DEFAULT_TENANT_ID` / `APP_ENV` 行需由该命令重新生成后回填（该文件不在本规范维护范围）。
 6. **`REQUIRED_KEYS` 仍是独立清单**（§8.4），收敛它需要改一个 CI required 门禁，属单独评审。
+
+---
+
+## 11. boot 期失败必须退出非 0（R51）
+
+> 依据：缺陷 #1 —— `php think <命令>` 在 boot() 阶段抛异常时退出码仍是 0，
+> 部署脚本 `php think env:check || exit 1` 因此把「生产配置根本起不来」判成成功。
+
+### 11.1 根因（不是「看不到错误」，而是「看到了却当成成功」）
+
+`php think <命令>` 的 boot() 在 `think\initializer\BootService` 阶段执行，此时
+`think\initializer\Error` 已经用 `set_exception_handler()` 注册了全局异常处理器。
+**它只渲染异常、不设置退出码** —— PHP 认为异常「已被处理」，于是进程以 **0** 结束。
+（R51 之前只有 `.env` 解析失败那一条路径自己注册了 `exit(1)` 钩子，其它 Guard 全部漏掉。）
+
+### 11.2 机制：一处实现，所有 Guard 共用
+
+```text
+AppService::markBootFailed()                 ← 守卫在 throw 之前调用（唯一入口）
+    ├── self::$bootFailed = true             （进程级、粘性）
+    └── registerBootFailureExitHook()        （只注册一次；只对控制台）
+            └── register_shutdown_function(fn () => $bootFailed ? exit(1) : null)
+```
+
+四条性质（都已被 `tests/Unit/AppServiceBootFailureExitCodeTest.php` 用**真实子进程**钉住）：
+
+| 性质 | 怎么保证 |
+| --- | --- |
+| **成功路径仍是 0** | 钩子先看 `$bootFailed`；没有失败就什么都不做（不是「无条件 exit(1)」） |
+| **只影响控制台** | 用容器里 `think\App::runningInConsole()` 判定（容器未就绪时回落 `PHP_SAPI`）；非控制台**不注册**钩子 |
+| **幂等** | 静态 `$bootFailureExitHookRegistered` 保证同一进程只注册一个回调，重复 `markBootFailed()` 不影响结论 |
+| **不改变异常可读性** | 钩子只在**进程收尾**改退出码；异常照旧抛给框架渲染，消息/堆栈一字不改 |
+
+`AppService::hasBootFailed()` 是只读诊断入口（日志、`env:check` 之外的排障脚本可用）。
+
+### 11.3 现有 boot 期守卫清单（逐个核实过）
+
+| # | 位置 | 会抛异常的条件 | 是否已接入 |
+| --- | --- | --- | --- |
+| 1 | `app\AppService::guardEnvFile()`（R37） | `.env` 存在但 `parse_ini_file` 失败 | ✅ 由原先自带的 `exit(1)` 钩子**重构**为本机制 |
+| 2 | `app\provider\CacheEnvironmentGuardService::boot()` | 生产类环境且 `cache.default !== 'redis'` | ✅ |
+| 3 | `app\provider\SessionEnvironmentGuardService::boot()` | 生产类环境且 `session` 不是 `cache` + `redis` | ✅ |
+| 4 | `app\provider\RedisHealthCheckService::boot()` | Redis 连接 / 读写失败（生产类环境，或 session 走 cache+redis 时**所有环境**） | ✅ |
+| 5 | `Infrastructure\Plugin\PluginManager::loadFromConfig()`（被 `AppService::boot()` 调用） | **不会抛**：`safeRegister()` 与两处 `try/catch` 把异常降级为日志 | 无需接入（若将来去掉兜底，必须补 `markBootFailed()`） |
+| 6 | `Infrastructure\DI\ServiceProviderManager` 接线（同在 `AppService::boot()`） | 会抛，但被显式 `try/catch` 降级为 warning 日志（刻意不影响主流程） | 无需接入 |
+| 7 | 框架内置 `ModelService` / `PaginatorService` / `ValidateService::boot()` | 只注册闭包，不抛异常 | 不适用 |
+
+> 除 `app/service.php` 里这 4 个服务外，仓库内没有其它 `think\Service` 子类（已 grep 确认）。
+
+### 11.4 怎么加一个新的 boot 期 Guard（可直接抄）
+
+**必须做**：
+
+1. 在**每一条** `throw` 之前调用 `AppService::markBootFailed()`；
+2. 不要自己 `register_shutdown_function()`，也不要直接 `exit()`（会与唯一钩子重复 / 绕过异常渲染）；
+3. 不要为了「让命令能跑完」而把异常降级成日志 —— 那就退回 R37 之前那种静默。
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace app\provider;
+
+use app\AppService;
+use think\Service;
+
+/**
+ * 示例：新增一个 boot 期守卫（例如「必须配置 X」）
+ */
+class ExampleBootGuardService extends Service
+{
+    public function boot(): void
+    {
+        // 1) 先判条件；不满足就**响亮失败**
+        if ($this->isSatisfied()) {
+            return;
+        }
+
+        // 2) 抛之前先标记：这条调用保证 `php think <命令>` 以非 0 退出。
+        //    漏掉这一步 = 异常照旧打印、进程仍 exit 0（正是 R51 修的那个缺陷）。
+        AppService::markBootFailed();
+
+        // 3) 异常信息要能定位：配置项名 / 当前值 / 期望值 / 怎么改
+        throw new \RuntimeException(
+            'X 配置不合法：期望 ...，实际 ...；修复：在 .env 里设置 X = ...'
+        );
+    }
+
+    private function isSatisfied(): bool
+    {
+        return true;
+    }
+}
+```
+
+然后把类名加进 `app/service.php` 的返回数组（顺序无关：`markBootFailed()` 是进程级标记，
+不依赖哪个服务先 boot）。
+
+**新增 Guard 的验收要求**（照抄现有用例的形状）：
+
+- 用一个**真实子进程**跑出退出码（进程内观察不到），断言**非 0**；
+- 同一份用例里必须有**成功对照**（不满足条件时退出码为 **0**），否则「无条件 exit(1)」也能骗过测试；
+- 参照 `tests/Unit/AppServiceBootFailureExitCodeTest.php`：它用 `PHP_ENV_NAME` + 临时 `.env.<name>`
+  构造坏配置，**不修改仓库根的 `.env`**。
+
+### 11.5 边界与已知限制
+
+1. **只覆盖 `boot()` 里的抛错。** `app/common.php` / `app/event.php` / `config/*.php` 在
+   `App::load()` / 配置加载期求值时抛错，同样会被全局异常处理器渲染成 exit 0 —— 需要在同一机制上
+   再包一层（或改为在入口脚本 `think` 里兜底）才能覆盖，属**未做项**。
+2. **Swoole / 常驻 worker 的论证**：Swoole 的 `PHP_SAPI` 也是 `cli`，`runningInConsole()` 返回 true；
+   但 think-swoole 的应用 boot 发生在 **fork 之前的主进程**
+   （`think\swoole\Manager::prepareApplication()` → `$app->initialize()`）。
+   因此「boot 失败」只可能出现在那份主进程里 —— 它本来就该非 0 退出；worker 是 fork 之后才存在的，
+   继承到的 `$bootFailed` 恒为 false，钩子在 worker 里不会改变任何退出码。
+   另外 `$bootFailed` **只有 boot 期 Guard 能写**，请求处理阶段没有写入口，
+   所以不存在「跑着跑着突然变成 exit 1」的路径。
+3. **粘性**：同一个进程里一旦失败就一直是失败。看起来「不够灵活」，但这是刻意的 ——
+   一个 boot 已经失败的进程不可能恢复正常服务，唯一正确处理是整进程重启；
+   若允许清零，「先失败、异常被某处吞掉」的场景就会重新以 0 退出，等于把缺陷放回来。

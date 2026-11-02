@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace app\provider;
 
+use app\AppService;
 use think\Service;
 
 /**
@@ -29,6 +30,9 @@ class SessionEnvironmentGuardService extends Service
         $store = $config['store'] ?? null;
 
         if ($type !== 'cache' || $store !== 'redis') {
+            // R51：boot 期抛异常前必须标记，否则 `php think <命令>` 会以 0 退出
+            AppService::markBootFailed();
+
             throw new \RuntimeException(sprintf(
                 "Session configuration misconfigured: in %s environment session.type must be 'cache' and session.store must be 'redis', got type='%s', store='%s'",
                 $env,

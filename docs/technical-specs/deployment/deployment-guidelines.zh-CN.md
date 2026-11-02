@@ -27,6 +27,12 @@
   两者共用同一份规则（单一真相源 `app\support\EnvRequirementCatalog`）。
   三道检查的职责边界、生产必需清单与逐键理由、`TRUSTED_PROXIES` 为何是「条件必需」、
   以及生产预检**不能**做什么：见 [环境配置的三道校验](./environment-validation.zh-CN.md)。
+- **部署脚本可以相信「boot 期失败 ⇒ 退出码非 0」**：自 R51 起，任何在 `boot()` 里抛异常的启动期守卫
+  （`.env` 无法解析、Cache / Session 配置不合规、Redis 自检失败……）都会先调用
+  `AppService::markBootFailed()`，由唯一的 shutdown 钩子把**控制台进程**的退出码改成 1。
+  因此 `php think env:check || exit 1` 这类写法现在是可靠的 —— 在此之前「生产配置根本起不来」会以
+  **0** 退出，被误判成成功。新增 boot 期守卫时**必须**遵守同一约定（示例与验收要求见
+  [环境配置的三道校验 §11](./environment-validation.zh-CN.md)）。
 
 ## 3. 日志与可追踪性
 

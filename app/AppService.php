@@ -4,14 +4,47 @@ declare (strict_types=1);
 
 namespace app;
 
-use think\Service;
 use Infrastructure\Plugin\PluginManager;
+use think\App;
+use think\Container;
+use think\Service;
 
 /**
  * 应用服务类
  */
 class AppService extends Service
 {
+    /**
+     * R51：启动期（boot）失败标记（**进程级、粘性**）
+     *
+     * 为什么需要它：`php think <命令>` 在 boot() 阶段抛异常时，框架的全局异常处理器
+     * （`think\initializer\Error::appException()`，经 `set_exception_handler()` 注册）
+     * 只负责渲染异常、**不设置退出码**，于是进程以 0 结束 —— 部署脚本里的
+     * `php think xxx || exit 1` 会把「配置根本起不来」误判成成功。
+     * （实测：Redis 不可达时 `php think env:check` 打印 RuntimeException 后仍 `exit 0`。）
+     *
+     * 语义：**本进程任何 boot 期守卫抛过异常就置 true**，由
+     * {@see self::registerBootFailureExitHook()} 注册的唯一 shutdown 钩子在收尾时把退出码改成 1。
+     *
+     * 为什么刻意做成「粘性」（本进程内不清零）：
+     *   - 写入点只有 boot 期守卫（{@see self::markBootFailed()}），请求处理阶段没有任何写入口；
+     *   - 一个 boot 已经失败的进程不可能「恢复正常服务」，唯一正确处理是整进程重启；
+     *   - 粘性保证「先失败、异常随后被某处吞掉」也不会以 0 退出，否则又退回本缺陷。
+     *
+     * @var bool
+     */
+    protected static bool $bootFailed = false;
+
+    /**
+     * R51：「boot 失败 ⇒ 控制台退出码非 0」的 shutdown 钩子是否已注册（幂等标记）
+     *
+     * 只允许注册一次：同一进程注册多个同类回调会让每个都执行 `exit(1)`，
+     * 既无意义，也会让「到底谁改了退出码」变得难以追踪。
+     *
+     * @var bool
+     */
+    protected static bool $bootFailureExitHookRegistered = false;
+
     /**
      * R37：`.env` 解析结论缓存（null 表示本进程尚未检查过）
      *
@@ -86,6 +119,110 @@ class AppService extends Service
     }
 
     /**
+     * R51：标记「本进程的启动期检查已失败」，并保证控制台进程以非 0 退出
+     *
+     * **约定（新增 boot 期守卫时必须遵守）**：任何在 `boot()` 里抛异常的守卫，
+     * 都要在 `throw` **之前**调用本方法，否则 `php think <命令>` 仍会以 0 退出，
+     * 部署脚本/CI 看到的是「成功」。示例：
+     *
+     * ```php
+     * if ($misconfigured) {
+     *     \app\AppService::markBootFailed();   // 必须先标记，再抛
+     *     throw new \RuntimeException('...');
+     * }
+     * ```
+     *
+     * 本方法自身幂等：重复调用只是重复置位，shutdown 钩子只会注册一次。
+     *
+     * @return void
+     */
+    public static function markBootFailed(): void
+    {
+        self::$bootFailed = true;
+
+        self::registerBootFailureExitHook();
+    }
+
+    /**
+     * R51：本进程的启动期检查是否已失败（诊断 / 测试可读）
+     *
+     * @return bool
+     */
+    public static function hasBootFailed(): bool
+    {
+        return self::$bootFailed;
+    }
+
+    /**
+     * R51：注册「boot 失败 ⇒ exit(1)」的 shutdown 钩子（进程内幂等、只对控制台生效）
+     *
+     * 为什么用 shutdown 钩子而不是直接 `exit(1)`：异常必须照旧抛给框架渲染，
+     * 消息/堆栈可读性不能变。这里只在**进程收尾**时改退出码。
+     *
+     * 为什么只挂控制台：FPM / 常驻 HTTP worker 的退出码由进程管理器决定，
+     * 在那里 `exit(1)` 只会制造「进程随机退出」的噪音，不会让任何部署脚本受益。
+     *
+     * 关于 Swoole：worker 进程的 `PHP_SAPI` 同样是 `cli`，`runningInConsole()` 会返回 true；
+     * 但 Swoole 的应用 boot 发生在 **fork 之前的主进程**
+     * （`think\swoole\Manager::prepareApplication()` → `$app->initialize()`），
+     * 也就是说「boot 失败」只可能出现在那份主进程里 —— 它本来就该非 0 退出；
+     * worker 是 fork 之后才存在的，继承到的 {@see self::$bootFailed} 恒为 false，
+     * 因此该钩子在 worker 里不会改变任何退出码（详见本缺陷的执行报告「风险」一节）。
+     *
+     * @return void
+     */
+    protected static function registerBootFailureExitHook(): void
+    {
+        // 幂等：成功注册过就不再重复注册
+        if (self::$bootFailureExitHookRegistered) {
+            return;
+        }
+
+        // 非控制台不注册（也**不**占用幂等标记：否则同一进程里先出现「非控制台失败」
+        // 会让后续真正的控制台失败失去退出码修正）
+        if (!self::isConsoleProcess()) {
+            return;
+        }
+
+        self::$bootFailureExitHookRegistered = true;
+
+        register_shutdown_function(static function (): void {
+            // 成功路径：标记为 false，什么都不做 —— 正常命令/worker 的退出码保持原样
+            if (self::$bootFailed) {
+                exit(1);
+            }
+        });
+    }
+
+    /**
+     * R51：当前进程是不是「控制台」进程
+     *
+     * 优先问容器里的 `think\App`：`runningInConsole()` 是本项目判定「命令行 / HTTP」的唯一口径，
+     * 而且测试可以用替身 App 把结果钉死（见 tests/Unit/AppServiceBootFailureExitCodeTest.php）。
+     * 容器尚未就绪时（极端早鸟场景）退回 `PHP_SAPI` 判断，探测失败绝不影响正常流程。
+     *
+     * @return bool
+     */
+    protected static function isConsoleProcess(): bool
+    {
+        try {
+            $container = Container::getInstance();
+
+            if ($container->has('app')) {
+                $app = $container->make('app');
+
+                if ($app instanceof App) {
+                    return $app->runningInConsole();
+                }
+            }
+        } catch (\Throwable) {
+            // 容器不可用 → 落到下面的 SAPI 兜底
+        }
+
+        return PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg';
+    }
+
+    /**
      * R37：`.env` 运行期守卫（只在「文件存在但解析失败」时抛错）
      *
      * 刻意**不做** try/catch 兜底：这条检查的目的就是响亮失败。
@@ -133,13 +270,11 @@ class AppService extends Service
         // 此时 think\initializer\Error 已注册全局异常处理器；它只渲染异常、不设置退出码，
         // 于是 `php think <任意命令>` 会打印上面的异常后仍以 0 退出 ——
         // 部署脚本与 CI 会把「配置全废」误判成成功（正是 R37 要消灭的那种静默）。
-        // 这里注册一个只负责改退出码的 shutdown 回调：异常照旧抛给框架渲染，
-        // 消息/堆栈的可读性不变，只是进程最终以 1 结束。
-        if ($this->app->runningInConsole()) {
-            register_shutdown_function(static function (): void {
-                exit(1);
-            });
-        }
+        //
+        // R51：这里原先自带一份 register_shutdown_function(exit(1))，现改为走**唯一**的通用机制
+        // （markBootFailed → AppService 里那个只注册一次的钩子），避免每个守卫各抄一份、
+        // 抄漏一个就退回「boot 失败仍 exit 0」。异常照旧抛给框架渲染，可读性不变。
+        self::markBootFailed();
 
         self::throwEnvFileParseError($report);
     }

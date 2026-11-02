@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace app\provider;
 
+use app\AppService;
 use think\Service;
 
 /**
@@ -24,6 +25,9 @@ class CacheEnvironmentGuardService extends Service
 
         $defaultStore = config('cache.default');
         if ($defaultStore !== 'redis') {
+            // R51：boot 期抛异常前必须标记，否则 `php think <命令>` 会以 0 退出
+            AppService::markBootFailed();
+
             throw new \RuntimeException(sprintf(
                 "Cache driver misconfigured: in %s environment cache.default must be 'redis', got '%s'",
                 $env,
