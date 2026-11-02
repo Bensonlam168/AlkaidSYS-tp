@@ -9,6 +9,16 @@ This document defines deployment and operations practices for AlkaidSYS, focusin
 - All environment-specific settings **MUST** be provided via environment variables or configuration files checked into version control (without secrets).
 - Secrets (passwords, tokens, keys) **MUST NOT** be committed to the repository; a secret management solution **SHOULD** be used.
 - Stage and production configurations **SHOULD** be as similar as possible, differing only in endpoints, secrets and capacity.
+- The repository ships two **placeholder-only** templates: `.env.example` is the single source of truth
+  for the key set, and `.env.production.example` is the production template (ops copy it to
+  `.env.production` and replace every placeholder). The production template **MUST** contain every key
+  present in `.env.example`; the reverse is **not** required — production may carry keys the example does
+  not have (e.g. `APP_ENV`, `CACHE_DRIVER`, `REDIS_*`, `CORS_ALLOWED_ORIGINS`).
+  This one-way constraint is enforced by check E of `php scripts/check-env-example.php --strict`
+  (CI gate `Env Example Consistency`); run it locally after touching either template.
+  A missing key never fails at boot — it surfaces at runtime as "connecting as root with an empty
+  password", "every request without `X-Tenant-ID` returns 500", or "all clients share one rate-limit
+  bucket", so it has to be guarded by a gate rather than by code review.
 
 ## 3. Logging and Traceability
 

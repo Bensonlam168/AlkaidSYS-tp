@@ -446,10 +446,29 @@ docker history <image> --no-trunc | grep -i -E "password|secret" || echo "OK: no
    `require 'plugins/workflow-engine/vendor/autoload.php'`）。因此排除它与「不排除」行为一致。
    但若将来要真正启用 workflow 引擎，正确做法是把插件作为 path repository 加进根
    `composer.json` 的 `require`，让依赖统一进根 `vendor/` —— 这属于应用/依赖变更，不在 ER-18 范围。
-3. **`.env.production.example` 缺 `DB_USER` / `DB_PASS` / `RABBITMQ_*`。**
-   该模板目前只有 `DB_HOST`、`REDIS_*`、`JWT_*` 等键。`config/database.php` 里
-   `env('DB_USER', 'root')` 的默认值是 **root**，意味着生产若不补这几个键，应用会以 root 连库。
-   运维在上生产前必须补齐（本文不擅自改该文件，因为它受 `check-env-example` 门禁约束）。
+3. **~~`.env.production.example` 缺 `DB_USER` / `DB_PASS` / `RABBITMQ_*`~~ —— 已修复（#3）。**
+   该模板曾只有 `DB_HOST`、`REDIS_*`、`JWT_*` 等键，比 `.env.example` 少 12 个键，其中最危险的三个是：
+   `DB_USER` / `DB_PASS` 缺失会让 `env('DB_USER', 'root')` 的默认值生效（**生产以 root、空口令连库**）；
+   `DEFAULT_TENANT_ID` 缺失会让全局中间件 `TenantIdentify` fail-closed 抛异常
+   （**所有不带 `X-Tenant-ID` 的请求，包括 `/healthz` 探针，全部 500**，容器永远 unhealthy）；
+   `TRUSTED_PROXIES` 缺失会让经反代且开启限流的部署**全站共用一个 ip 桶**。
+   更糟的是，**当时那份模板连 `parse_ini_file` 都过不去**：`#` 注释行里有半角括号与竖线，
+   而 `think\Env::load()` 的实现是「解析失败即按空数组兜底」——照抄模板上生产会得到一份
+   **所有键静默失效**的配置。
+
+   现状（2026-11 修复）：
+   - 模板已补齐全部 12 个键，并按 `.env.example` 的分组结构排列，每个键都注明了「不配会怎样」；
+   - `DEFAULT_TENANT_ID` 的占位值刻意写成**非数字**（`REPLACE_WITH_REAL_TENANT_ID`），
+     忘记替换时走 fail-closed（每个请求 500，立刻可见），而不是静默把流量归到租户 1；
+   - 注释行里的半角括号/引号/竖线/与号/美元符号/等号已全部清除（前四个会让解析失败，最后一个是伪键）；
+   - `scripts/check-env-example.php` 新增**检查 E**：`.env.example` 的每个键都必须出现在
+     `.env.production.example` 里（单向），同时校验生产模板可解析、无伪键、注释规范。
+     门禁 `Env Example Consistency` 因此同时守住两份模板，模板再也不可能「悄悄缺键」。
+
+   **仍未覆盖（属于 compose 插值变量，不在本模板内）**：`docker-compose.prod.yml` 用 `:?` 语法强制要求
+   `MYSQL_ROOT_PASSWORD` / `MYSQL_USER` / `MYSQL_PASSWORD` / `RABBITMQ_DEFAULT_USER` / `RABBITMQ_DEFAULT_PASS`。
+   它们是 **compose 的插值变量**，只从 shell 环境或 compose 的项目级 `.env` 读取；
+   写进 `.env.production` 不会满足它们，因为后者是容器的 `env_file`。详见 §8.2 的三层策略。
 4. **`/healthz` 已落地（本次），但它不是纯 liveness 探针**：全局 `SessionInit` 会读 Redis 会话，
    因此 Redis 故障时探针会 500（实测，见 §6.1 的「局限」）。上 K8s 前必须先决定
    「探针绕过 SessionInit」还是「只当 readiness 用」，否则一次 Redis 抖动会变成全实例重启。
