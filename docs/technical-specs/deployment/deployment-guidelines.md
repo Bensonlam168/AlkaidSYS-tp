@@ -33,6 +33,9 @@ This document defines deployment and operations practices for AlkaidSYS, focusin
 - Deployments to production **MUST** be automated (CI/CD) and reproducible.
 - Each deployment **SHOULD** be tied to a specific git commit and build artifact.
 - Rollback procedures **MUST** be documented and periodically exercised in non-production environments.
+- Container-level requirements (reproducible image builds, non-root execution, health probes,
+  port exposure surface, credential handling) are specified in
+  [Image & Orchestration Production Requirements](./image-and-orchestration-production-requirements.md).
 
 ## 7. Phase Model (Ops)
 
