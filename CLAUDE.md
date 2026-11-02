@@ -223,9 +223,9 @@ graph LR
 ## 📚 相关资源
 
 ### 文档链接
-- [架构设计文档](design/01-architecture-design/02-architecture-design.md)
-- [多租户设计](design/04-multi-tenant/01-tenant-design.md)
-- [低代码设计](design/05-lowcode/01-lowcode-design.md)
+- [架构设计文档](./design/01-architecture-design/02-architecture-design.md)
+- [多租户设计](./design/01-architecture-design/04-multi-tenant-design.md)
+- [低代码设计](./design/01-architecture-design/08-low-code-design.md)
 - [开发者指南](docs/developer-guides/)
 - [API 文档](docs/api/)
 
