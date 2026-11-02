@@ -491,12 +491,25 @@ docker history <image> --no-trunc | grep -i -E "password|secret" || echo "OK: no
    运行中的 `alkaid-backend` 仍跑旧镜像，`docker ps` 的 StartedAt 未变。
    `docker compose` 相关能力（healthcheck / restart / 端口收敛）也要在**下次 recreate** 时才生效。
 2. **workflow-engine 插件在镜像内无法自动加载。** 插件源码 `use DI\Container`、
-   `use madong\ingenious\...`，这些类只存在于 `plugins/workflow-engine/vendor/`（已在
+   `use madong\ingenious\...`，这些类只在 `plugins/workflow-engine/vendor/` 里（已在
    `.dockerignore` 中排除），而根 autoload **既没有 require 该包，也没有注册它的 autoloader**
    （实测 `vendor/composer/autoload_psr4.php` 无相关条目，全仓库也没有
    `require 'plugins/workflow-engine/vendor/autoload.php'`）。因此排除它与「不排除」行为一致。
    但若将来要真正启用 workflow 引擎，正确做法是把插件作为 path repository 加进根
    `composer.json` 的 `require`，让依赖统一进根 `vendor/` —— 这属于应用/依赖变更，不在 ER-18 范围。
+
+   > 🔶 **2026-11-02 补充（`268389e`）**：上面「这些类只在 `plugins/workflow-engine/vendor/` 里」的
+   > **处境已经变了** —— 该 vendor 目录已于 2026-11-02 整体出库（4,270 个跟踪文件不再进版本库），
+   > 改由插件自身的 `plugins/workflow-engine/composer.json` / `composer.lock` 重建。
+   > **结论不变，而且理由更强**：不再是「容器内被 `.dockerignore` 排除掉」，而是**仓库里本来就没有**，
+   > 任何人 clone 下来都拿不到这批类，`use DI\Container` / `use madong\ingenious\...` 在容器内必然无法解析。
+   > 需要澄清的是，**类名本身没过期**：`madong\ingenious` 在插件 `src/` 里仍有 506 行命中，
+   > `DI\Container` 在 `plugins/workflow-engine/src/Core/ServiceContext.php` 里是真实使用
+   > （不是死引用），不要把它们「修正」成别的命名空间。
+   > 上文「根 autoload 未 require 该包」的论证**仍然成立**（`vendor/composer/autoload_psr4.php`
+   > 依旧无相关条目）；将来真要启用时，把插件作为 path repository 加进根 `composer.json` 的 `require`
+   > 的做法也**不变**。
+
 3. **~~`.env.production.example` 缺 `DB_USER` / `DB_PASS` / `RABBITMQ_*`~~ —— 已修复（#3）。**
    该模板曾只有 `DB_HOST`、`REDIS_*`、`JWT_*` 等键，比 `.env.example` 少 12 个键，其中最危险的三个是：
    `DB_USER` / `DB_PASS` 缺失会让 `env('DB_USER', 'root')` 的默认值生效（**生产以 root、空口令连库**）；

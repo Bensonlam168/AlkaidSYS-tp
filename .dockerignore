@@ -27,6 +27,7 @@
 #      `require 'plugins/workflow-engine/vendor/autoload.php'`；
 #      `vendor/composer/autoload_psr4.php` 里同样没有指向插件 vendor 的条目。
 #      也就是说这份嵌套 vendor 运行时根本不会被自动加载，纯属开发期残留。
+#      该目录已于 2026-11-02（`268389e`）出库，容器内本来就不存在。
 # -----------------------------------------------------------------------------
 vendor/
 plugins/*/vendor/
