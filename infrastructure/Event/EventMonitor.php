@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Infrastructure\Event;
 
 use Domain\Event\EventContext;
+use Domain\Event\EventFailureLogger;
 use Domain\Event\EventPayload;
 use think\facade\Db;
 use think\facade\Config;
@@ -38,14 +39,21 @@ class EventMonitor
                 $this->checkThresholdsOnDb($event, $payload->getContext(), $durationMs, $failed);
                 return;
             } catch (\Throwable $e) {
-                Log::warning('event.metrics.write_failed', [
-                    'error' => $e->getMessage(),
+                // 落库失败：先记 warning，再走下面的日志降级路径（两条都保留，信息不丢）
+                EventFailureLogger::write('warning', 'event.metrics.write_failed', [
                     'event' => $event,
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                    'error' => $e->getMessage(),
+                    'trace_id' => $payload->getContext()->getTraceId(),
+                    'tenant_id' => $payload->getContext()->getTenantId(),
+                    'site_id' => $payload->getContext()->getSiteId(),
+                    'user_id' => $payload->getContext()->getUserId(),
                 ]);
             }
         }
 
-        Log::info('event.metrics', $data);
+        EventFailureLogger::write('info', 'event.metrics', $data);
         $this->checkThresholdsOnLog($event, $payload->getContext(), $durationMs, $failed);
     }
 
@@ -80,14 +88,23 @@ class EventMonitor
                 $this->publishAlert('event.alert.dlq', 'error', $data);
                 return;
             } catch (\Throwable $err) {
-                Log::warning('event.dlq.write_failed', [
-                    'error' => $err->getMessage(),
+                // 落库失败不能静默：下面仍会把完整 DLQ 记录写进日志（event.dlq）
+                EventFailureLogger::write('warning', 'event.dlq.write_failed', [
                     'event' => $event,
+                    'exception' => $err::class,
+                    'message' => $err->getMessage(),
+                    'error' => $err->getMessage(),
+                    'trace_id' => $context?->getTraceId(),
+                    'tenant_id' => $context?->getTenantId(),
+                    'site_id' => $context?->getSiteId(),
+                    'user_id' => $context?->getUserId(),
+                    'attempts' => $attempts,
                 ]);
             }
         }
 
-        Log::error('event.dlq', $data);
+        // 表不可用或写入失败：把完整死信记录写进日志，保证事件不会「彻底丢失且无痕迹」
+        EventFailureLogger::write('error', 'event.dlq', $data);
         $this->publishAlert('event.alert.dlq', 'error', $data);
     }
 
@@ -111,14 +128,9 @@ class EventMonitor
                 $logger->warning($alertKey, $payload);
             }
         } catch (\Throwable) {
-            // 若未配置 channel，则降级默认通道
-            if ($level === 'error') {
-                Log::error($alertKey, $payload);
-            } elseif ($level === 'info') {
-                Log::info($alertKey, $payload);
-            } else {
-                Log::warning($alertKey, $payload);
-            }
+            // 若未配置 channel / 通道写入失败，则降级默认通道；
+            // 默认通道也失败时由 EventFailureLogger 用 error_log() 兜底，保证告警不静默消失。
+            EventFailureLogger::write($level, $alertKey, $payload);
         }
 
         // 2) 落库：便于 Grafana/SQL 报表或 DB 级订阅
@@ -147,8 +159,10 @@ class EventMonitor
                 'created_at' => date('Y-m-d H:i:s'),
             ]);
         } catch (\Throwable $e) {
-            Log::warning('event.alert.write_failed', [
+            EventFailureLogger::write('warning', 'event.alert.write_failed', [
                 'alert_key' => $alertKey,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
                 'error' => $e->getMessage(),
             ]);
         }

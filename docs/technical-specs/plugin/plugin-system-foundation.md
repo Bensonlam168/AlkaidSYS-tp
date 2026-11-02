@@ -91,6 +91,10 @@
   - 队列：`triggerAsync($event, $params, $context, $queue)`，上下文自动序列化。
   - 协程：`triggerAsyncCoroutine($event, $params, $context, $runner)`，默认使用 Swoole `go()`，无协程时回退队列。
 - **失败重试/死信**：队列执行异常重试 3 次后删除并记录 DLQ（错误码 2001/2002 语义），日志键 `event.dlq` 便于告警订阅。
+- **失败可观测（ER-13）**：
+  - 同步监听器异常记录 `event.listener.failed`（error 级），字段含 `event/listener/trace_id/tenant_id/site_id/user_id/exception/message/mode/phase/listener_key`；默认**不中断业务、也不阻断同事件的后续监听器**。
+  - 严格模式：`EVENT_FAIL_FAST=true` 时监听器异常原样上抛，仅供测试与排障；默认 false，避免插件写错把主流程变成 500。
+  - 异步失败记录 `event.async.failed`（warning，可重试）与 `event.dlq`（error，进入死信）；DLQ 写失败兜底 `event.dlq.record_failed`，日志系统本身故障时再降级 `error_log()`，保证事件不会「失败且无痕迹」。
 - **审计/指标**：同步触发记录 `duration_ms/failed/trace_id/tenant/site/user`（默认写入 `event_metrics` 表，表缺失时降级 `event.metrics` 日志）；死信写入 `event_dead_letters` 表或日志键 `event.dlq`；慢事件与失败率阈值可通过 `config/event.php`（或环境变量 `EVENT_MONITOR_*`）配置。
 - **PSR-14 兼容**：使用 `Domain\Event\PsrEventDispatcher` 作为桥接器，可将内部 EventService 提供给外部需要 PSR-14 Dispatcher/ListenerProvider 的组件。
 

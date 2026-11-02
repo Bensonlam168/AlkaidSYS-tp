@@ -6,6 +6,11 @@ declare(strict_types=1);
  * 事件系统配置（T-049）
  */
 return [
+    // 同步事件失败严格模式（ER-13）
+    // false（默认）：监听器异常只记 error 日志，不中断业务，也不阻断同事件的后续监听器；
+    // true：监听器异常原样上抛，仅用于测试与排障，线上开启会让插件问题直接变成业务 500。
+    // 用 filter_var 而不是 (bool)：避免 EVENT_FAIL_FAST 被写成 no/off 时，非空字符串被当成 true。
+    'fail_fast' => filter_var(env('EVENT_FAIL_FAST', false), FILTER_VALIDATE_BOOLEAN),
     'monitor' => [
         // 慢事件告警阈值（毫秒）
         'slow_ms' => (int) (getenv('EVENT_MONITOR_SLOW_MS') ?: 300),

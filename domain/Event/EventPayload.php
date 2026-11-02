@@ -16,6 +16,17 @@ class EventPayload implements StoppableEventInterface
 {
     protected bool $propagationStopped = false;
 
+    /**
+     * 本次触发中失败的监听器异常（ER-13）
+     *
+     * 背景：`EventService::trigger()` 默认「监听器异常只记日志、不打断业务」，
+     * 但异步任务必须知道「虽然 trigger 正常返回，监听器其实失败了」，否则队列会误判成功、
+     * 直接 delete 任务，重试与 DLQ 永远不会发生。这里把异常挂在 payload 上供调用方判断。
+     *
+     * @var array<int, \Throwable>
+     */
+    protected array $listenerFailures = [];
+
     public function __construct(
         protected string $event,
         protected mixed $data,
@@ -54,5 +65,36 @@ class EventPayload implements StoppableEventInterface
     public function isPropagationStopped(): bool
     {
         return $this->propagationStopped;
+    }
+
+    /**
+     * 记录一个失败的监听器异常
+     *
+     * 只做记录，不改变控制流：是否上抛由 EventService 的 fail_fast 决定。
+     */
+    public function addListenerFailure(\Throwable $e): void
+    {
+        $this->listenerFailures[] = $e;
+    }
+
+    public function hasListenerFailures(): bool
+    {
+        return $this->listenerFailures !== [];
+    }
+
+    /**
+     * @return array<int, \Throwable>
+     */
+    public function getListenerFailures(): array
+    {
+        return $this->listenerFailures;
+    }
+
+    /**
+     * 第一个失败异常：异步任务用它触发队列重试，并保留原始错误码（2001/2002）
+     */
+    public function getFirstListenerFailure(): ?\Throwable
+    {
+        return $this->listenerFailures[0] ?? null;
     }
 }
