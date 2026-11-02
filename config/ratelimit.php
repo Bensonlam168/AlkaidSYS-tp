@@ -191,6 +191,33 @@ return [
             ],
         ],
 
+        // 健康探针：不参与应用层限流
+        //
+        // `/healthz` 是编排层（Dockerfile HEALTHCHECK / docker-compose healthcheck / 负载均衡）
+        // 高频调用的 liveness 探针，它的语义是「worker 还活着吗」，**不应该消耗业务配额**：
+        //   - 若探针走 ip 维度（默认 capacity=100 / rate=10 每秒），连续探测会把同一个
+        //     对端（nginx 容器或宿主 docker 网关）的桶打空 → 探针开始收到 429 →
+        //     编排层判定 unhealthy → 无谓重启。**探针被自己的限流拒掉**是最典型的自伤。
+        //   - 探针的健康与否与业务流量无关，给它单独配额（而不是共享业务桶）也说不通。
+        //
+        // 实现方式与上面 /v1/auth/* 完全一致：把四个维度显式 `enabled = false`。
+        // 这属于「路径级放行」，不是「IP 白名单」，因此不依赖 TRUSTED_PROXIES 的配置是否正确 ——
+        // 探针在「反代没配好/直连」两种部署形态下行为相同。
+        '/healthz' => [
+            'user' => [
+                'enabled' => false,
+            ],
+            'tenant' => [
+                'enabled' => false,
+            ],
+            'ip' => [
+                'enabled' => false,
+            ],
+            'route' => [
+                'enabled' => false,
+            ],
+        ],
+
         // 权限查询接口：不参与应用层限流，避免影响认证/权限集成测试与前端权限拉取
         // - /v1/auth/me    返回当前用户信息及权限列表
         // - /v1/auth/codes 返回权限码列表（resource:action）

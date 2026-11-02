@@ -20,6 +20,12 @@
 
 - 服务 **应当** 暴露与选用监控体系兼容的指标端点。
 - 在编排环境中，存活探针与就绪探针 **必须** 实现并正确配置。
+- 后端已提供 **`GET /healthz`**（`app\controller\HealthController`）：不查库、不鉴权、无副作用，
+  返回统一响应结构 + `Cache-Control: no-store`，供 `Dockerfile` 的 `HEALTHCHECK`、
+  `docker-compose.yml` 的 backend/nginx healthcheck 与负载均衡使用。
+  ⚠️ 它只证明「worker 能响应」，**不证明** Redis / MySQL 可用（全局 `SessionInit` 会读 Redis 会话，
+  Redis 故障时探针会 500）；探针语义边界与应对方式见
+  [镜像与编排的生产要求](./image-and-orchestration-production-requirements.md) §6.1。
 - 关键业务指标与错误率 **应当** 配置告警规则。
 
 ## 5. 缓存、会话与队列

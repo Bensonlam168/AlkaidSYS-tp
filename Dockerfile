@@ -36,10 +36,12 @@
 #    全部 success，因此不再需要忽略平台检查 —— 保留它只会让「扩展真的缺了」
 #    这件事在构建期静默通过、在运行期炸掉。
 #
-# 6) HEALTHCHECK 直连容器内 8080 的 /think。
-#    /think 是 route/app.php 里无条件的闭包路由（返回 hello,ThinkPHP8!），
-#    不查库、不经 nginx，实测容器内 8080 直连返回 200；
-#    而 /v1/admin/permission-monitor/health 需要鉴权（401），不适合做探针。
+# 6) HEALTHCHECK 直连容器内 8080 的 /healthz。
+#    /healthz 是 route/app.php 注册的专用 liveness 探针（app\controller\HealthController），
+#    **不查库、不读缓存业务键、不鉴权**，也不经 nginx，实测容器内 8080 直连返回 200。
+#    历史用法是框架演示路由 /think —— 零业务价值的示例闭包，且本镜像
+#    `ENV APP_ENV=production` 下它根本不会注册（route/app.php），因此不能继续依赖它。
+#    对照：/v1/admin/permission-monitor/health 需要鉴权（401），不适合做探针。
 #    基础镜像自带 /usr/bin/curl，这里仍显式 apt 安装 curl，避免依赖基础镜像
 #    的「偶然具备」。
 # =============================================================================
@@ -156,6 +158,6 @@ USER alkaid
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8080/think >/dev/null || exit 1
+    CMD curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1
 
 CMD ["php", "think", "swoole"]

@@ -20,6 +20,13 @@ This document defines deployment and operations practices for AlkaidSYS, focusin
 
 - Services **SHOULD** expose metrics endpoints compatible with the chosen monitoring stack.
 - Liveness and readiness probes **MUST** be implemented and configured for orchestrated environments.
+- The backend exposes **`GET /healthz`** (`app\controller\HealthController`): no database access,
+  no auth, no side effects, unified response envelope with `Cache-Control: no-store`. It is used by
+  the `Dockerfile` `HEALTHCHECK` and the backend/nginx healthchecks in `docker-compose.yml`.
+  ⚠️ It proves the worker can answer a request; it does **not** prove Redis/MySQL are usable
+  (the global `SessionInit` middleware reads the Redis session store, so the probe returns 500
+  during a Redis outage). See §6.1 of
+  [Image & Orchestration Production Requirements](./image-and-orchestration-production-requirements.md).
 - Critical business KPIs and error rates **SHOULD** be monitored with alerts.
 
 ## 5. Caching, Sessions and Queues

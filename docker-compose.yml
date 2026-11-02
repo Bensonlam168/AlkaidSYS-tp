@@ -156,8 +156,9 @@ services:
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
     healthcheck:
-      # 直连容器内 8080，不经 nginx；/think 是无依赖闭包路由（实测返回 200）
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/think >/dev/null || exit 1"]
+      # 直连容器内 8080，不经 nginx；/healthz 是专用 liveness 探针（不查库、不鉴权，实测返回 200）。
+      # 不再用 /think：那是框架演示路由，生产环境已不注册（见 route/app.php）。
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -192,10 +193,10 @@ services:
       # 可选：挂载本地证书目录，替换 alkaid.api.conf 中的证书路径
       # - ./deploy/nginx/certs:/etc/nginx/ssl:ro
     healthcheck:
-      # 端到端探针：nginx 能把 /think 反代到后端并拿到 200 才算就绪。
+      # 端到端探针：nginx 能把 /healthz 反代到后端并拿到 200 才算就绪。
       # 语义上这是「网关就绪」而非「nginx 进程存活」——后端挂了这里也会 unhealthy，
       # 这是刻意的：此时网关对外不可用。
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/think || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3

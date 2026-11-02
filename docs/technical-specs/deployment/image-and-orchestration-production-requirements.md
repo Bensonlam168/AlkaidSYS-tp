@@ -192,19 +192,57 @@ TASK 模式下 boot 脚本里有一个 `enable-blackfire-agent.sh`，它在检�
 | mysql | `mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent` | MySQL 8 官方镜像自带 `mysqladmin`；`--silent` 让成功时无输出 |
 | redis | `redis-cli ping` | 镜像自带；返回 `PONG` 且退出码 0 |
 | rabbitmq | `rabbitmq-diagnostics -q ping` | 比 `rabbitmqctl status` 轻，3.12-management-alpine 自带 |
-| backend | `curl -fsS http://127.0.0.1:8080/think` | 见下 |
-| nginx | `wget -q -O /dev/null http://127.0.0.1/think` | 端到端：能反代到后端并拿到 200 才算就绪 |
+| backend | `curl -fsS http://127.0.0.1:8080/healthz` | 见下 |
+| nginx | `wget -q -O /dev/null http://127.0.0.1/healthz` | 端到端：能反代到后端并拿到 200 才算就绪 |
 
-**backend 为什么探 `/think` 而不是 `/`、也不经 nginx：**
+**backend 为什么探 `/healthz` 而不是 `/`、也不经 nginx：**
 
 - 经 nginx 探针会把「nginx 挂了」误判成「后端挂了」，且容器内不一定装了验证 nginx 的工具；
-- `/think` 是 `route/app.php` 里**无条件注册**的闭包路由（返回 `hello,ThinkPHP8!`），
-  不查库、不依赖租户上下文，实测容器内 `127.0.0.1:8080/think` 返回 **200**；
+- `/healthz` 是 `route/app.php` 注册的**专用 liveness 探针**（`app\controller\HealthController`）：
+  不查库、不读业务缓存、不鉴权、无副作用，返回统一响应结构
+  `{"code":0,"message":"ok","data":{"status":"ok"},"timestamp":…,"trace_id":…}`，
+  并带 `Cache-Control: no-store`（探针结果被缓存住就会掩盖真实的宕机）；
+- 实测（`alkaid-backend` 容器内，直连 8080）：`GET /healthz` → **200**；经 nginx → **200**；
+  同一次请求在 ORM 的 SQL 监听器里**零条 SQL**（`tests/Feature/HealthzProbeTest`）；
 - 对照：`/v1/admin/permission-monitor/health` 需要鉴权，实测返回 **401**，不适合做探针。
 
-局限（直说）：`/think` 是框架自带的演示路由。更规范的做法是新增一个专门的
-`/healthz`（只回 200、可含版本号），但那属于应用代码改动，不在 ER-18（镜像与编排）范围内，
-故本文沿用现有路由并在此标注。
+**历史用法 `/think` 已废弃（原因：它生产环境根本不注册）：**
+
+`/think` 是 ThinkPHP 骨架自带的演示闭包（返回 `hello,ThinkPHP8!`），零业务价值，
+且会把「本服务是 ThinkPHP」无条件暴露给外部。自本次改动起 `route/app.php` 只在
+**非生产**（`APP_ENV` 不是 `production/prod/stage/staging`）注册 `/think` 与 `/hello/:name`，
+并同时由 `app\controller\Index` 在控制器层对生产环境返回 404
+（`url_route_must=false` 时 `/index`、`/index/hello` 仍会被自动解析 —— 只删路由堵不住）。
+因此 `HEALTHCHECK` 若继续探 `/think`，在生产镜像里会**稳定失败**。
+
+**局限（直说，必须知道）：`/healthz` 只证明「worker 能响应」，不证明依赖可用。**
+
+| 依赖 | 探针是否需要 | 实测结论 |
+| --- | --- | --- |
+| MySQL | ❌ 不需要 | 把 DB 指到 `127.0.0.1:1`（无人监听）后 `/healthz` 仍 **200** |
+| Redis | ⚠️ **需要** | 把 Redis 指到 `127.0.0.1:1` 后 `/healthz` 变 **500**（`RedisException: Connection refused`） |
+
+Redis 这条硬依赖不是 `HealthController` 造成的，而是**全局中间件**造成的：
+`app/middleware.php` 里的 `think\middleware\SessionInit` 会在每个请求上
+`GET` / `DEL` 一个 `alkaid:session:<id>` 键（`config/session.php` 的
+`type = cache`、`store = redis`），`redis-cli monitor` 实测可见；Redis 一挂，
+它在**路由之前**就抛异常，任何控制器都救不回来。
+
+结论与建议：
+
+- 当前探针的语义其实是「worker + 会话存储都活着」。在 `docker compose` 下这只会让容器显示
+  `(unhealthy)`（Docker 本身不会因 unhealthy 重启容器），影响的是监控告警与
+  `depends_on: service_healthy` 的启动门；
+- **但在 K8s / Swarm 里，liveness 失败会触发重启** —— 那会把「Redis 抖动」放大成
+  「全部后端实例重启」。上 K8s 前必须二选一：
+  1. 让探针绕过 `SessionInit`（在 `app/middleware.php` 的最前面加一个
+     `HealthProbeBypass` 中间件，命中 `/healthz` 就直接返回 200）——
+     这需要改动全局中间件注册，属于独立任务，本次**未做**；
+  2. 把 `/healthz` 只配置成 **readiness** 探针，另配一个不依赖应用的存活探针
+     （例如 `nc -z 127.0.0.1 8080`，只证明 Swoole 端口在听）。
+- 无论如何都**不要**把 `/healthz` 当成「数据库/Redis 可用」的证据 ——
+  那需要单独的 readiness 端点（逐项 check + 各自超时），当前没有。
+
 
 ### 6.2 `start_period` 为什么给这么长
 
@@ -333,8 +371,8 @@ command: ["php", "-d", "opcache.enable_cli=1", "-d", "opcache.validate_timestamp
 ```bash
 mysql -h 127.0.0.1 -P 3306 -u root -p            # 仍然可用
 redis-cli -h 127.0.0.1 -p 6379                   # 仍然可用
-curl http://127.0.0.1/think                      # 经 nginx（80）
-curl http://127.0.0.1:8080/think                 # 直连后端 Swoole（绕过 nginx）
+curl http://127.0.0.1/healthz                    # 经 nginx（80）
+curl http://127.0.0.1:8080/healthz               # 直连后端 Swoole（绕过 nginx）
 ```
 
 变的只是「同局域网的其他机器连不上了」，而这正是目的。
@@ -359,7 +397,7 @@ services:
 只把 nginx 暴露出去即可，不要去放开数据库端口：
 
 ```bash
-# nginx 仍绑 0.0.0.0（80/443），其它机器访问 http://<你的局域网IP>/think
+# nginx 仍绑 0.0.0.0（80/443），其它机器访问 http://<你的局域网IP>/healthz
 ```
 
 ---
@@ -412,7 +450,10 @@ docker history <image> --no-trunc | grep -i -E "password|secret" || echo "OK: no
    该模板目前只有 `DB_HOST`、`REDIS_*`、`JWT_*` 等键。`config/database.php` 里
    `env('DB_USER', 'root')` 的默认值是 **root**，意味着生产若不补这几个键，应用会以 root 连库。
    运维在上生产前必须补齐（本文不擅自改该文件，因为它受 `check-env-example` 门禁约束）。
-4. **`/think` 作为健康探针是权宜之计**（见 §6.1），更规范的是新增专用 `/healthz` 路由。
+4. **`/healthz` 已落地（本次），但它不是纯 liveness 探针**：全局 `SessionInit` 会读 Redis 会话，
+   因此 Redis 故障时探针会 500（实测，见 §6.1 的「局限」）。上 K8s 前必须先决定
+   「探针绕过 SessionInit」还是「只当 readiness 用」，否则一次 Redis 抖动会变成全实例重启。
+   旧用法 `/think` 已废弃：它在生产环境不再注册（`route/app.php` + `app\controller\Index` 双保险）。
 5. **nginx 的 `root /var/www/alkaid/public` 在生产 override 下指向空目录**（源码挂载被清掉）。
    由于现在所有请求都 `proxy_pass` 到后端，实际不影响 API；但 `location ~* \.(jpg|...)$`
    这类静态资源规则会 404。静态资源应改由 CDN / 对象存储提供，属于后续工作。

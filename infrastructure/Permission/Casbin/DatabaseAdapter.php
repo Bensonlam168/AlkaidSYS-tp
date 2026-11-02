@@ -33,11 +33,35 @@ use think\facade\Log;
  * - 只读模式：只支持 loadPolicy()，不支持 savePolicy() 等写操作
  * - Read-only mode: Only supports loadPolicy(), does not support savePolicy() and other write operations
  *
+ * ## 缓存降级边界（本次修复）| Cache degradation boundaries
+ *
+ * 策略缓存（`casbin.policy_cache_enabled`）是**旁路**，它的三种故障都必须降级为
+ * 「当作 miss，去 DB 加载」，而**不能**升级成「鉴权 500」：
+ *
+ * | 故障 | 位置 | 处理 |
+ * | --- | --- | --- |
+ * | 读失败（Redis 不可用 / 连接池释放） | `readPoliciesFromCache()` | warning + 返回 null（miss） |
+ * | 内容损坏（结构非法 / 缺段 / 字段错位） | `readPoliciesFromCache()` + `isValidPolicyCachePayload()` | warning + 返回 null（miss） |
+ * | 恢复失败（违反模型约束） | `loadPolicy()` 内层 try | warning + `clearPolicy()` + 回落 DB |
+ * | 写失败（回写 Redis 失败） | `savePolicesToCache()` | warning（策略已从 DB 装好，结果不变） |
+ *
+ * 唯一仍然**原样上抛**的是「DB 装载失败」—— 那才是真的装不出策略，
+ * 继续鉴权等于静默全拒绝。见 `loadPolicy()` 外层 catch 的注释。
+ *
  * @see https://casbin.org/docs/adapters
  * @see https://github.com/php-casbin/php-casbin
  */
 class DatabaseAdapter implements Adapter
 {
+    /**
+     * 全量策略缓存键 | Full policy cache key
+     *
+     * 读（`readPoliciesFromCache`）与写（`savePolicesToCache`）必须用**同一个**常量，
+     * 否则一旦有人改了其中一处的字面量，就会出现「写得进、读不到」的永久 miss，
+     * 且不会有任何报错 —— 只会表现为「缓存开关打开了但一直不命中」。
+     */
+    protected const POLICY_CACHE_KEY = 'casbin:policy:full';
+
     /**
      * 加载所有策略规则
      * Load all policy rules from the storage
@@ -76,13 +100,41 @@ class DatabaseAdapter implements Adapter
             if ($cacheEnabled) {
                 // 尝试从缓存加载策略
                 // Try to load policy from cache
-                $cachedPolicies = Cache::get('casbin:policy:full');
+                //
+                // 【R-健康｜缓存读独立兜底】这里的缓存读**必须自己接住异常**，不能交给外层 catch：
+                // 外层 catch 的语义是「装不出策略 → 记 error + 原样上抛」（DB 真挂了就该 500），
+                // 而「Redis 读不出来」只是旁路失效 —— 缓存里本来就有 DB 的副本，
+                // 丢掉它去读 DB 即可。历史实现把两者混在同一个 try 里，于是
+                // 「开启 policy_cache_enabled 后 Redis 抖一下 → loadPolicy 抛 → 鉴权 500」，
+                // 恰好抵消了 shouldReload() 的兜底（它返回 true → 触发 reload → 到这里炸）。
+                $cachedPolicies = $this->readPoliciesFromCache($traceId);
 
-                if ($cachedPolicies !== null && is_array($cachedPolicies)) {
-                    // 从缓存恢复策略
-                    // Restore policies from cache
-                    $this->restorePoliciesFromCache($model, $cachedPolicies);
+                if ($cachedPolicies !== null) {
+                    try {
+                        // 从缓存恢复策略
+                        // Restore policies from cache
+                        $this->restorePoliciesFromCache($model, $cachedPolicies);
+                    } catch (\Throwable $e) {
+                        // 【缓存内容损坏也算 miss】能过结构校验、但违反 Casbin 模型约束的条目
+                        // （例如规则字段数不够、含嵌套数组导致 implode 失败）同样是旁路故障：
+                        // 正确动作是丢掉这份缓存、回落到 DB，而不是让整次鉴权 500。
+                        //
+                        // 必须先 clearPolicy()：restore 可能已写入一部分规则，若直接接着从 DB
+                        // 加载，模型里会留下「半份缓存 + 全量 DB」的混合策略集 —— 既脏又极难排查
+                        // （表现为某些用户莫名多出/少了权限，重启后又消失）。
+                        Log::warning('Casbin policy cache restore failed, falling back to database', [
+                            'reason' => 'policy_cache_restore_failed',
+                            'trace_id' => $traceId,
+                            'error_type' => get_class($e),
+                            'error_message' => $e->getMessage(),
+                        ]);
 
+                        $model->clearPolicy();
+                        $cachedPolicies = null;
+                    }
+                }
+
+                if ($cachedPolicies !== null) {
                     // 计算执行时间
                     // Calculate execution time
                     $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -430,8 +482,117 @@ class DatabaseAdapter implements Adapter
     }
 
     /**
+     * 从缓存读取全量策略（**独立兜底**，绝不向调用方抛异常）
+     * Read the full policy set from cache (never throws to the caller)
+     *
+     * 返回 `null` 的三种情形，对调用方的语义完全一致 —— **当作 cache miss，去 DB 加载**：
+     *   1. 正常未命中（首次启动、TTL 过期、被清除）；
+     *   2. **读失败**（Redis 不可用 / 连接池已释放 / 驱动抛 `\TypeError` 等）；
+     *   3. **内容损坏**（不是数组、缺少 `g`/`p` 段、规则不是字符串列表……）。
+     *
+     * 为什么必须捕 `\Throwable` 而不是 `\Exception`：`\Error`（含 `\TypeError`）不继承
+     * `\Exception`，Redis 驱动/连接池在故障期抛的正是这一类；只捕 `\Exception` 等于
+     * 把「缓存坏了」重新变成「鉴权 500」，也就是本次要修的缺陷本身。
+     *
+     * 为什么记 **warning** 而不是 error：这是可降级的旁路故障（本次请求仍能用 DB 正常装出策略）。
+     * 记成 error 会让告警级别失真 —— 真正的 error 应该只留给「装不出策略」。
+     *
+     * @param string $traceId 当前请求 trace_id（用于把缓存故障与同一次鉴权对齐）
+     * @return array{g: array<int, list<string>>, p: array<int, list<string>>}|null
+     *         合法缓存返回数组；未命中 / 读失败 / 内容损坏返回 null
+     */
+    protected function readPoliciesFromCache(string $traceId): ?array
+    {
+        try {
+            $cachedPolicies = Cache::get(self::POLICY_CACHE_KEY);
+        } catch (\Throwable $e) {
+            Log::warning('Casbin policy cache read failed, falling back to database', [
+                'reason' => 'policy_cache_read_failed',
+                'trace_id' => $traceId,
+                'error_type' => get_class($e),
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+
+        // 未命中：Cache::get() 的默认返回值就是 null，这是完全正常的路径，不需要日志
+        if ($cachedPolicies === null) {
+            return null;
+        }
+
+        if (!$this->isValidPolicyCachePayload($cachedPolicies)) {
+            // 损坏的缓存**不能**继续往下走：例如只缓存了 `g` 段而丢了 `p` 段，
+            // 恢复后会得到「有角色、零权限」的模型 —— 请求全部 403，且没有任何异常可循。
+            // 宁可多查一次 DB，也不能把一份不完整的策略当成真的。
+            Log::warning('Casbin policy cache payload is malformed, falling back to database', [
+                'reason' => 'policy_cache_malformed',
+                'trace_id' => $traceId,
+                'payload_type' => get_debug_type($cachedPolicies),
+            ]);
+
+            return null;
+        }
+
+        return $cachedPolicies;
+    }
+
+    /**
+     * 校验缓存载荷结构是否合法（防止「坏缓存」变成「静默的错误策略集」）
+     * Validate the cached payload shape
+     *
+     * 判定标准（全部满足才算合法）：
+     *   - 顶层是数组，且 `g`、`p` **两段都存在**、都是数组（写路径这两个键一定都会写，
+     *     少一个就说明载荷被截断/被别的写入者覆盖过）；
+     *   - 每条规则是非空数组，且每个字段都是字符串；
+     *   - 每条规则是 **list**（键为 0..n-1 的连续整数）。
+     *
+     * 最后一条最容易被忽略却最危险：`Casbin` 的 `Policy::addPolicy()` 用
+     * `implode(separator, $rule)` 生成 policyMap 的键，**依赖数组的插入顺序**。
+     * 关联数组/乱序键会让字段整体错位（`tenant:1` 落到 obj 位），
+     * 结果不是报错，而是「某条策略莫名其妙地不生效或过度放行」。
+     *
+     * @param mixed $payload 缓存里读出来的原始值
+     * @return bool 合法返回 true
+     */
+    protected function isValidPolicyCachePayload(mixed $payload): bool
+    {
+        if (!is_array($payload)) {
+            return false;
+        }
+
+        foreach (['g', 'p'] as $section) {
+            if (!array_key_exists($section, $payload) || !is_array($payload[$section])) {
+                return false;
+            }
+
+            foreach ($payload[$section] as $rule) {
+                if (!is_array($rule) || $rule === []) {
+                    return false;
+                }
+
+                if (!array_is_list($rule)) {
+                    return false;
+                }
+
+                foreach ($rule as $field) {
+                    if (!is_string($field)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * 从缓存恢复策略
      * Restore policies from cache
+     *
+     * ⚠️ 调用前提：`isValidPolicyCachePayload()` 已通过。即便如此，`addPolicy()` 仍可能
+     * 因为模型约束（字段数、优先级索引等）抛异常，因此**调用方必须 try/catch**，
+     * 并在失败时 `clearPolicy()` 后回落到 DB（见 `loadPolicy()`）。
      *
      * @param Model $model Casbin 模型 | Casbin model
      * @param array $cachedPolicies 缓存的策略 | Cached policies
@@ -460,6 +621,13 @@ class DatabaseAdapter implements Adapter
      * 保存策略到缓存
      * Save policies to cache
      *
+     * 【写路径同样是旁路，失败不得影响本次请求】
+     * 历史实现让 `Cache::set()` 直接暴露在 `loadPolicy()` 的外层 try 里，
+     * 于是「策略已经从 DB 成功读出来了，只是没写进 Redis」会被外层 catch 接住
+     * → 记 error → **原样上抛** → 鉴权 500。这跟读路径是同一类缺陷：
+     * 缓存写失败的正确后果是「下次继续 miss（多查一次 DB）」，不是「本次请求失败」。
+     * 因此这里自己接住 `\Throwable`（含 `\TypeError`），只记 warning。
+     *
      * @param Model $model Casbin 模型 | Casbin model
      * @return void
      */
@@ -476,8 +644,21 @@ class DatabaseAdapter implements Adapter
         // Get cache TTL
         $cacheTtl = Config::get('casbin.reload_ttl', 300);
 
-        // 保存到缓存
-        // Save to cache
-        Cache::set('casbin:policy:full', $policies, $cacheTtl);
+        try {
+            // 保存到缓存
+            // Save to cache
+            Cache::set(self::POLICY_CACHE_KEY, $policies, $cacheTtl);
+        } catch (\Throwable $e) {
+            // 【为什么必须捕 \Throwable】\Error（含 \TypeError）不继承 \Exception，
+            // Redis 驱动/连接池故障期抛的正是这一类；漏接就会把降级变成 500。
+            Log::warning('Casbin policy cache write failed (policies are still loaded from database)', [
+                'reason' => 'policy_cache_write_failed',
+                'error_type' => get_class($e),
+                'error_message' => $e->getMessage(),
+                'role_assignments' => count($policies['g']),
+                'permission_assignments' => count($policies['p']),
+                'cache_ttl' => $cacheTtl,
+            ]);
+        }
     }
 }
