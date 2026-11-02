@@ -1105,7 +1105,9 @@ flowchart TD
   - A4：完成迁移路线文档（`docs/report/arch-01-legacy-migration-plan-2025-12-18.md`），制定 Phase 1-3 迁移计划
   - A5：完成 CI 阻断规则（`tests/Legacy/LegacyCollectionUsageGuardTest.php`），扫描全库确保无 Legacy 引用，已集成到 CI 流程
   - A6：完成首批迁移（已删除 Legacy 文件：`infrastructure/Collection/CollectionManager.php`、`domain/Model/Collection.php`、`infrastructure/Field/FieldTypeRegistry.php`；新栈 `domain/Lowcode/Collection/` + `infrastructure/Lowcode/Collection/` 完全替代）
-  - 验收确认：LegacyCollectionUsageGuardTest 通过（4个断言）；CI 中第173-174行运行 Legacy Guard 检查；生产代码零 Legacy 引用
+  - 验收确认：LegacyCollectionUsageGuardTest 通过（4个断言）；CI 中已运行 Legacy Guard 检查
+    （当时的写法是按类名 filter，且工作流行号会变 —— 勿再写死行号；现已改为
+    `php think test --testsuite=Legacy`，见文末「CI 约束补充」）；生产代码零 Legacy 引用
 
 ⬜ **[T-119] (P1) 测试覆盖率提升到 ≥80%（TEST-01）**
 - **来源**：`docs/report/comprehensive-project-audit-report-2025-12-16.md` §6.3
@@ -1151,7 +1153,15 @@ flowchart TD
     - [x] B3：补充/更新认证相关测试，验证新命名生效（`tests/Unit/Auth/JwtServiceTest.php` 覆盖 env 配置）
 
 **CI 约束补充**
-- Legacy Guard 已纳入 CI（`backend-php-cs-fixer.yml` 中执行 `php think test --filter=LegacyCollectionUsageGuardTest`），确保新代码不得再引用 Legacy 低代码栈。
+- Legacy Guard 已纳入 CI（`backend-php-cs-fixer.yml` 的 `Run Legacy guard suite` 步骤执行
+  `php think test --testsuite=Legacy`，跑的是**整个 `tests/Legacy` 套件**，不是某一个类名），
+  确保新代码不得再引用 Legacy 低代码栈。
+  - **这段历史必须留着**：此前写的是 `php think test --filter=LegacyCollectionUsageGuardTest`，
+    而当时 `tests/Legacy` **不在任何 testsuite 里** —— PHPUnit 只认 `phpunit.xml` 登记的套件，
+    于是那条步骤匹配不到任何用例、打印 `No tests executed!` 之后**仍然 exit 0**，
+    两个守卫（`LegacyCollectionUsageGuardTest` / `WithoutTenantScopeUsageGuardTest`）长期空转 ——
+    「已纳入 CI」是假的。现在两处同时修正：`phpunit.xml` 登记 `Legacy` 套件（能跑到）
+    + 开 `failOnEmptyTestSuite`（跑不到就 exit 1，不再假绿）。不写这段，下一个人会以为它一直是好的。
 - ⬜ **[T-117] (P1) 权限查询缓存与性能优化（PERF-01）**
   - 子任务：
     - [ ] B4：设计 PermissionService/Casbin 多级缓存与租户隔离命名空间

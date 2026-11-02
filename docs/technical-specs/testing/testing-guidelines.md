@@ -84,6 +84,36 @@ docker exec alkaid-mysql mysql -uroot -proot -e 'DROP DATABASE IF EXISTS alkaid_
 
 The project provides a unified test entry point via ThinkPHP CLI command:
 
+### Test suites: the 5 declared in `phpunit.xml`
+
+`php think test --testsuite=<name>` only accepts suite names **registered** in `phpunit.xml`. A misspelled
+name does not report "suite not found" — it silently runs 0 tests (see "zero tests must be red" below).
+
+| Suite | Directory | What it runs |
+| --- | --- | --- |
+| `Unit` | `tests/Unit` | Unit tests: no DB / Redis / HTTP. Behaviour of single classes and functions (Domain, Infrastructure, Schema, low-code form validators, ...). |
+| `Feature` | `tests/Feature` | Feature / API tests: the full HTTP request path — authentication, authorization, error codes, rate limiting, tenant isolation. |
+| `Integration` | `tests/Integration` | Integration tests against real MySQL / Redis: `BaseModel` global scopes and tenant filtering, Casbin policy cache and permission cleanup, event monitoring, plugin hooks, workflow tables/foreign keys, the low-code CLI. |
+| `E2E` | `tests/E2E` | End-to-end tests: critical user journeys across modules (currently `MultiTenantIsolationTest` — a collection created by one tenant must be invisible to another). |
+| `Legacy` | `tests/Legacy` | **Guard suite**: asserts no business behaviour; it statically scans the whole repository (the removed legacy low-code stack must not be referenced again, unreviewed `withoutTenantScope()` back doors must not appear). |
+
+`tests/Benchmark/` and the suites in `phpunit.performance.xml` are **not** in the table above — benchmarks and
+performance budgets only run under the performance configuration, see §7.1.
+
+**`Legacy` is a guard suite, not "leftover/historical tests"**: each guard recursively reads every PHP file
+under `app/`, `domain/`, `infrastructure/`, `tests/` and `plugins/` (several thousand files, ~8 s per guard),
+so the whole suite takes ~16–20 s. That cost is deliberate — the value of a guard comes from scanning
+*everything*; narrowing the scan range would defeat its purpose.
+
+**"Zero tests executed" must be red**: `phpunit.xml` sets `failOnEmptyTestSuite="true"`. PHPUnit's default is
+to treat 0 tests as a pass (it prints `No tests executed!` and exits 0), which produces the worst kind of false
+green — the report says "in CI" while not a single byte was checked. With the flag enabled, all of the following
+become exit 1: a misspelled suite name, a `--filter` that matches nothing, a moved directory, an emptied test file.
+
+> **Real incident**: `tests/Legacy` used to be in no `testsuite` at all while CI invoked it by class name
+> (`--filter=LegacyCollectionUsageGuardTest`) — the step matched nothing yet stayed green, so both guards were
+> idle. CI now runs `--testsuite=Legacy`; any new guard dropped into `tests/Legacy` is picked up automatically.
+
 ### Running Tests
 
 ```bash
@@ -95,6 +125,9 @@ docker exec -it alkaid-backend php think test --testsuite=Unit
 
 # Run Feature tests only
 docker exec -it alkaid-backend php think test --testsuite=Feature
+
+# Run the guard suite only (static-scan guards in tests/Legacy)
+docker exec -it alkaid-backend php think test --testsuite=Legacy
 
 # Run Performance tests (requires phpunit.performance.xml)
 docker exec -it alkaid-backend php think test -c phpunit.performance.xml
@@ -119,7 +152,7 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--testsuite` | `-s` | Test suite name (Unit/Feature/Performance) |
+| `--testsuite` | `-s` | Test suite name (Unit / Feature / Integration / E2E / Legacy, see "Test suites" above) |
 | `--filter` | `-f` | Filter tests by method/class name |
 | `--coverage-html` | | Generate HTML coverage report |
 | `--coverage-text` | | Output text coverage report |

@@ -80,6 +80,34 @@ docker exec alkaid-mysql mysql -uroot -proot -e 'DROP DATABASE IF EXISTS alkaid_
 
 项目提供统一的测试入口命令，通过 ThinkPHP CLI 执行：
 
+### 测试套件：`phpunit.xml` 里登记的 5 个
+
+`php think test --testsuite=<名字>` 只认 `phpunit.xml` 的 `<testsuites>` 里**登记过**的套件名 ——
+名字写错不会报「套件不存在」，只会安静地跑 0 个用例（见下方「一条都没跑必须是红的」）。
+
+| 套件 | 取样目录 | 它跑什么 |
+| --- | --- | --- |
+| `Unit` | `tests/Unit` | 单元用例：不碰 DB / Redis / HTTP，验证单个类或函数的行为（Domain、Infrastructure、Schema、低代码表单验证器等） |
+| `Feature` | `tests/Feature` | 特性 / API 用例：走完整 HTTP 请求链路，覆盖认证、授权、错误码、限流与多租户隔离 |
+| `Integration` | `tests/Integration` | 集成用例：真实连 MySQL / Redis，验证跨层协作 —— `BaseModel` 全局作用域与租户过滤、Casbin 策略缓存与权限清理、事件监控、插件钩子、workflow 表与外键、低代码 CLI |
+| `E2E` | `tests/E2E` | 端到端用例：跨模块的关键用户路径（目前是 `MultiTenantIsolationTest`：一个租户建的低代码集合，另一个租户必须看不见） |
+| `Legacy` | `tests/Legacy` | **守卫型套件**：不验证业务行为，而是静态扫描全仓源码的「守门员」（禁止引用已删除的 Legacy 低代码栈、禁止未评审的 `withoutTenantScope()` 跨租户后门） |
+
+`tests/Benchmark/` 与 `phpunit.performance.xml` 里的套件**不在**上表内 —— 基准与性能预算只在性能配置下运行，见 §7.1。
+
+**`Legacy` 是守卫型套件，不是「历史遗留用例」**：两个守卫各自递归读取 `app/`、`domain/`、
+`infrastructure/`、`tests/`、`plugins/` 下的全部 PHP 文件（数千个，实测单个守卫约 8 秒），
+整组约 16–20 秒。这份成本是刻意的 —— 守卫的价值来自「把全仓扫一遍」，抽稀扫描范围等于自废武功。
+
+**「一条都没跑」必须是红的**：`phpunit.xml` 开了 `failOnEmptyTestSuite="true"`。PHPUnit 的默认行为是
+0 个用例也算通过（打印一句 `No tests executed!` 后 exit 0），这会产生最糟的一类假绿 ——
+报告里写着「已纳入 CI」，实际一个字节都没检查。开启后，下列退化全部变成 exit 1：
+套件名写错、`--filter` 匹配不到任何用例、取样目录被挪走、用例文件被删空。
+
+> **真实教训**：`tests/Legacy` 曾长期不在任何 `testsuite` 里，而 CI 用
+> `--filter=LegacyCollectionUsageGuardTest` 按类名调它 —— 匹配不到任何用例却一路绿灯，两个守卫完全空转。
+> 现在 CI 改为 `--testsuite=Legacy` 整组跑；新增守卫只要放进 `tests/Legacy` 就自动生效，不必再改工作流。
+
 ### 运行测试
 
 ```bash
@@ -91,6 +119,9 @@ docker exec -it alkaid-backend php think test --testsuite=Unit
 
 # 仅运行功能测试
 docker exec -it alkaid-backend php think test --testsuite=Feature
+
+# 仅运行守卫型套件（tests/Legacy 里的静态扫描守卫）
+docker exec -it alkaid-backend php think test --testsuite=Legacy
 
 # 运行性能测试（需要 phpunit.performance.xml）
 docker exec -it alkaid-backend php think test -c phpunit.performance.xml
@@ -115,7 +146,7 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 
 | 选项 | 简写 | 描述 |
 |------|------|------|
-| `--testsuite` | `-s` | 测试套件名称 (Unit/Feature/Performance) |
+| `--testsuite` | `-s` | 测试套件名称（Unit / Feature / Integration / E2E / Legacy，见上文「测试套件」） |
 | `--filter` | `-f` | 按方法/类名过滤测试 |
 | `--coverage-html` | | 生成 HTML 覆盖率报告 |
 | `--coverage-text` | | 输出文本覆盖率报告 |

@@ -36,6 +36,11 @@ declare(strict_types=1);
  *        且解析器的容忍度随 PHP 版本可能变化。
  *      · `;` 行 + 任意命中字符 —— `;` 注释不参与 INI 词法分析（实测不影响解析），
  *        同样按**告警**处理以保持规则一致性。
+ *   D0. 清单可用（fail-closed，检查 D 的前置断言）：`EnvRequirementCatalog::templateRequiredKeys()`
+ *      必须**非空**，且每个键名必须匹配 ^[A-Z][A-Z0-9_]*$。
+ *      为空时检查 D 会遍历 0 个键、打印 OK 后原地保持绿色 —— 那不是「模板里不缺键」，
+ *      而是「没有任何检查对象」。命中时**立即终止**，检查 D / E / F 一律不跑：
+ *      清单不可用时，它们的结论没有意义。
  *   D. 必需键存在：清单来自 `app\support\EnvRequirementCatalog` 的 `template_required` 维度
  *      （`DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` / `DB_CHARSET` / `JWT_SECRET`）。
  *      这些键缺失时进程启动**不会**失败，只在运行期以「连不上库 / 鉴权全挂」的形式暴露，
@@ -695,6 +700,85 @@ foreach ($cIssues['warnings'] as $issue) {
 $errorCount += count($cIssues['errors']);
 $warningCount += count($cIssues['warnings']);
 
+// --- 检查 D0：catalog 键清单可用性（fail-closed，检查 D 的前置断言） ---
+//
+// 为什么必须在**源头**终止，而不是「报一条告警继续跑」：
+//   检查 D 是唯一消费 EnvRequirementCatalog::templateRequiredKeys() 的地方。清单为空时
+//   D 会遍历 0 个键、打印 OK，整份门禁原地保持绿色 —— 那不是「模板里不缺键」，而是
+//   「没有任何检查对象」。这正是「门禁自己看不见自己被废掉」的典型失效：
+//   把 catalog 的 template_required 全部改成 false（或整表删掉），这条 required 门禁就
+//   永远绿，而两份模板里缺多少键都没人知道。
+//   因此这里不只报错，而是**立即 exit(1) 并跳过 D / E / F**：
+//   清单不可用时，「全部通过」比「什么都没检查」更危险。
+//
+// 键名格式也在这里拦：模板里能表达的键名只有 ^[A-Z][A-Z0-9_]*$ 这一种形态，清单里写进任何
+// 不匹配的键名，都会让检查 D 的判定失去意义（与模板里的真实键名对不上 → 要么永远报缺键，
+// 要么两边各说各话）。这属于「规则表自身写错」，必须响亮失败，不能降级成告警。
+$d0Issues = [];
+$templateRequiredKeys = EnvRequirementCatalog::templateRequiredKeys();
+
+if ($templateRequiredKeys === []) {
+    $d0Issues[] = [
+        'tag'  => 'CATALOG-EMPTY',
+        'text' => 'catalog 的 template_required 被清空 —— 检查 D 会因此空转；请恢复清单或说明为何下线',
+    ];
+}
+
+// 「清单变少但非空」是独立的一类静默退化，必须单独设下限。
+//
+// 为什么只靠上面的非空断言不够（实测结论）：检查 D 只回答「清单里的键在不在模板里」，
+// 不回答「清单本该有哪些键」。所以把 DB_CHARSET 从清单里去掉，D 会少查一项、原地保持绿色，
+// 非空断言也照样通过 —— 一道闸门凭空消失，没有任何东西会红。
+//
+// 为什么用「下限」而不是再抄一份清单：清单的权威定义只能有一份（否则就是第 5 份副本）。
+// 下限的作用是「逼人显式表态」：真要下线某个键，可以，但必须同时把下面的数字改小，
+// 而那次改动会出现在 diff 里、必须写明理由 —— 不能靠删一行悄悄发生。
+const TEMPLATE_REQUIRED_MIN_KEYS = 6; // 当前 6 键：DB_HOST/DB_NAME/DB_USER/DB_PASS/DB_CHARSET/JWT_SECRET
+
+$templateRequiredCount = count($templateRequiredKeys);
+if ($templateRequiredKeys !== [] && $templateRequiredCount < TEMPLATE_REQUIRED_MIN_KEYS) {
+    $d0Issues[] = [
+        'tag'  => 'CATALOG-SHRUNK',
+        'text' => sprintf(
+            'catalog 的 template_required 只剩 %d 个键，少于下限 %d —— 检查 D 会跟着少查，'
+            . '缺的那几个键从此不再被任何门禁覆盖（下限见 scripts/check-env-example.php 的 '
+            . 'TEMPLATE_REQUIRED_MIN_KEYS）。若确实要下线某个键，请同时下调该下限并在提交信息里说明理由。',
+            $templateRequiredCount,
+            TEMPLATE_REQUIRED_MIN_KEYS
+        ),
+    ];
+}
+
+foreach ($templateRequiredKeys as $key) {
+    if (preg_match(KEY_PATTERN, (string) $key) !== 1) {
+        $d0Issues[] = [
+            'tag'  => 'CATALOG-BAD-KEY',
+            'text' => sprintf(
+                'catalog 的 template_required 含非法键名 "%s"：键名必须匹配 %s'
+                . '（模板里只有这一种形态的键名能被表达，写入非法键名等于让检查 D 失去判定依据）',
+                (string) $key,
+                KEY_PATTERN
+            ),
+        ];
+    }
+}
+
+printf("检查 D0 catalog 模板键清单      %s\n", formatResult(count($d0Issues)));
+foreach ($d0Issues as $issue) {
+    printIssue($issue['tag'], $issue['text']);
+}
+
+if ($d0Issues !== []) {
+    printIssue('CATALOG-KEYS', '已终止后续检查：清单不可用时，检查 D 的「通过」与检查 E / F 的结论都不可信');
+    echo str_repeat('-', 64) . PHP_EOL;
+    echo sprintf(
+        "%s（错误 %d 个：catalog 键清单不可用，检查 D / E / F 未执行）\n",
+        colorize('检查未全部通过', 'red'),
+        count($d0Issues)
+    );
+    exit(1);
+}
+
 // --- 检查 D：必需键存在（依赖解析结果） ---
 if (!$parsed['ok']) {
     echo '检查 D  必需键存在              ' . colorize('SKIPPED（解析失败）', 'gray') . PHP_EOL;
@@ -704,8 +788,10 @@ if (!$parsed['ok']) {
         $present[$item['key']] = true;
     }
     $dIssues = [];
-    // 键清单来自 catalog 的 template_required 维度（顺序即报错顺序），本脚本不再自带副本
-    foreach (EnvRequirementCatalog::templateRequiredKeys() as $key) {
+    // 键清单来自 catalog 的 template_required 维度（顺序即报错顺序），本脚本不再自带副本。
+    // 刻意复用上面 D0 校验过的那一份变量：D 遍历的必须**就是**被断言过非空且键名合法的清单，
+    // 否则「断言过的那份」与「实际用的那份」之间存在二次调用漂移的空间。
+    foreach ($templateRequiredKeys as $key) {
         if (!isset($present[$key])) {
             $dIssues[] = $key;
         }

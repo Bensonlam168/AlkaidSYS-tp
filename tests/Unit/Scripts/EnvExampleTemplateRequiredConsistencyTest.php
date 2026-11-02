@@ -241,7 +241,12 @@ final class EnvExampleTemplateRequiredConsistencyTest extends TestCase
             {
                 public static function templateRequiredKeys(): array
                 {
-                    return ['DB_HOST', 'PROBE_ONLY_ABSENT_KEY'];
+                    // 替身清单必须凑到「下限」以上（见 scripts/check-env-example.php 的
+                    // TEMPLATE_REQUIRED_MIN_KEYS），否则会被 [CATALOG-SHRUNK] 拦在检查 D 之前，
+                    // 这条用例就测不到「脚本是否真的在消费 catalog」了。
+                    // 组成：5 个真实存在的键 + 1 个模板里不存在的键（PROBE_ONLY_ABSENT_KEY）。
+                    // 刻意**不含 DB_CHARSET**，以保留「脚本不再提它」那条断言。
+                    return ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASS', 'JWT_SECRET', 'PROBE_ONLY_ABSENT_KEY'];
                 }
             }
             PHP);

@@ -12,23 +12,35 @@ name: Env Example Check
 #   A. 可解析（失败时给出语法错误行号与原文）
 #   B. 无伪键
 #   C. 注释行无 ASCII 括号/引号
+#   D0. catalog 的模板必需键清单「非空且键名合法」（fail-closed，检查 D 的前置断言）
 #   D. 必需键存在（键清单来自 app/support/EnvRequirementCatalog::templateRequiredKeys()）
+#   E. .env.production.example 覆盖 .env.example 的键集合
+#   F. 本地 .env 键集合对比（提示项，不参与门禁）
 #
-# 第二件事：跑「模板必需键」的一致性用例 | Also runs the template-required consistency test
+# 零依赖是硬要求（本 check 是 required status check）| Zero-dependency on purpose
 #
-# 为什么本 job 必须自己跑用例，而不是只依赖 Backend CI 里的 php think test：
-#   检查 D 读的是 EnvRequirementCatalog::templateRequiredKeys()。这是**刻意的单一真相源**，
-#   但它同时意味着「把 catalog 的 template_required 清空/改漂移」时，脚本会跟着少查几个键，
-#   于是**原地保持绿色** —— 门禁自己看不见自己被废掉。
-#   能看见的只有 tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php（6 个用例：
-#   键集合与顺序被钉死、每个生产键必须显式表态、两份模板必须都含这些键、
-#   脚本代码里不得再出现硬编码键名、脚本运行时确实消费 catalog、无 vendor 的干净进程仍通过）。
-#   把它放在**同一个 job**（而不是新增一个 job）是有意的：本 job 已是被设为 required 的
-#   `Env Example Consistency`，加一步就自动受分支保护约束；新增 job 若没人去仓库设置里勾选
-#   required，就只是「跑过」，不阻止合并（见 AGENTS.md「合并前必须通过的配置类门禁」）。
+# 检查 D 读的是 EnvRequirementCatalog::templateRequiredKeys()（**刻意的单一真相源**）。
+# 单一真相源的反面是「门禁自己看不见自己被废掉」，所以三类失效必须各有归属：
+#   1. **键名漂移**（catalog 里把 DB_HOST 写成 DB_HOSTX）→ 检查 D 自己就红：
+#      它拿 catalog 的清单去两份模板里逐个找，找不到就是 [MISSING-KEY]。不需要用例来兜。
+#   2. **清单被清空**（template_required 全改 false / 整表删掉）→ 检查 D 会遍历 0 个键、
+#      打印 OK 后原地保持绿色。这一类静默缺口由**脚本内的 fail-closed 断言**覆盖：
+#      检查 D0 要求 templateRequiredKeys() 非空、且每个键名匹配 ^[A-Z][A-Z0-9_]*$，
+#      不满足就 exit(1) 并跳过检查 D / E / F。
+#   3. **键集合被钉死**（清单仍合法非空，但少了几个键，例如删掉 DB_CHARSET 那一条）→
+#      静态脚本判不了：它只知道「清单里有这些」，无从判断「本该还有哪些」。
+#      这一层由 Backend CI 的 Unit 套件里的
+#      tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest 覆盖
+#      （testTemplateRequiredKeysArePinned 钉死 6 键及其顺序；
+#        testEveryKeyHasAnExplicitTemplateDecision 钉住「每个生产必需键都得显式表态」）。
 #
-# 代价（直说）：这一步需要 composer install，于是本 check 不再是「无网络的秒级纯静态校验」。
-#   这是必要的取舍 —— 一个不校验自身规则的静态门禁，等价于没有门禁。
+# 历史（为什么这里**不再**跑 PHPUnit）：本 job 曾为第 2 条加过
+#   `composer install` + `./vendor/bin/phpunit tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php`。
+#   代价是：一个 required check 从此依赖 packagist，网络抖动即阻塞合并，而它挡的正是第 2 条。
+#   第 2 条移进脚本后（零依赖、毫秒级），那两个步骤随之移除 —— 本 job 回到
+#   「checkout -> 装 PHP -> 跑脚本」三步。
+#   注意：第 3 条**不在**本 job 的覆盖范围内，也不在 AGENTS.md 的 required check 表内 ——
+#         它是「有 CI 会跑、但不是合并阻断项」的已登记风险，别把这段注释读成「全都守住了」。
 
 # R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
 #
@@ -39,7 +51,8 @@ name: Env Example Check
 # 代价：每个 PR 都会跑一遍。
 # 历史：此前 pull_request 与 push 都带 paths:（`.env.example`、`scripts/check-env-example.php`、
 #   本工作流自身、`AGENTS.md` —— 后者因为规则原文与自查命令写在那里，规则变更时应连带复跑）。
-# 加测试步骤后仍然**不能**加回 paths:：任何一个 PR 不触发，required check 就会永久 Expected。
+# 仍然**不能**加回 paths:：任何一个 PR 不触发，required check 就会永久 Expected。
+# （本 job 已不跑用例，但「对每个 PR 都要给出结论」这条约束不变。）
 
 on:
   pull_request:
@@ -61,57 +74,11 @@ jobs:
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
         with:
+          # 只钉版本，不装扩展：脚本只用 PHP 内置函数（parse_ini_file / preg_* / realpath），
+          # 也不 require vendor/autoload.php —— 本步骤是纯静态、秒级、不联网。
           php-version: '8.2'
-          # 与 Backend CI 的 php-cs-fixer job 取同一组扩展：下面的 composer install
-          # 要过 composer.lock 的平台检查（只忽略 ext-swoole，其它扩展必须真实存在）。
-          extensions: pdo_mysql, redis, mbstring, xml, bcmath, sockets, openssl, curl, fileinfo
           coverage: none
 
       - name: Run .env.example consistency check
         # --strict：注释里的软字符（' 与 ]）也只提示不允许通过，与 AGENTS.md 规则对齐
         run: php scripts/check-env-example.php --strict
-
-      # ----------------------------------------------------------------------
-      # 一致性用例：本 check 自己的「自我校验」
-      #
-      # 刻意排在静态检查**之后**：静态检查不需要 vendor，最快失败路径放最前面；
-      # 用例要 composer install，失败代价更高，所以放后面。
-      # ----------------------------------------------------------------------
-
-      - name: Get Composer cache directory
-        id: composer-cache
-        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
-
-      - name: Cache Composer dependencies
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.composer-cache.outputs.dir }}
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: ${{ runner.os }}-composer-
-
-      - name: Install dependencies
-        # 与其它 job 一致：ext-swoole 只在常驻进程里用到，本 job 不需要编译它
-        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole
-
-      - name: Run template-required key consistency test
-        # 为什么用 ./vendor/bin/phpunit + 文件路径，而不是 php think test --filter=类名：
-        #   1. 这条用例按设计「不需要 App / DB / Redis」（见用例类注释：被测对象是静态规则表
-        #      加一个纯 PHP 脚本，起子进程是为了让「没有 vendor autoload」这件事真的成立）。
-        #      本 job 既没有 MySQL/Redis service，也不创建 .env，走 php think test 会先 boot
-        #      整个框架（含 boot 期守卫），等于给这一步引入与断言无关的失败模式；
-        #   2. 文件路径比类名更精确：类被改名时是「文件不存在」的硬错误（exit 2），
-        #      而不是一个可能匹配到别的类的模糊 filter。
-        #
-        # 为什么还要 grep 用例数（关键，别删）：
-        #   phpunit.xml 已开 failOnEmptyTestSuite="true"，所以「一个用例都没跑」已经会 exit 1，
-        #   `No tests executed!` 不再是假绿。但它看不见「文件还在、用例被删到只剩 1 条」——
-        #   临时删掉 5 个用例，PHPUnit 照样 OK。这个数字就是**刻意的下限断言**：
-        #   增删用例时同步改这个数字，否则本步骤变红。宁可红一次，也不要静默少跑。
-        #   （tee + pipefail：phpunit 失败时管道整体失败，不会因为 tee 成功而变绿。）
-        run: |
-          set -o pipefail
-          ./vendor/bin/phpunit tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php --colors=never | tee /tmp/env-template-consistency.log
-          grep -qF 'OK (6 tests,' /tmp/env-template-consistency.log || {
-            echo "::error::用例数不符：期望 6 条用例全部通过（实际输出见上）。若刚刚增删了用例，请同步更新本步骤里的数字。"
-            exit 1
-          }
