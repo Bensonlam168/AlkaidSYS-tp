@@ -276,7 +276,8 @@ function readLines(string $path): array
 }
 
 /**
- * 检查 1：相对链接有效性 + 本机绝对路径（`file://`）判错
+ * 检查 1：链接有效性 —— 任意非协议目标（.md / 代码文件 / 配置 / 目录）按所在目录解析，
+ *         另含本机绝对路径（`file://`）判错与 `path:行号` 判错
  *
  * ## 支持的链接形态
  *   1. 显式相对：`](./x.md)`、`](../x.md)` —— 历史形态，保持不变
@@ -686,7 +687,9 @@ $totalIssues = count($coverageIssues);
 
 // --- 检查 1：链接 ---
 $linkIssues = checkLinks($files);
-printf("检查 1  相对链接有效性        %s\n", formatResult(count($linkIssues)));
+// 标签用「链接有效性」而非「相对链接有效性」：检查 1 已覆盖目录与非 .md 目标，
+// 旧标签会让人误以为只查 .md 相对链接（详见上方检查 1 的注释与 AGENTS.md 的 4.1 / 4.2）
+printf("检查 1  链接有效性            %s\n", formatResult(count($linkIssues)));
 foreach ($linkIssues as $issue) {
     if ($issue['kind'] === 'file-url') {
         echo '   ' . colorize('[FILE-URL]', 'yellow')
