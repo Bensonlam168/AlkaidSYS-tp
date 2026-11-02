@@ -70,30 +70,45 @@ Frontend:
 | `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict` |
 | 语言包一致性 | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `lang-check` | **Language Pack Consistency Check (i18n)** | `php think lang:check` |
 | 迁移安全（**仅静态**） | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migrations-check` | **Migration Safety Check** | `php scripts/check-migrations.php --strict --no-db`（只跑 A/C，见下） |
+| 迁移数据一致性 | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migration-data-check` | **Migration Data Consistency Check** | 起 MySQL + Redis service → `php think migrate:run` → `php scripts/check-migration-data.php --strict`（**不带** `--no-db`，见下） |
 
-`check-migrations`（`scripts/check-migrations.php`）**已有工作流**（R41），但**CI 只跑 A/C（静态）**：
+`check-migrations`（`scripts/check-migrations.php`）**已有工作流**（R41），但**CI 的静态 job 只跑 A/C**：
 `check A` 迁移版本唯一性、`check C` 的 up()/down() 与 change() 规则 —— 这两项与环境无关。
 
 `check B`（版本倒挂）、`check D`（`tenant_id` 列声明）、`check E`（无默认值 `tenant_id` 的租户外键）、
-`check F`（applied 记录必须有对应迁移文件）
-**都需要「哪些迁移已应用」这个基准**，CI 拿不到：GitHub Actions 里的全新 MySQL 中 `migrations` 表是空的，
-而本仓库新库全量 `migrate:run` 目前跑不通（`20251125_add_casbin_manage_permission.php` 的 8 位版本号
-排在全部 14 位时间戳之前，第一条迁移就失败），所以 CI 造不出真实的 applied 状态。
-因此工作流显式传 `--no-db`（语义是「本环境没有 applied 状态」，不是「允许跳过检查」），
+`check F`（applied 记录必须有对应迁移文件）**都需要「哪些迁移已应用」这个基准**。
+静态 job（`migrations-check`）刻意不执行迁移 —— 它要的是秒级、无依赖，因此那里没有 applied 状态，
+工作流显式传 `--no-db`（语义是「本环境没有 applied 状态」，不是「允许跳过检查」），
 脚本会打印「跳过（--no-db）」而不是把跳过伪装成通过。
+（R43 已修好新库冷启动，全量 `migrate:run` 现在跑得通 —— 这正是下面那个 job 敢真跑迁移的前提。）
 
-⚠️ **本地 / 提交前必须跑全量**，CI 绿不代表 B/D/E/F 没问题：
+`check-migration-data`（`scripts/check-migration-data.php`，R51）解决的是**另一类**事故：
+**迁移在 `migrations` 表里记为已应用，但它插入的数据一行都不存在**。开发库发生过两次 ——
+`20251218000001` 缺 12 条 `tenant.*` / `role.*` / `permission.*` / `user.*` 权限（由 `20251225000001` 修复）、
+`20251219000002` 缺 6 条 `dept.*` / `menu.*` 权限（由 `20251226000001` 修复），两次都只以「后台 403 / 2002」暴露。
+这类状态**静态检查与单元测试都抓不到**，必须「真建一遍库 → 比对迁移意图 ↔ 库里的实际行」，
+所以它单独占一个 job（`migration-data-check`）：MySQL + Redis service → `composer install` →
+`php think migrate:run` → `check-migration-data.php --strict`。
+静态 job 里只跑它的 `--no-db` 形态（仅验证源码侧 token 提取没被打断，不比对数据）。
+
+⚠️ **本地 / 提交前必须跑全量**，CI 绿不代表 B/D/E/F 与数据比对没问题：
 
 ```bash
-docker exec alkaid-backend php scripts/check-migrations.php --strict   # 不带 --no-db，会连库
+docker exec alkaid-backend php scripts/check-migrations.php --strict      # 不带 --no-db，会连库
+docker exec alkaid-backend php scripts/check-migration-data.php --strict  # 不带 --no-db，会连库
 ```
+
+⚠️ **CI 只能覆盖「全新库」这一半**：`migration-data-check` 比对的是 `migrate:run` 刚刚建出来的库，
+它抓不到**既有开发库自己的漂移** —— 而 R2/R3 的成因恰恰是「数据被执行环境之外的改动弄丢」，
+脏库不会自己变干净。所以上面第二行（连开发库/测试库跑）只能靠本地，CI 绿不等于账本与数据一致。
 
 **这些 check 必须被设为 required，否则只是「跑过」而不阻止合并。** 设置位置是**仓库设置**，代码侧无法强制：
 
 ```
 Settings → Branches → Branch protection rule（或 Rulesets）
   → Require status checks to pass before merging
-  → 搜索并勾选上表 5 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E/F 已被守住）
+  → 搜索并勾选上表 6 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E/F 已被守住；
+    `Migration Data Consistency Check` 只覆盖「全新库」里的迁移数据一致性，不等于既有库的账本没漂移）
 ```
 
 ✅ **`paths:` 过滤与 required 的冲突已解决（R40）**：上表三个配置类工作流
@@ -123,10 +138,11 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 
 - [ ] `develop` 与 `main` **都**建了 branch protection rule（或 ruleset），不只默认分支
 - [ ] 已勾选 `Require status checks to pass before merging`
-- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`（最后一项在 CI 只覆盖 A/C，见上文 ⚠️）
+- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`、`Migration Data Consistency Check`（后两者分别只覆盖「静态 A/C」与「全新库的数据一致性」，见上文 ⚠️）
 - [ ] 已确认四份工作流（上表前三个 + `migrations-check.yml`）**不再有** `paths:`（R40 已完成；`grep -cE '^[[:space:]]*paths:' .github/workflows/docs-check.yml .github/workflows/phpunit-config-check.yml .github/workflows/env-check.yml .github/workflows/migrations-check.yml` 均应为 `0`，注释里提到 `paths:` 不算），不会出现永久 `Expected`
 - [ ] 已勾选 `Require review from Code Owners`，且已排除「owner 本人无法合并」的单人瓶颈
-- [ ] `check B` / `check D` / `check E` / `check F` 无法在 CI 覆盖（需要 applied 状态），已确认**本地跑过全量**：`docker exec alkaid-backend php scripts/check-migrations.php --strict`
+- [ ] `check B` / `check D` / `check E` / `check F` 无法在静态 job 里覆盖（需要 applied 状态），已确认**本地跑过全量**：`docker exec alkaid-backend php scripts/check-migrations.php --strict`
+- [ ] 已确认**本地跑过**迁移数据全量比对（CI 的 `migration-data-check` 只比对全新库，抓不到既有库漂移）：`docker exec alkaid-backend php scripts/check-migration-data.php --strict`
 - [ ] 新增 / 重命名工作流的 job 后，回填上表的 check 名称（永远取自 `jobs.<id>.name`）
 
 #### 迁移文件改名 / 删除的协调流程（ER-03）

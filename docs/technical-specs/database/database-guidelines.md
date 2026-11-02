@@ -48,6 +48,8 @@ This document defines mandatory database design and data access rules for the Al
   - A documented rollback or remediation plan.
   - Test coverage that exercises the expected data shapes.
 - Application code, migrations, and design documents **MUST** stay in sync; any intentional divergence **MUST** be recorded in `docs/report/*` and, if work is pending, in the Backlog.
+- Data migrations (inserting rows that are expected to exist long-term, e.g. permissions / menus) **MUST** be verifiable as "intent ↔ actual rows": `scripts/check-migration-data.php` extracts `'slug' => 'resource.action'` payloads and `menus` payloads from the migration sources and compares them against `permissions.slug` / `menus.name`, reporting each miss with the migration file, line and key. New migrations are therefore covered automatically — no second hand-written expectation list. Only migrations recorded as **applied** in the ledger are compared.
+- The data consistency check **MUST** be run against a real (existing) database locally; CI only runs it on a freshly migrated database and cannot detect drift in a long-lived database: `docker exec alkaid-backend php scripts/check-migration-data.php --strict`.
 
 ## 7. Legacy vs Low-code Data Model
 

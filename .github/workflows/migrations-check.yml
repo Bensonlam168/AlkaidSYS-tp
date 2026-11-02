@@ -1,18 +1,28 @@
 name: Migrations Check
 
-# 迁移安全门禁 | Migration safety gate
+# 迁移门禁 | Migration gates
 #
-# ⚠️ 覆盖范围（先读这里，再看结论）：
-#   本工作流只跑 scripts/check-migrations.php 的**静态部分**：
-#     A. 迁移文件名的时间戳前缀唯一
-#     C. 每个迁移类都实现 up()/down()，且不得出现 change()（Phinx 见到 change() 会忽略 down，使 down 成为死代码）
-#   以下三项**不跑**，因为它们都需要「哪些迁移已应用」这个基准：
-#     B. 未应用迁移的 version 不得小于已应用的最大 version（否则无参 rollback 会打错迁移）
-#     D. 未应用迁移里的 tenant_id 声明必须与 tenants.id 一致（integer/biginteger + signed => false）
-#     E. 无默认值的 tenant_id 必须带 tenant_id → tenants.id 外键（读 information_schema）
+# 本工作流有**两个** job，覆盖范围不同。读日志时先确认是哪一个再下结论：
 #
-# 为什么 CI 跑不了 B/D/E（不是省事，是造不出前置状态）：
-#   1. GitHub Actions 的全新 MySQL 里 `migrations` 表是空的。B 没有「已应用」概念 → 恒真；
+#  ① migrations-check        → check 名称：`Migration Safety Check`        （纯静态，不需要 DB）
+#  ② migration-data-check    → check 名称：`Migration Data Consistency Check`（真跑迁移 + 真连库）
+#
+# =============================================================================
+# ① Migration Safety Check —— 纯静态
+# =============================================================================
+# 只跑 scripts/check-migrations.php 的**静态部分**：
+#   A. 迁移文件名的时间戳前缀唯一
+#   C. 每个迁移类都实现 up()/down()，且不得出现 change()（Phinx 见到 change() 会忽略 down，使 down 成为死代码）
+# 外加 scripts/check-migration-data.php 的**源码侧提取**（--no-db：只验证 token 提取能跑通，不比对数据）。
+#
+# 以下项**不跑**，因为它们都需要「哪些迁移已应用」这个基准：
+#   B. 未应用迁移的 version 不得小于已应用的最大 version（否则无参 rollback 会打错迁移）
+#   D. 未应用迁移里的 tenant_id 声明必须与 tenants.id 一致（integer/biginteger + signed => false）
+#   E. 无默认值的 tenant_id 必须带 tenant_id → tenants.id 外键（读 information_schema）
+#   F. migrations 表里的每条 applied 记录都必须有对应迁移文件
+#
+# 为什么 job ① 跑不了 B/D/E/F（不是省事，是造不出前置状态）：
+#   1. GitHub Actions 里的全新 MySQL 中 `migrations` 表是空的。B 没有「已应用」概念 → 恒真；
 #      D 会把**全部历史迁移**当成「未应用」重审一遍 —— 实测会报 8 条无法回改的历史遗留错误
 #      （20251216000001_create_workflow_tables.php ×5、20251217000005_create_hook_monitor_tables.php ×3），
 #      于是 --strict 恒红，门禁失去意义（报警疲劳后就会有人把它关掉）。
@@ -22,21 +32,43 @@ name: Migrations Check
 #      —— 第一条迁移就失败，`migrations` 表停在 0 行。
 #      R43 已把它改名为 20251126000001_add_casbin_manage_permission.php（14 位，类名不变），
 #      并给 20251219000002_add_dept_and_menu_permissions.php 的 role_id=1 分配加了 roles 存在性守卫，
-#      现在新库 `migrate:run` 可以跑通（35 条迁移 / 29 张表，实测见 R43 报告）。
-#      但本工作流**不执行迁移**，所以 CI 里依然没有 applied 基准，下面 --no-db 的语义不变。
+#      现在新库 `migrate:run` 可以跑通（R43 实测：37 条迁移全部 migrated，可对照 job ② 的日志）。
+#      但 **job ① 不执行迁移**，所以它那里依然没有 applied 基准，下面 --no-db 的语义不变。
 #
-# 因此这里**显式**传 `--no-db`（语义 = 「本环境没有 applied 状态」，不是「允许跳过检查」）：
-# 脚本会打印「跳过（--no-db）」而不是降级为告警，日志不会把「只验了 A/C」伪装成「全量通过」。
-# 反过来，不传 `--no-db` 时语义完全不变：连不上库仍是告警，`--strict` 下仍会 exit 1。
+# 因此 job ① 里**显式**传 `--no-db`（语义 = 「本环境没有 applied 状态」，不是「允许跳过检查」）：
+# 脚本会打印「跳过（--no-db）」而不是降级为告警，日志不会把「只验了静态部分」伪装成「全量通过」。
+# 反过来，不传 `--no-db` 时语义完全不变：连不上库一律按失败处理（fail-closed），见 job ②。
 #
-# ⚠️ 本地 / 提交前必须跑**全量**（会连库读 migrations 表与 information_schema）：
+# =============================================================================
+# ② Migration Data Consistency Check —— 真跑迁移 + 真连库（R51）
+# =============================================================================
+# 为什么需要它：开发库出现过两次「迁移在 `migrations` 表里记为已应用，但它插入的数据一行都不存在」
+#   （20251218000001 缺 12 条 tenant.*/role.*/permission.*/user.* 权限；
+#     20251219000002 缺 6 条 dept.*/menu.* 权限），而当时 CI 与本地**都没有任何门禁**能发现它，
+#   事故只以「后台 403 / 2002」的形式暴露。
+# 这类状态用单元测试、静态检查都抓不到，必须「真建一遍库 → 比对迁移意图与库里的实际行」。
+# 所以 job ② 会：
+#   起 MySQL 8.0 service → composer install → 写 .env → php think migrate:run →
+#   php scripts/check-migration-data.php --strict（**不带** --no-db，即真实比对）
+#
+# ⚠️ 必须同时起 **redis** service：`config/session.php` 的 store 是 redis，
+#    `app/provider/RedisHealthCheckService::boot()` 会在**每次 App::initialize()** 做一次读写自检，
+#    缺 Redis 时 boot 直接抛异常。而框架会把未捕获异常渲染后以 **exit 0** 结束
+#    （实测 `php think migrate:run` 在 Redis 不可达时打印异常栈、退出码却是 0），
+#    所以「没起 redis」不会被它的退出码暴露 —— 但 check-migration-data.php 会把这种情况判成失败
+#    （它把「读不到库现状」视为失败，而不是通过），这正是 fail-closed 的用处。
+#
+# ⚠️ 本地 / 提交前必须跑**全量**（job ② 的等价命令，会连库读 migrations / permissions / menus）：
+#     docker exec alkaid-backend php scripts/check-migration-data.php --strict
 #     docker exec alkaid-backend php scripts/check-migrations.php --strict
+#   CI 的 job ② 只能在**全新库**上验证「迁移意图 ↔ 实际行」，抓不到开发库自己的漂移；
+#   本地全量才是唯一能覆盖「既有库被外部改动」的位置。
 #
 # R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
 #   带 `paths:` 的工作流一旦被设为 required，未命中路径的 PR 不会触发 check，GitHub 会一直显示
 #   `Expected — Waiting for status to be reported` 且永不结束 —— PR 反而因此永久无法合并
 #   （详见 AGENTS.md「合并前必须通过的配置类门禁」）。
-#   代价：每个 PR 多跑一次秒级纯静态校验（本工作流不需要 composer install、不需要 DB，约 15 秒）。
+#   代价：每个 PR 多跑一次纯静态校验（job ①，约 15 秒）+ 一次真跑迁移的校验（job ②，约 2-3 分钟）。
 
 on:
   pull_request:
@@ -46,6 +78,9 @@ on:
       - main
 
 jobs:
+  # ===========================================================================
+  # ① 纯静态：A/C + 源码侧提取（不需要 DB，不装 composer 依赖）
+  # ===========================================================================
   migrations-check:
     name: Migration Safety Check
     runs-on: ubuntu-latest
@@ -62,7 +97,121 @@ jobs:
           coverage: none
 
       - name: "Run migration safety check (static only: A/C)"
-        # --no-db：CI 没有 applied 状态，B/D/E 显式跳过（见文件头「覆盖范围」）。
+        # --no-db：本 job 没有 applied 状态，B/D/E/F 显式跳过（见文件头「①」）。
         # 有意不装 composer 依赖：--no-db 下脚本不会 require vendor/autoload.php，也不会建库连接。
         # 不要在这里加 `|| true` / `continue-on-error` —— A/C 的错误必须真的挡住合并。
         run: php scripts/check-migrations.php --strict --no-db
+
+      - name: "Run migration data check (source-side extraction only, --no-db)"
+        # 本步骤只验证「迁移源码里的数据意图能被正确提取」（token_get_all 解析 + 计数），
+        # 全程不连库；真实的数据比对在 job ② 里做。不要因为它叫 --no-db 就删掉：
+        # 它能在没有 DB 的环境里立刻发现「提取器被新语法打断」这类回归。
+        run: php scripts/check-migration-data.php --strict --no-db
+
+  # ===========================================================================
+  # ② 真跑迁移 + 真连库：迁移意图 ↔ 实际行 的一致性比对（R51）
+  # ===========================================================================
+  migration-data-check:
+    name: Migration Data Consistency Check
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: alkaid_sys
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+      # 必须：App::initialize() 会通过 RedisHealthCheckService 做一次 Redis 读写自检
+      #（config/session.php 的 store 固定为 redis）。缺它会 boot 失败。
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, redis, mbstring, xml, bcmath
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      # 迁移要经过 think\App::initialize()，因此必须有 vendor/ 与 .env；
+      # 与 backend-php-cs-fixer.yml 的 phpunit job 保持同一套安装参数（含忽略 swoole 扩展）。
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole
+
+      - name: Create .env for the service containers
+        # 为什么不用 `sed -i 's/DB_HOST=.*/..'`：`.env.example` 的键值行**带空格**
+        # （形如 `DB_HOST = mysql`），那种写法一个都匹配不上，sed 会**静默不生效**，
+        # 之后 migrate:run 连到不存在的主机 mysql，报错还很难懂。
+        # 这里统一用「键名 + 可选空白 + =」的形态匹配，并在末尾用 grep 断言真的改到了。
+        run: |
+          cp .env.example .env
+          sed -i -E 's|^DB_HOST[[:space:]]*=.*|DB_HOST = 127.0.0.1|' .env
+          sed -i -E 's|^DB_NAME[[:space:]]*=.*|DB_NAME = alkaid_sys|' .env
+          sed -i -E 's|^DB_USER[[:space:]]*=.*|DB_USER = root|' .env
+          sed -i -E 's|^DB_PASS[[:space:]]*=.*|DB_PASS = root|' .env
+          # APP_ENV 与 REDIS_* 在 .env.example 里没有对应行，直接追加（与 docker compose 的 dev 语义一致）
+          { echo 'APP_ENV = dev'; echo 'REDIS_HOST = 127.0.0.1'; echo 'REDIS_PORT = 6379'; } >> .env
+          # 断言：任何一条没生效都立刻失败，而不是等到 migrate:run 报一个看不懂的连接错误
+          grep -qx 'DB_HOST = 127.0.0.1' .env
+          grep -qx 'DB_NAME = alkaid_sys' .env
+          grep -qx 'APP_ENV = dev' .env
+          grep -qx 'REDIS_HOST = 127.0.0.1' .env
+          # .env 必须能被 parse_ini_file 解析（注释里的半角括号/等号会让整份文件静默失效）
+          php -r 'var_dump(parse_ini_file(".env", true, INI_SCANNER_RAW) !== false);' | grep -qx 'bool(true)'
+
+      - name: Wait for MySQL and Redis to be ready
+        run: |
+          for i in $(seq 1 60); do
+            mysqladmin ping -h127.0.0.1 -uroot -proot --silent && break
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
+          mysqladmin ping -h127.0.0.1 -uroot -proot --silent
+          for i in $(seq 1 30); do
+            (echo > /dev/tcp/127.0.0.1/6379) >/dev/null 2>&1 && break
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+          (echo > /dev/tcp/127.0.0.1/6379)
+
+      # 迁移失败必须阻断，不设 continue-on-error。
+      # 注意：框架会把未捕获异常吞成 exit 0（Redis 不可达时就实测如此），
+      # 所以「这一步绿」并不足以证明库建好了 —— 下一步的检查会真正读库并 fail-closed。
+      - name: Run database migrations on a fresh database
+        run: php think migrate:run
+
+      # 本 job 的落点：**不带** --no-db 的真实比对。
+      # 不要加 `|| true` / `continue-on-error`：缺失的权限行正是要挡住的合并条件。
+      - name: "Run migration data check (real: applied migrations ↔ actual rows)"
+        run: php scripts/check-migration-data.php --strict
