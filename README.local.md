@@ -46,16 +46,22 @@ docker ps --filter "name=alkaid-backend"
 docker exec -it alkaid-backend php think test
 
 # 运行特定测试文件
-docker exec -it alkaid-backend php think test tests/Feature/AuthTest.php
+# 注意：php think test 不接受位置参数（`php think test tests/Feature/AuthTest.php` 会报
+#   Too many arguments.），文件路径必须通过 --passthru 透传给 PHPUnit
+docker exec -it alkaid-backend php think test --passthru tests/Feature/Auth/AuthLoginRefreshTest.php
 
 # 运行特性测试套件
 docker exec -it alkaid-backend php think test --testsuite=Feature
 
 # 过滤运行单个测试方法
-docker exec -it alkaid-backend php think test tests/Feature/AuthTest.php --filter=test_login
+# --filter 只按**方法名/类名**过滤（不接受文件路径），配合 --testsuite 限定范围更清晰
+docker exec -it alkaid-backend php think test --testsuite=Feature --filter=testLoginReturnsTokensAndUsesJwtEnv
 
 # 生成覆盖率报告（示例：HTML）
-docker exec -it alkaid-backend php think test --coverage-html
+# ① 必须带目标目录：写成 `--coverage-html`（不带值）时该选项会被静默忽略，什么都不生成
+# ② 必须先有覆盖率驱动（xdebug 或 pcov）：当前 alkaid-backend 容器两者都没装，
+#    直接跑会报 "No code coverage driver available" 并以 exit 1 结束
+docker exec -it alkaid-backend php think test --coverage-html=coverage/
 ```
 
 在 CI 或非交互环境中，可以去掉 `-it`：

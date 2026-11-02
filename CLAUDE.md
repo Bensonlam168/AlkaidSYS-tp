@@ -216,7 +216,16 @@ graph LR
 ### 测试规范
 - **单元测试**: 使用 PHPUnit 11.5+
 - **覆盖率要求**: 核心模块 > 80%
-- **测试目录**: `tests/Feature/`（功能测试）、`tests/Unit/`（单元测试）
+- **测试目录**（与 `phpunit.xml` 的 5 个 testsuite 一一对应）：
+  - `tests/Unit/` —— 单元测试（`--testsuite=Unit`）
+  - `tests/Feature/` —— 功能/接口测试（`--testsuite=Feature`，依赖数据库）
+  - `tests/Integration/` —— 集成测试（`--testsuite=Integration`，验证跨组件落库/缓存等真实协作）
+  - `tests/E2E/` —— 端到端测试（`--testsuite=E2E`，如多租户隔离）
+  - `tests/Legacy/` —— **静态守卫类**测试（`--testsuite=Legacy`）：不是业务行为用例，而是扫描全仓源码的「守门员」，
+    如 `LegacyCollectionUsageGuardTest`（禁止新代码引用已删除的 legacy 低代码栈）、
+    `WithoutTenantScopeUsageGuardTest`（禁止未评审的 `BaseModel::withoutTenantScope` 调用）
+  - `tests/Benchmark/`、`tests/Performance/` **不属于**上述 5 个套件；基准测试走 `phpunit.performance.xml`，
+    打了 `#[Group('performance')]` 的墙钟阈值用例被 `phpunit.xml` 的 `<groups><exclude>` 排除在功能回归之外
 
 ---
 
@@ -299,15 +308,20 @@ pnpm dev
 docker exec -it alkaid-backend php think test
 
 # 运行指定测试文件
-docker exec -it alkaid-backend php think test tests/Unit/SomeTest.php
+# 注意：php think test 不接受位置参数（写成 `php think test tests/Unit/XxxTest.php` 会报
+#   Too many arguments.），文件路径必须通过 --passthru 透传给 PHPUnit
+docker exec -it alkaid-backend php think test --passthru tests/Unit/Command/EnvRequirementCatalogConsistencyTest.php
 
-# 运行指定目录的测试
-docker exec -it alkaid-backend php think test tests/Unit/Swoole/
+# 运行指定目录的测试（--passthru 同样接受目录）
+docker exec -it alkaid-backend php think test --passthru tests/Unit/Command/
 
 # 运行带过滤器的测试
-docker exec -it alkaid-backend php think test --filter=testMethodName
+# --filter 只按**方法名/类名**过滤，不能与文件路径混用；建议同时用 --testsuite 限定范围
+docker exec -it alkaid-backend php think test --testsuite=Feature --filter=testLoginReturnsTokensAndUsesJwtEnv
 
 # 运行测试并生成覆盖率报告
+# ⚠️ 前置条件：PHPUnit 需要覆盖率驱动（xdebug 或 pcov）。当前 alkaid-backend 容器**两者都没装**
+#   （php -m 里查不到），不加驱动直接跑会报 "No code coverage driver available" 并以 exit 1 结束
 docker exec -it alkaid-backend php think test --coverage-html=coverage/
 ```
 
