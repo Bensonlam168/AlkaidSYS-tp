@@ -322,18 +322,117 @@ Regression guard: `tests/Feature/Route/AdminRouteReachabilityTest.php` replays a
 every `v1/admin/**` rule through the framework's own `Route::check()` and asserts that the matched
 target equals the registered target.
 
-**Other shadowing of the same kind (confirmed by ER-05, deliberately not fixed here — out of scope)**;
-reproduce by temporarily setting that test's `AUDIT_PREFIX` to `/v1/`:
+**Other shadowing of the same kind**: ER-05 only fixed the four `v1/admin/**` rules inside its own
+scope; the remaining 7 (workflow / lowcode) were registered and are fixed by a follow-up package,
+see §3.7.
 
-| Shadowed route | Actually matched | Impact |
+### 3.6 Permission definitions (permission codes) are immutable (ER-07)
+
+> Status: ✅ implemented — `app/controller/admin/PermissionController.php`;
+> regression: `tests/Feature/Admin/PermissionCodeImmutabilityTest.php`.
+
+#### 3.6.1 "Rewriting a permission definition" = equivalent privilege escalation
+
+Authorization keys on `permission.resource + ':' + permission.action` (see §3.5.2), and
+`permissions` is a **global catalog** (the table has no `tenant_id`). The historical
+`PUT /v1/admin/permissions/:id` wrote the request's `slug` / `resource` / `action` straight to the DB:
+
+```
+1. the attacker holds permission.write and owns a role bound to the row of role.write (id=N)
+2. PUT /v1/admin/permissions/N  {"resource":"tenant","action":"write"}
+3. not a single row in role_permissions changes
+4. from the next request on, the attacker holds tenant:write   <- escalation, affecting every tenant
+```
+
+Step 2 does not even need `role.write`: `permission.write` alone is enough to turn any row into
+any capability code.
+
+#### 3.6.2 Fix: the code is immutable
+
+- `update()` accepts **only** `name` and `description`;
+- `slug` / `resource` / `action` present **and different** from the stored value → **HTTP 422**
+  with message `permission.code_immutable` ("Permission code is immutable; change it through a
+  migration") plus field-level `data.errors`; **nothing is written**;
+- the same fields with the **same** values → ignored, the update proceeds (idempotent-friendly:
+  the admin UI posts the whole object back, so rejecting identical values would also block the
+  legitimate "change only the description" flow);
+- comparison uses normalized strings (`null` equals `''`, trimmed), so "the user cleared the input"
+  is not mistaken for a rewrite (clearing `role` to `''` *is* a rewrite → still 422);
+- incidentally fixes a silent data loss: the old code built a new entity with `description = null`
+  whenever the request omitted it, wiping the existing description; omitted fields now keep the
+  stored value.
+
+`Permission::fromArray(['resource'=>..,'action'=>..])` is **kept**: the entity has no
+`resource`/`action` setters, so `fromArray()` is the only assignment path, used by the create path
+and by `PermissionRepository::hydrate()` on every read; only "update no longer passes request
+values into it" changed.
+
+#### 3.6.3 Does `POST /v1/admin/permissions` need a constraint too? Yes
+
+Conclusion: **yes**, using the same source as the §3.5 grant ceiling
+(`PermissionService::getUserPermissions()`, i.e. exactly what the authorization middleware uses);
+out of scope → **403 / 2002** (`permission.code_not_owned`).
+
+Rationale:
+
+1. Creating is not "rewriting", but `permissions` is a **global catalog**: whoever can write it can
+   inject rows into **every tenant's** grant UI (`GET /v1/admin/permissions/grouped` feeds the
+   "assign permissions to role" checkboxes), with `name` / `description` chosen freely.
+2. It costs no real capability: §3.5 requires the operator to **already hold** a code before it can
+   be granted to any role, and a **newly created code is held by nobody** — so even without this
+   constraint the new row can never be granted and confers nothing, it is pure catalog noise.
+   Genuine new codes go through migrations/seeds (the 12 system permissions were added that way,
+   consistent with the "change it through a migration" message).
+3. Rows whose code cannot be derived (empty `resource`/`action` and no dot in the slug) are
+   rejected with 422 (`permission.code_required`) instead of becoming undeletable noise.
+4. No hard-coded super-admin bypass: the seeded `admin` role holds every permission row, so the
+   check is trivially true for it.
+
+**Accepted side effect**: the frontend "create permission" drawer
+(`frontend/apps/web-antd/src/views/system/permission/modules/form.vue`) can now only re-create codes
+the operator already holds; creating an unreachable code returns 403. This is a product trade-off:
+such rows were already un-grantable after §3.5, so the change turns an invisible failure into an
+explicit rejection. **Not done** (needs frontend/product sign-off): greying out `slug` /
+`resource` / `action` in the edit drawer (they are still editable and will be rejected with 422).
+
+### 3.7 The 7 shadowed workflow / lowcode routes: fixed (ER-07)
+
+Same remedy as §3.5.7: **both the child route and its parent `:id` / `:name` get
+`->completeMatch()`** (adding it to the child alone is not enough: a trailing slash or extra
+segment falls back to the parent prefix match).
+
+| Shadowed route | Matched before | Matched after (measured) |
 | --- | --- | --- |
-| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | **deleting a field deletes the whole collection** |
-| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | same |
-| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | history endpoint unreachable |
-| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | variables endpoint unreachable |
-| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | task form endpoint unreachable |
-| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | trigger logs unreachable |
-| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | **webhook callbacks never fire** |
+| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | `FieldController@delete` |
+| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | `RelationshipController@delete` |
+| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | `WorkflowInstanceController@history` |
+| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | `WorkflowInstanceController@getVariables` |
+| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | `WorkflowTaskController@getForm` |
+| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | `WorkflowTriggerController@logs` |
+| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | `WorkflowTriggerController@webhook` |
+
+Regression guard: `tests/Feature/Route/WorkflowLowcodeRouteReachabilityTest.php` (two layers: replay
+through `Route::check()` and real HTTP judged by response shape / side effects), plus a contract test
+asserting every parameterised rule declares `completeMatch()`.
+
+**Two real defects exposed by the fix** (unrelated to shadowing — these endpoints never worked):
+
+1. `FieldController`'s constructor neither accepted `App` nor called `parent::__construct($app)`, so
+   `$this->request` was `null` → `POST/DELETE .../fields` always returned 500;
+2. `FieldController` / `RelationshipController` used `$collectionName` / `$fieldName` parameters while
+   the route variables are `:name` / `:field` — ThinkPHP binds route variables **by parameter name**
+   and threw `InvalidArgumentException: method param miss:collectionName` (500). Parameters were
+   renamed (`$name` / `$field` / `$relationship`) because the route is the contract; URLs and
+   `docs/technical-specs/api/route-reference.md` are unchanged.
+
+**Webhook auth status (verified)**: `GET|POST /v1/workflow/triggers/webhook/:key` is one of the few
+endpoints that **deliberately has no Auth / Permission middleware** (external callbacks cannot carry
+a JWT). Auth relies on ① the `webhook_key` in the path (32 hex chars, random per trigger);
+② `config.secret`, when set, verified via `X-Webhook-Signature` (HMAC-SHA256, `hash_equals`);
+③ optional `config.allowed_ips` / `config.http_methods` allowlists (default: `POST` only).
+Its only global-middleware dependency is `TenantIdentify`, which falls back to
+`DEFAULT_TENANT_ID` when no `X-Tenant-ID` header is present — **if that variable is unset the
+endpoint fails**, which is a deployment requirement rather than a code defect.
 
 ## 4. Data Security
 

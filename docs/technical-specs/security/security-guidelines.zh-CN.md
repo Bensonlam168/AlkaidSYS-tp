@@ -388,18 +388,114 @@ vs `role.updated` / `用户更新成功`（父级 `update`）。
 回归用例：`tests/Feature/Route/AdminRouteReachabilityTest.php` 用框架自己的
 `Route::check()` 逐条重放 `v1/admin/**` 的样例 URL，断言「命中的目标 == 注册的目标」。
 
-**同类型的其它遮蔽（ER-05 实测确认，本次未修 —— 不在本包范围）**，把该用例的
-`AUDIT_PREFIX` 临时改成 `/v1/` 即可复现：
+**同类型的其它遮蔽**：ER-05 当时只修了本次范围内的四条 `v1/admin/**` 规则，另外 7 条
+（workflow / lowcode）登记在案、由后续包修复，见 §3.7。
 
-| 被遮蔽的路由 | 实际命中 | 后果 |
+### 3.6 权限定义（权限码）不可写（ER-07）
+
+> 实现状态：✅ 已实现 —— `app/controller/admin/PermissionController.php`，
+> 回归用例 `tests/Feature/Admin/PermissionCodeImmutabilityTest.php`。
+
+#### 3.6.1 「改写权限定义」= 等价提权
+
+鉴权认的是 `permission.resource + ':' + permission.action`（见 §3.5.2 的 `resource:action`），
+而 `permissions` 是**全局目录**（该表没有 `tenant_id`）。历史实现里
+`PUT /v1/admin/permissions/:id` 直接把请求里的 `slug` / `resource` / `action` 落库：
+
+```
+① 攻击者持有 permission.write，且自己的角色挂着 role.write 对应的那一行（id=N）
+② PUT /v1/admin/permissions/N  {"resource":"tenant","action":"write"}
+③ role_permissions 一行都没变
+④ 从下一个请求起，他持有 tenant:write          ← 等价提权（且影响所有租户）
+```
+
+注意 ② 甚至**不需要**碰 `role_permissions`，也不需要 `role.write`：`permission.write`
+本身就足以把任意一行"改造"成任意能力的码。
+
+#### 3.6.2 修复：码不可变
+
+- `update()` **只接受** `name` 与 `description`；
+- 请求带 `slug` / `resource` / `action` 且与当前值**不同** → **HTTP 422**，
+  message = `permission.code_immutable`（「权限码不可修改，如需变更请走迁移」），
+  并给出字段级 `data.errors`；**一个字段都不落库**；
+- 请求带这些字段但与当前值**相同** → 忽略并正常更新（幂等友好）：前端编辑抽屉会把
+  整个对象回传，"原样回传"若也报错，等于把「只改描述」这个合法操作连带封死；
+- 比较用"规范化后的字符串"：`null` 与 `''` 等价、去首尾空白，避免把"前端清空输入框"
+  误判成"改码"（反之，把 `role` 清空成 `''` 仍然是一次改写 → 仍然 422）；
+- 顺带修掉一个静默数据丢失：历史实现请求没带 `description` 时会构造一个 description 为
+  `null` 的实体整行覆盖，于是"只改名字"会**清空原有描述**。现在缺省字段一律沿用原值。
+
+`Permission::fromArray(['resource'=>..,'action'=>..])` 的用法**保留**：实体没有
+`resource`/`action` 的 setter，`fromArray()` 是唯一赋值入口，创建路径与
+`PermissionRepository::hydrate()`（每次读库都要把 `resource`/`action` 灌回实体）都依赖它；
+变的只是"更新时不再用请求值去调它"。
+
+#### 3.6.3 新建（`POST /v1/admin/permissions`）是否也要约束：是
+
+结论：**要**，且与 §3.5 的授予边界**同源**（`PermissionService::getUserPermissions()`
+返回的 `resource:action`，也就是鉴权中间件当场用的那一份），越界 → **403 / 2002**
+（`permission.code_not_owned`）。
+
+理由（为什么这不是"多余的一条"）：
+
+1. 「新建」虽不是"改写"，但 `permissions` 是**全局目录**：谁能写它，谁就能往**所有租户**
+   的授权界面（`GET /v1/admin/permissions/grouped` 直接喂给"给角色授权"的勾选框）里塞行；
+   行上的 `name` / `description` 由创建者自由填写，可以伪装成任意能力。
+2. 这一条**不牺牲任何真实能力**：§3.5 的子集校验要求"操作者自己持有该码"才能把它授予
+   任何角色，而**新建的码任何人都还不持有** —— 也就是说，不论有没有本约束，
+   `permission.write` 持有者新建出来的"新码"都**无法被授予**、带不来任何新能力，
+   只会成为目录噪音。真要新增一枚码，正确路径是迁移/种子（本仓库 12 条系统权限就是这么来的，
+   与 3.6.2 的文案「如需变更请走迁移」一致）。
+3. 折算不出权限码的行（`resource`/`action` 皆空，且 slug 里没有点）→ 谁都不可能"持有"它，
+   属于纯脏数据 → 422（`permission.code_required`）直接拒绝，而不是落库后再也删不掉
+   （`delete()` 只在"没人持有"时才允许删，这类行虽然删得掉，但会先污染一轮界面）。
+4. 不含任何硬编码超管绕过：seeded `admin` 角色挂满全部权限行，对它来说这条校验
+   **恒为真**（它本来就持有这些码），无需特判。
+
+**副作用（已知且接受）**：前端 `frontend/apps/web-antd/src/views/system/permission/modules/form.vue`
+的"新建权限"抽屉从此只能"再建一行自己已持有的码"，新建不可达的码会拿到 403。
+这是一条**产品面**取舍：该抽屉创建出来的行在 §3.5 之后本就不可授予（谁都拿不到），
+把它改成显式拒绝只是把"看不见的失效"变成"看得见的拒绝"。
+**未做**（不在本包范围，需要产品/前端确认）：把该抽屉的 `slug` / `resource` / `action`
+在编辑态置灰（当前它们仍可编辑，改动会被后端 422 拒绝并提示"走迁移"）。
+
+### 3.7 workflow / lowcode 的 7 条路由遮蔽：已修（ER-07）
+
+ER-05 登记的 7 条（原表见本文件历史版本）已在本包修复，做法与 §3.5.7 一致：
+**子路由与其父级 `:id` / `:name` 都补 `->completeMatch()`**（只给子路由加不够：
+尾斜杠或多余段匹配不上子路由时会退化回父级前缀匹配）。
+
+| 被遮蔽的路由 | 修复前实际命中 | 修复后命中（实测） |
 | --- | --- | --- |
-| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | **删字段 = 删整张集合** |
-| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | 同上 |
-| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | 历史记录端点不可达 |
-| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | 变量端点不可达 |
-| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | 任务表单端点不可达 |
-| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | 触发器日志端点不可达 |
-| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | **Webhook 回调永远进不去** |
+| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | `FieldController@delete` |
+| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | `RelationshipController@delete` |
+| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | `WorkflowInstanceController@history` |
+| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | `WorkflowInstanceController@getVariables` |
+| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | `WorkflowTaskController@getForm` |
+| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | `WorkflowTriggerController@logs` |
+| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | `WorkflowTriggerController@webhook` |
+
+回归用例：`tests/Feature/Route/WorkflowLowcodeRouteReachabilityTest.php`（两层：用
+`Route::check()` 逐条重放 + 走真实 HTTP 用"响应形状/副作用"判定命中的动作），
+另有一条"带参数的规则必须声明 `completeMatch()`"的约定用例，防未来新增路由再踩。
+
+**修复后暴露的两个真缺陷（与遮蔽无关，是"端点从来没跑通过"）**：
+
+1. `FieldController` 的构造函数没有接收 `App`、也没调 `parent::__construct($app)`，
+   于是 `$this->request` 为 `null` → `POST/DELETE .../fields` 必然 500；
+2. `FieldController` / `RelationshipController` 的动作形参叫 `$collectionName` / `$fieldName`，
+   而路由变量是 `:name` / `:field` —— ThinkPHP 按**参数名**绑定路由变量，
+   直接抛 `InvalidArgumentException: method param miss:collectionName`（500）。
+   已按"路由是契约、形参是实现细节"的原则改形参名（`$name` / `$field` / `$relationship`），
+   URL 与 `docs/technical-specs/api/route-reference.md` 均不变。
+
+**Webhook 鉴权现状（核实结论）**：`GET|POST /v1/workflow/triggers/webhook/:key` 是少见的
+**故意不挂 Auth / Permission 中间件**的端点（外部回调不可能带 JWT），鉴权靠
+① 路径里的 `webhook_key`（32 位十六进制、创建触发器时随机生成）；
+② 触发器 `config.secret` 存在时校验 `X-Webhook-Signature`（HMAC-SHA256，`hash_equals`）；
+③ 可选 `config.allowed_ips` / `config.http_methods` 白名单（默认只允许 `POST`）。
+它唯一依赖的全局中间件是 `TenantIdentify`：请求不带 `X-Tenant-ID` 时回落
+`DEFAULT_TENANT_ID`，**该环境变量未配置时本端点会直接失败** —— 这是部署要求，不是代码缺陷。
 
 ## 4. 数据安全
 
