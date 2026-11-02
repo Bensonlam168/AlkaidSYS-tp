@@ -5,7 +5,36 @@
          colors="true"
          beStrictAboutOutputDuringTests="true"
          failOnRisky="true"
-         failOnWarning="true">
+         failOnWarning="true"
+         failOnEmptyTestSuite="true">
+    <!--
+        ============================================================
+        failOnEmptyTestSuite：一个用例都没跑，就算失败（exit 1）
+        ============================================================
+        PHPUnit 的默认行为是「0 个用例也算通过」：只打印一句 No tests executed!，退出码仍是 0。
+
+        这正是本次修的缺陷：tests/Legacy 之前不在任何 testsuite 里，
+        CI 里那条按类名 filter 的 Legacy 步骤匹配不到任何用例，却一路绿灯 ——
+        两个守卫（LegacyCollectionUsageGuardTest / WithoutTenantScopeUsageGuardTest）
+        长期处于完全空转状态。静态守卫空转比没有守卫更糟：
+        报告里它显示为「已纳入 CI」，实际上一个字节都没扫过。
+
+        打开本项后，下列「静默退化」全部变成红色：
+          1. filter 写错，或类名 / 方法名改名后匹配不到；
+          2. testsuite 名字写错 —— PHPUnit 不会报「套件不存在」，
+             只会安静地跑 0 个用例（这也是当初没被发现的原因之一）；
+          3. 目录被挪走、用例文件被删除或被清空。
+
+        影响面（逐个核对过仓库里的调用点）：
+          - .github/workflows 下的 PHPUnit 调用一共四条：三条按 testsuite 指定
+            （Unit / Feature / Legacy），一条在 env-check 里按文件路径指定；
+            没有任何「按类名 filter」的步骤，因此不存在「本来就匹配不到」的情况；
+          - list-suites / version / help 等命令走的是 Application 里提前 return 的分支，
+            不经过 ShellExitCodeCalculator，所以不受本项影响；
+          - phpunit.performance.xml 是独立配置，不继承本文件，行为不变。
+        代价：本地若故意跑一个匹配不到任何用例的 filter，也会以 1 结束。
+        这是想要的行为 —— 「一条都没跑」和「跑了且通过」必须能被区分开。
+    -->
     <testsuites>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
@@ -18,6 +47,33 @@
         </testsuite>
         <testsuite name="E2E">
             <directory>tests/E2E</directory>
+        </testsuite>
+        <!--
+            ============================================================
+            Legacy：守卫型用例（扫描全仓源码的「守门员」）
+            ============================================================
+            这里放的不是业务行为用例，而是静态守卫：
+              - LegacyCollectionUsageGuardTest：禁止新代码再引用已删除的 legacy 低代码栈
+                （Domain\Model\Collection / Infrastructure\Collection\CollectionManager /
+                Infrastructure\Field\FieldTypeRegistry）；
+              - WithoutTenantScopeUsageGuardTest：禁止未评审的 BaseModel::withoutTenantScope
+                调用（跨租户后门）。
+
+            它们必须进 testsuite，否则永远跑不到：PHPUnit 只认识这里登记的套件，
+            在 tests/Legacy 不在任何套件里的那段时间，CI 里按类名 filter 的步骤
+            匹配不到任何用例却仍是 exit 0 —— 守卫等于不存在。
+
+            进套件后的两个直接效果：
+              1. CI 用 testsuite 名整组跑，新增守卫只要放进 tests/Legacy 就自动生效，
+                 不必再改工作流（按类名 filter 的写法漏一个就是漏一个）；
+              2. 本地 php think test（不带参数）也会跑它们，提交前就能发现违规。
+            代价：全量套件多约 16 至 20 秒（实测单个守卫各约 8 秒，耗时几乎全在递归
+            读取 app/domain/infrastructure/tests/plugins 下的全部 PHP 文件 ——
+            plugins 子树里还含第三方 vendor 源码，共数千个文件）。
+            这是刻意的成本：守卫的价值来自「把全仓扫一遍」，抽稀扫描范围等于自废武功。
+        -->
+        <testsuite name="Legacy">
+            <directory>tests/Legacy</directory>
         </testsuite>
     </testsuites>
     <!--

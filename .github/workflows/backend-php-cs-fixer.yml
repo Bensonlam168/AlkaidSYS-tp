@@ -229,8 +229,22 @@ jobs:
           DB_PASS: root
           REDIS_HOST: 127.0.0.1
 
-      - name: Run Legacy guard
-        run: php think test --filter=LegacyCollectionUsageGuardTest
+      # 跑**整个 Legacy 套件**，不是按类名 filter 某一个类：
+      #   1. 套件里现在有两个守卫（LegacyCollectionUsageGuardTest /
+      #      WithoutTenantScopeUsageGuardTest），filter 一个类就只能守住一半；
+      #   2. 以后新增守卫只要落进 tests/Legacy，这里自动生效，不必再改工作流。
+      #
+      # 上一版的写法是 php think test --filter=LegacyCollectionUsageGuardTest，
+      # 而 tests/Legacy 当时**不在任何 testsuite 里** —— PHPUnit 只认 phpunit.xml 登记的套件，
+      # 于是这条步骤匹配不到任何用例，打印 No tests executed! 之后仍然 exit 0，
+      # 两个守卫长期空转（「已纳入 CI」是假的）。
+      # 现在两道防线同时生效：phpunit.xml 里登记了 Legacy 套件（能跑到），
+      # 且开了 failOnEmptyTestSuite（跑不到就以 1 结束，不会再假绿）。
+      #
+      # 与上面两条 step 不重复：本 job 的 Unit / Feature 是分开的套件，
+      # 全量 php think test（不带 --testsuite）才会把三个套件一起跑一遍。
+      - name: Run Legacy guard suite
+        run: php think test --testsuite=Legacy
         env:
           APP_ENV: testing
 

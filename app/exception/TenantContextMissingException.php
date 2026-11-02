@@ -121,6 +121,14 @@ class TenantContextMissingException extends RuntimeException
      *      而 CLI / 队列场景下 `areScopesEnabled()` 默认已经是 false，本异常根本不会被抛出
      *      （除非显式开了 `ENABLE_TENANT_SCOPES_IN_CLI=true`，那属于调用方主动选择的严格模式）。
      *
+     * 文案约束（改文案前必读）：第（3）条建议里引用跨租户能力时，刻意写成
+     * 「`Model::withoutTenantScope` 方法」而**不带左括号**。因为
+     * `tests/Legacy/WithoutTenantScopeUsageGuardTest` 用 `strpos` 扫源码，
+     * 找的是「箭头 / 双冒号 + 方法名 + 左括号」这种调用骨架，它**不区分字符串字面量** ——
+     * 把调用形态写进异常文案就会被判成真实调用而报红。
+     * 不要为此把本文件加进守卫白名单：白名单只放「真实但经评审的调用」，
+     * 用它豁免文案会让守卫对真实调用也一起失明。
+     *
      * @param string         $modelClass 触发作用域的模型类名（便于直接定位到代码）
      * @param string         $table      模型对应的数据表名（取不到时传空串）
      * @param Throwable|null $previous   上游异常（如列探测 / 上下文探测失败）
@@ -137,7 +145,8 @@ class TenantContextMissingException extends RuntimeException
             . '（1）确认该查询所处的路由是否经过全局中间件（`app/middleware.php` → `TenantIdentify`）；'
             . '（2）确认调用方是否携带合法的 `X-Tenant-ID` 请求头（正整数）；'
             . '（3）若该查询确实需要跨租户聚合（如后台报表），请显式使用 '
-            . '`Model::withoutTenantScope()` 把它排除在作用域之外，不要依赖「上下文缺失」这种隐式行为。';
+            // 文案刻意不带左括号（详见本方法 docblock 的「文案约束」一段）
+            . '`Model::withoutTenantScope` 方法把它排除在作用域之外，不要依赖「上下文缺失」这种隐式行为。';
 
         return new self($message, ErrorCode::PARAMETER_MISSING, self::REASON_REQUEST, $previous);
     }

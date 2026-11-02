@@ -36,6 +36,7 @@ Backend（全部命令必须在 `alkaid-backend` 容器内执行，保持与 CI 
 - Tail logs: `docker logs -f alkaid-backend`
 - Run tests: `docker exec -it alkaid-backend php think test [--testsuite=Feature]`
 - **改动生效规则**：`alkaid-backend` 是 Swoole **常驻进程**（非 PHP-FPM）。`app/**`、`route/**` 改完约 2–5 秒自动重载（仅 `APP_DEBUG=true` 时）；`config/**` 改完用 `docker kill -s USR1 alkaid-backend`；`config/swoole.php` 必须 `docker restart alkaid-backend`。详见 `.agent/workflows/alkaidsys-dev.md` §5。
+- **boot 期失败必须退出非 0**：任何在 `Service::boot()` 里抛异常的守卫，必须在 `throw` 前调用 `AppService::markBootFailed()`；否则 `php think <命令>` 会以 0 退出（框架只渲染异常、不改退出码），部署脚本 `cmd || exit 1` 会误判成功。约定与可抄示例见 `docs/technical-specs/deployment/environment-validation.zh-CN.md` §11。
 
 Frontend:
 - Install: `cd frontend && corepack enable && pnpm install`
@@ -49,7 +50,11 @@ Frontend:
 - Frontend: Prettier/ESLint/Stylelint；可用 `cd frontend && pnpm lint` / `pnpm format`（见 `frontend/lefthook.yml`）。
 
 ## Testing Guidelines
-- Backend：`docker exec -it alkaid-backend php think test`，可加 `--testsuite=Feature` 或指定文件；迁移同样通过 `docker exec -it alkaid-backend php think migrate:*`。
+- Backend：`docker exec -it alkaid-backend php think test`，可加 `--testsuite=Feature` 或 `--filter=<类名>`；迁移同样通过 `docker exec -it alkaid-backend php think migrate:*`。`phpunit.xml` 共五个套件：`Unit` / `Feature` / `Integration` / `E2E` / `Legacy`。
+- 静态守卫类测试放 `tests/Legacy`（`Legacy` 套件），如 `LegacyCollectionUsageGuardTest`、`WithoutTenantScopeUsageGuardTest`。CI 用 `php think test --testsuite=Legacy` **整组**跑：新增守卫只要落进该目录就自动生效，不必再改工作流。
+- **「一条都没跑」必须变红**：`phpunit.xml` 已开 `failOnEmptyTestSuite` —— filter 写错、套件名写错、目录被挪走、用例被删空，都会以 **exit 1** 结束，而不是打印一句 `No tests executed!` 之后绿灯。
+  事故背景：`tests/Legacy` 曾不在任何 testsuite 里，CI 却按类名 filter 它，于是两个守卫长期空转，「已纳入 CI」是假的。
+  新增「按类名 filter」的 CI 步骤前，先在本地跑一遍确认它真能匹配到用例。
 - Frontend：`cd frontend && pnpm test:unit`。
 - 命名：测试放在 `tests/**`，使用 `*Test.php`；CI 还会检查 `php think lang:check` 与 `php think route:verify`。
 
@@ -67,7 +72,7 @@ Frontend:
 | --- | --- | --- | --- | --- | --- |
 | 文档一致性 | `.github/workflows/docs-check.yml` | `Docs Check` | `docs-check` | **Documentation Consistency** | `php scripts/check-docs.php --strict` |
 | PHPUnit 配置一致性 | `.github/workflows/phpunit-config-check.yml` | `PHPUnit Config Check` | `phpunit-config-check` | **PHPUnit Config Consistency** | `php scripts/check-phpunit-config.php --strict` |
-| `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict` |
+| `.env.example` 一致性 | `.github/workflows/env-check.yml` | `Env Example Check` | `env-example-check` | **Env Example Consistency** | `php scripts/check-env-example.php --strict` → `composer install` → `./vendor/bin/phpunit tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php`（后半段是本 check 的自我校验，见下） |
 | 语言包一致性 | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `lang-check` | **Language Pack Consistency Check (i18n)** | `php think lang:check` |
 | 迁移安全（**仅静态**） | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migrations-check` | **Migration Safety Check** | `php scripts/check-migrations.php --strict --no-db`（只跑 A/C，见下） |
 | 迁移数据一致性 | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migration-data-check` | **Migration Data Consistency Check** | 起 MySQL + Redis service → `php think migrate:run` → `php scripts/check-migration-data.php --strict`（**不带** `--no-db`，见下） |
@@ -118,7 +123,14 @@ Settings → Branches → Branch protection rule（或 Rulesets）
 （required 的语义是「必须出现且为 success」，「不出现」等价于永远 pending）。
 现已**删除这三份工作流的 `paths:` 过滤**（`push.branches` 保留 `develop` / `main` 不变），
 因此这三个 check 对每个 PR 都会给出结论，可以安全地勾选为 required。
-代价：每个 PR 都会多跑三次**秒级纯静态校验**（只读 Markdown / XML / 源码，无 DB、无网络），CI 分钟数影响可忽略。
+代价：每个 PR 都会多跑三次配置类校验，CI 分钟数影响可忽略。
+其中 `docs-check` 与 `phpunit-config-check` 是**秒级纯静态**校验（只读 Markdown / XML / 源码，无 DB、无网络）；
+`env-check` 是**两段式**：前半段同样静态（解析 `.env.example` / `.env.production.example`），
+后半段 `composer install` + 跑一个 PHPUnit 用例文件（约 1 分钟，需要网络取依赖）。
+后半段不可省：检查 D 的键清单来自 `EnvRequirementCatalog::templateRequiredKeys()`，
+把 catalog 的 `template_required` 清空时脚本会跟着少查键、**原地保持绿色** ——
+门禁自己看不见自己被废掉，只有那 6 个一致性用例能看见
+（见 `.github/workflows/env-check.yml` 头部注释）。
 R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述三份保持一致。
 
 历史说明（为什么当初会有这条）：三份工作流原本用 `paths:` 省 CI 分钟数 ——

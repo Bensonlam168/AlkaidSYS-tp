@@ -12,7 +12,23 @@ name: Env Example Check
 #   A. 可解析（失败时给出语法错误行号与原文）
 #   B. 无伪键
 #   C. 注释行无 ASCII 括号/引号
-#   D. 必需键存在（DB_HOST / DB_NAME / DB_USER / DB_PASS / DB_CHARSET / JWT_SECRET）
+#   D. 必需键存在（键清单来自 app/support/EnvRequirementCatalog::templateRequiredKeys()）
+#
+# 第二件事：跑「模板必需键」的一致性用例 | Also runs the template-required consistency test
+#
+# 为什么本 job 必须自己跑用例，而不是只依赖 Backend CI 里的 php think test：
+#   检查 D 读的是 EnvRequirementCatalog::templateRequiredKeys()。这是**刻意的单一真相源**，
+#   但它同时意味着「把 catalog 的 template_required 清空/改漂移」时，脚本会跟着少查几个键，
+#   于是**原地保持绿色** —— 门禁自己看不见自己被废掉。
+#   能看见的只有 tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php（6 个用例：
+#   键集合与顺序被钉死、每个生产键必须显式表态、两份模板必须都含这些键、
+#   脚本代码里不得再出现硬编码键名、脚本运行时确实消费 catalog、无 vendor 的干净进程仍通过）。
+#   把它放在**同一个 job**（而不是新增一个 job）是有意的：本 job 已是被设为 required 的
+#   `Env Example Consistency`，加一步就自动受分支保护约束；新增 job 若没人去仓库设置里勾选
+#   required，就只是「跑过」，不阻止合并（见 AGENTS.md「合并前必须通过的配置类门禁」）。
+#
+# 代价（直说）：这一步需要 composer install，于是本 check 不再是「无网络的秒级纯静态校验」。
+#   这是必要的取舍 —— 一个不校验自身规则的静态门禁，等价于没有门禁。
 
 # R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
 #
@@ -20,9 +36,10 @@ name: Env Example Check
 #   「声明了 paths: 且本次 PR 未命中这些路径」的工作流，会一直显示
 #   `Expected — Waiting for status to be reported` 且永不结束 —— 未命中路径的 PR 反而
 #   因此永久无法合并（详见 AGENTS.md「合并前必须通过的配置类门禁」）。
-# 代价：每个 PR 都会跑一遍。本门禁是秒级纯静态校验（只读 .env.example 与脚本源码）。
+# 代价：每个 PR 都会跑一遍。
 # 历史：此前 pull_request 与 push 都带 paths:（`.env.example`、`scripts/check-env-example.php`、
 #   本工作流自身、`AGENTS.md` —— 后者因为规则原文与自查命令写在那里，规则变更时应连带复跑）。
+# 加测试步骤后仍然**不能**加回 paths:：任何一个 PR 不触发，required check 就会永久 Expected。
 
 on:
   pull_request:
@@ -45,8 +62,56 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.2'
+          # 与 Backend CI 的 php-cs-fixer job 取同一组扩展：下面的 composer install
+          # 要过 composer.lock 的平台检查（只忽略 ext-swoole，其它扩展必须真实存在）。
+          extensions: pdo_mysql, redis, mbstring, xml, bcmath, sockets, openssl, curl, fileinfo
           coverage: none
 
       - name: Run .env.example consistency check
         # --strict：注释里的软字符（' 与 ]）也只提示不允许通过，与 AGENTS.md 规则对齐
         run: php scripts/check-env-example.php --strict
+
+      # ----------------------------------------------------------------------
+      # 一致性用例：本 check 自己的「自我校验」
+      #
+      # 刻意排在静态检查**之后**：静态检查不需要 vendor，最快失败路径放最前面；
+      # 用例要 composer install，失败代价更高，所以放后面。
+      # ----------------------------------------------------------------------
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        # 与其它 job 一致：ext-swoole 只在常驻进程里用到，本 job 不需要编译它
+        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole
+
+      - name: Run template-required key consistency test
+        # 为什么用 ./vendor/bin/phpunit + 文件路径，而不是 php think test --filter=类名：
+        #   1. 这条用例按设计「不需要 App / DB / Redis」（见用例类注释：被测对象是静态规则表
+        #      加一个纯 PHP 脚本，起子进程是为了让「没有 vendor autoload」这件事真的成立）。
+        #      本 job 既没有 MySQL/Redis service，也不创建 .env，走 php think test 会先 boot
+        #      整个框架（含 boot 期守卫），等于给这一步引入与断言无关的失败模式；
+        #   2. 文件路径比类名更精确：类被改名时是「文件不存在」的硬错误（exit 2），
+        #      而不是一个可能匹配到别的类的模糊 filter。
+        #
+        # 为什么还要 grep 用例数（关键，别删）：
+        #   phpunit.xml 已开 failOnEmptyTestSuite="true"，所以「一个用例都没跑」已经会 exit 1，
+        #   `No tests executed!` 不再是假绿。但它看不见「文件还在、用例被删到只剩 1 条」——
+        #   临时删掉 5 个用例，PHPUnit 照样 OK。这个数字就是**刻意的下限断言**：
+        #   增删用例时同步改这个数字，否则本步骤变红。宁可红一次，也不要静默少跑。
+        #   （tee + pipefail：phpunit 失败时管道整体失败，不会因为 tee 成功而变绿。）
+        run: |
+          set -o pipefail
+          ./vendor/bin/phpunit tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest.php --colors=never | tee /tmp/env-template-consistency.log
+          grep -qF 'OK (6 tests,' /tmp/env-template-consistency.log || {
+            echo "::error::用例数不符：期望 6 条用例全部通过（实际输出见上）。若刚刚增删了用例，请同步更新本步骤里的数字。"
+            exit 1
+          }
