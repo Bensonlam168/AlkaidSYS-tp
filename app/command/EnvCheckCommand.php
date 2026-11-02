@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace app\command;
 
 use app\AppService;
+use app\support\EnvRequirementCatalog;
 use think\console\Command;
 use think\console\Input;
 use think\console\input\Option;
@@ -45,6 +46,17 @@ use think\console\Output;
  * 脱敏（硬要求）：本命令的输出会进 CI 日志，口令 / 密钥类键（键名含 PASS / SECRET / PASSWORD /
  * TOKEN / KEY）一律只显示「前 2 个字符 + 总长度」，绝不打印完整值。
  *
+ * ## 「生产必需项」的规则与判定**不在本文件**（单一真相源）
+ *
+ * 上面这些规则的定义（哪些键、各自什么取值规则、怎么改）与求值逻辑，全部位于
+ * {@see EnvRequirementCatalog}（`app/support/EnvRequirementCatalog.php`）。本命令只负责
+ * 「读取生效配置 → 按分类排版输出 → 汇总退出码」。因此第二个消费者
+ * `scripts/check-env-production.php`（不启动 App、不需要 Redis/DB 的生产配置预检）
+ * 可以直接 `require_once` 同一个类文件，两边永远不可能漂移。
+ *
+ * 这也解释了为什么本类里看不到 `production_rules` 的字面量：它们在
+ * {@see self::applyProductionRequirements()} 里整键合并进来（下文有说明）。
+ *
  * Exit codes | 退出码:
  *   0 - All required variables are set | 所有必需变量已设置
  *   1 - Required variables missing | 缺少必需变量、生产必需项不合格，或 .env 存在但无法解析（R37）
@@ -81,34 +93,10 @@ class EnvCheckCommand extends Command
      */
     protected array $envDefinitions = [];
 
-    /**
-     * 敏感键名模式：输出脱敏用（键名命中即视为口令/密钥）
-     *
-     * 本命令的输出会进 CI 日志，密钥/口令一旦被完整打印就等于泄露 —— 所以脱敏是硬要求，
-     * 而不是「尽量别打印」。
-     */
-    protected const SENSITIVE_NAME_PATTERN = '/(?:SECRET|PASSWORD|PASS|TOKEN|PRIVATE_KEY|API_KEY)/i';
-
-    /**
-     * 占位符标记（大小写不敏感的子串匹配）
-     *
-     * 覆盖两类真实事故：
-     *   1. 部署模板里的 `REPLACE_WITH_*` / `your-....example.com` 忘替换；
-     *   2. `.env.example` 与 `JwtService::DEV_FALLBACK_SECRET` 这类**仓库内公开**的 dev 默认值
-     *      被原样带上生产（等于公开密钥）。
-     */
-    protected const PLACEHOLDER_MARKERS = [
-        'REPLACE', 'CHANGE_THIS', 'CHANGE_ME', 'YOUR_', 'YOUR-', 'EXAMPLE.COM',
-        'PLACEHOLDER', 'DEV_ONLY', 'DEV-ONLY', 'TODO', 'FIXME', 'XXX',
-    ];
-
-    /**
-     * 仓库内公开的 dev 默认账号/口令
-     *
-     * 取值来源：`.env.example`（root / root，以及注释里提到的业务账号 alkaid / alkaid123）
-     * 与 `docker-compose.yml` 的 mysql 服务。它们对全网公开，生产环境不得复用。
-     */
-    protected const DEV_DEFAULT_CREDENTIALS = ['root', 'alkaid123', 'password', '123456'];
+    // 原先这里还有三个常量：SENSITIVE_NAME_PATTERN / PLACEHOLDER_MARKERS / DEV_DEFAULT_CREDENTIALS。
+    // 它们已整体迁入 app\support\EnvRequirementCatalog（脱敏模式由 describeValue() 使用，
+    // 占位符与 dev 默认口令由规则求值使用）。此处**刻意不留副本**：
+    // 留一份「仅供向后兼容」的镜像，就是给下一次漂移留一个入口。
 
     /**
      * Configure command | 配置命令
@@ -179,7 +167,10 @@ class EnvCheckCommand extends Command
         $output->writeln('');
 
         $appEnv = strtolower((string) env('APP_ENV', 'local'));
-        $isProduction = in_array($appEnv, ['production', 'prod', 'stage', 'staging'], true);
+        // 生产类环境的判定口径（production / prod / stage / staging）与
+        // EnvRequirementCatalog::isProductionEnv() 同源，也与 config/cache.php、
+        // CacheEnvironmentGuardService / SessionEnvironmentGuardService 保持一致。
+        $isProduction = EnvRequirementCatalog::isProductionEnv($appEnv);
 
         $output->writeln(sprintf('Current environment: <comment>%s</comment>', $appEnv));
 
@@ -281,39 +272,27 @@ class EnvCheckCommand extends Command
                 'description' => 'Application environment | 应用环境',
                 'category' => 'Application',
                 'valid_values' => ['local', 'dev', 'development', 'testing', 'staging', 'stage', 'production', 'prod'],
+                // 生产必需项的规则不写在这里：见 app\support\EnvRequirementCatalog 的 APP_ENV 条目。
+                // 它唯一的规则是「取值必须是生产类环境」，在 env:check 里恒真（isProduction 本就由它算出），
+                // 真正的负载在 scripts/check-env-production.php 侧（那边强制按生产判定）。
             ],
             'APP_DEBUG' => [
                 'required' => true, 'type' => 'bool', 'default' => true,
                 'description' => 'Debug mode | 调试模式',
                 'category' => 'Application',
-                // 生产环境必须为 false：debug 会把异常堆栈、SQL、绝对路径直接回显给调用方
-                // （与 HealthController::checkConfig() 的就绪判定同源，这里提前到部署前）。
-                // 注：原先用 production_warning 只告警，现升级为生产环境阻断 —— warning 版本的问题是
+                // 生产必需项（not_empty / bool_false）见 EnvRequirementCatalog::requirements()['APP_DEBUG']。
+                // 原先这里是 production_warning（只告警）→ 后来升级为阻断：warning 版本的问题是
                 // 「不 --strict 就永远绿」，而它恰恰是部署前必须拦下的那类配置。
-                'production_required' => true,
-                'production_rules' => [
-                    // 未设置时是危险的：config/database.php 的 trigger_sql 缺省取 true
-                    'not_empty' => 'warn',
-                    'bool_false' => 'ignore',
-                ],
-                'production_hint' => '生产必须显式写 APP_DEBUG=false（未设置时 trigger_sql 缺省为 true；'
-                    . '为 true 会把堆栈、SQL、绝对路径回显给调用方）',
             ],
             // 默认租户：`TenantIdentify` 是全局中间件，未配置即 fail-closed 抛异常，
             // 表现为「所有不带 X-Tenant-ID 的请求（含探针）全部 500」，且在**第一个请求**才暴露。
             // 它此前完全不在本命令的定义表里 —— 部署期没有任何工具会提示它没被替换。
+            // 生产必需项（not_empty / not_placeholder / positive_int）见
+            // EnvRequirementCatalog::requirements()['DEFAULT_TENANT_ID']。
             'DEFAULT_TENANT_ID' => [
                 'required' => false, 'type' => 'int', 'default' => '',
                 'description' => 'Default tenant ID (no X-Tenant-ID header) | 默认租户 ID',
                 'category' => 'Application',
-                'production_required' => true,
-                'production_rules' => [
-                    'not_empty' => 'warn',
-                    'not_placeholder' => 'warn',
-                    'positive_int' => 'warn',
-                ],
-                'production_hint' => 'DEFAULT_TENANT_ID 必须是 tenants 表中真实存在的租户 ID（正整数），例如 1；'
-                    . '未配置或非正整数时 TenantIdentify 会 fail-closed，所有不带 X-Tenant-ID 的请求返回 500',
             ],
             'DEFAULT_LANG' => [
                 'required' => false, 'type' => 'string', 'default' => 'zh-cn',
@@ -329,6 +308,39 @@ class EnvCheckCommand extends Command
         $this->addCasbinDefinitions();
         $this->addRateLimitDefinitions();
         $this->addCorsDefinitions();
+
+        // 生产必需项的「规则 / 提示」统一从单一真相源合并进来（本文件不再各写一份）
+        $this->applyProductionRequirements();
+    }
+
+    /**
+     * 把 {@see EnvRequirementCatalog} 里的生产要求合并进本命令的定义表
+     *
+     * 为什么合并而不是「查表时再问 catalog」：`checkVariable()` / `checkProductionRules()`
+     * 都按 `$definition['production_rules']` 取值，合并后它们的代码与输出格式**完全不变**，
+     * 本命令的既有 6 条用例因此无需改动即仍为绿 —— 行为不变的证据来自「只换了数据的来源」。
+     *
+     * 合并的只有三个字段：`production_required` / `production_rules` / `production_hint`。
+     * 分类、类型、默认值、描述仍留在本文件（它们决定**输出排版**，与安全判定无关）。
+     *
+     * 键集合的一致性（catalog 里的每个键都必须在定义表里出现过）由
+     * `tests/Unit/Command/EnvRequirementCatalogConsistencyTest.php` 钉住：
+     * 一旦有人只在 catalog 里加键，`Total variables checked` 不会变多，测试会立刻失败。
+     */
+    protected function applyProductionRequirements(): void
+    {
+        foreach (EnvRequirementCatalog::requirements() as $name => $requirement) {
+            if (!isset($this->envDefinitions[$name])) {
+                // 键只在 catalog 里、定义表里没有 → 它不会有分类/描述，也就不会出现在输出里。
+                // 刻意**不**在这里静默新建定义（那会让输出凭空多出一行、改变既有行为），
+                // 交由测试报错，由人决定「是补分类，还是从 catalog 删掉」。
+                continue;
+            }
+
+            $this->envDefinitions[$name]['production_required'] = $requirement['production_required'];
+            $this->envDefinitions[$name]['production_rules']    = $requirement['production_rules'];
+            $this->envDefinitions[$name]['production_hint']     = $requirement['production_hint'];
+        }
     }
 
     /**
@@ -343,43 +355,15 @@ class EnvCheckCommand extends Command
         // 反向例子（**刻意不**纳入必需集合）：DB_PORT / DB_CHARSET / DB_PREFIX / DB_TYPE ——
         // 它们有安全且通用的默认值（3306 / utf8mb4 / 空前缀 / mysql），属于调优或部署细节，
         // 强行必填只会制造「为了过检查而填」的假配置。
+        // 四个 DB 键的生产规则统一登记在 EnvRequirementCatalog::requirements()，本表只留排版信息。
         $dbVars = [
             'DB_TYPE' => ['required' => false, 'default' => 'mysql'],
             'DB_DRIVER' => ['required' => false, 'default' => 'mysql'],
-            'DB_HOST' => [
-                'required' => true, 'default' => 'mysql',
-                'production_required' => true,
-                'production_rules' => ['not_empty' => 'warn', 'not_placeholder' => 'warn'],
-                'production_hint' => 'DB_HOST 必须是生产数据库的真实主机名；'
-                    . '模板里的 your-....example.com 之类占位值会导致「容器起来了但连不上库」',
-            ],
+            'DB_HOST' => ['required' => true, 'default' => 'mysql'],
             'DB_PORT' => ['required' => false, 'default' => 3306, 'type' => 'int'],
-            'DB_NAME' => [
-                'required' => true, 'default' => '',
-                'production_required' => true,
-                'production_rules' => ['not_empty' => 'warn', 'not_placeholder' => 'warn'],
-                'production_hint' => 'DB_NAME 必须是生产库的真实库名（端口能连上不代表库名对，'
-                    . '留 REPLACE_WITH_* 会在第一个查询时报 Unknown database）',
-            ],
-            'DB_USER' => [
-                'required' => true, 'default' => 'root',
-                'production_required' => true,
-                'production_rules' => ['not_empty' => 'warn', 'not_placeholder' => 'warn', 'not_root' => 'ignore'],
-                'production_hint' => 'DB_USER 请改用最小权限的业务账号（如 alkaid），不要用 root：'
-                    . 'root 拥有全库权限，应用侧任何注入或泄露都直接扩散到整库',
-            ],
-            'DB_PASS' => [
-                'required' => true, 'default' => '',
-                'production_required' => true,
-                'production_rules' => [
-                    'not_empty' => 'warn',
-                    'not_placeholder' => 'warn',
-                    // root / alkaid123 是 .env.example 与 docker compose 里的公开字符串，本地必须能用
-                    'not_dev_default_credential' => 'ignore',
-                ],
-                'production_hint' => 'DB_PASS 必须换成独立强口令（例如 openssl rand -base64 24）；'
-                    . '仓库内的 dev 默认口令对全网公开，等于没有口令',
-            ],
+            'DB_NAME' => ['required' => true, 'default' => ''],
+            'DB_USER' => ['required' => true, 'default' => 'root'],
+            'DB_PASS' => ['required' => true, 'default' => ''],
             'DB_CHARSET' => ['required' => false, 'default' => 'utf8mb4'],
             'DB_PREFIX' => ['required' => false, 'default' => ''],
         ];
@@ -395,21 +379,14 @@ class EnvCheckCommand extends Command
      */
     protected function addJwtDefinitions(): void
     {
+        // JWT_SECRET 的生产规则（not_empty / not_placeholder / min_length:32）见
+        // EnvRequirementCatalog::requirements()['JWT_SECRET']：判定与
+        // JwtService::assertProductionSecretIsSecure() 对齐（同一条安全约束，只是提前到部署前；
+        // 那边是「第一个鉴权请求被拒」，这里是「部署前直接红」）。
         $this->envDefinitions['JWT_SECRET'] = [
             'required' => true, 'default' => 'CHANGE_THIS_IN_PRODUCTION',
             'description' => 'JWT signing secret | JWT 签名密钥',
             'category' => 'Security',
-            'production_required' => true,
-            // 判定与 JwtService::assertProductionSecretIsSecure() 对齐（同一条安全约束，
-            // 只是提前到部署前；那边是「第一个鉴权请求被拒」，这里是「部署前直接红」）。
-            // 原先只声明 production_warning，非 --strict 时永远是绿的 —— 等于没检查。
-            'production_rules' => [
-                'not_empty' => 'warn',
-                'not_placeholder' => 'warn',
-                'min_length:32' => 'ignore',
-            ],
-            'production_hint' => 'JWT_SECRET 生产必须替换为 ≥32 字节的随机串（openssl rand -hex 32）；'
-                . '沿用 CHANGE_THIS_IN_PRODUCTION / REPLACE_WITH_* / dev-only-* 等于任何人可伪造任意用户 token',
         ];
         $this->envDefinitions['JWT_ISSUER'] = [
             'required' => true, 'default' => 'https://api.alkaidsys.local',
@@ -559,9 +536,13 @@ class EnvCheckCommand extends Command
      *   · warn   —— 输出告警（不改变退出码，`--strict` 下才失败）
      *   · ignore —— 完全静默（留给「本地就该这样」的值）
      *
+     * 判定本身**不在这里**：整段规则求值已收敛到 {@see EnvRequirementCatalog::evaluate()}，
+     * 与 `scripts/check-env-production.php` 共用同一份实现（单一真相源）。
+     * 本方法只做「catalog 的原因列表 → 命令的输出状态」这一层适配。
+     *
      * @param string $name         键名
      * @param mixed  $value        当前取值
-     * @param array  $definition   变量定义
+     * @param array  $definition   变量定义（只为取 production_hint / production_rules 是否存在）
      * @param bool   $isProduction 是否生产类环境
      * @return array{status: string, message: string}|null 全部通过（或没有规则）时返回 null
      */
@@ -577,45 +558,19 @@ class EnvCheckCommand extends Command
             return null;
         }
 
-        $failures = [];
-        $notices  = [];
+        $evaluated = EnvRequirementCatalog::evaluate($name, $value, $isProduction);
 
-        foreach ($rules as $rule => $devMode) {
-            $rule = (string) $rule;
-
-            // 规则名写错时必须可见，不能静默通过（fail-closed）：这条只可能来自本命令自身的配置错误。
-            if (!$this->isKnownProductionRule($rule)) {
-                $failures[] = sprintf('规则「%s」未实现，无法判定（命令自身的配置错误）', $rule);
-                continue;
-            }
-
-            $reason = $this->evaluateProductionRule($rule, $value);
-
-            if ($reason === null) {
-                continue;
-            }
-
-            if ($isProduction) {
-                $failures[] = $reason;
-                continue;
-            }
-
-            if ($devMode === 'warn') {
-                $notices[] = $reason;
-            }
-        }
-
-        if ($failures !== []) {
+        if ($evaluated['errors'] !== []) {
             return [
                 'status'  => 'error',
-                'message' => $this->formatProductionMessage($name, $value, $failures, $definition, true),
+                'message' => $this->formatProductionMessage($name, $value, $evaluated['errors'], $definition, true),
             ];
         }
 
-        if ($notices !== []) {
+        if ($evaluated['notices'] !== []) {
             return [
                 'status'  => 'warning',
-                'message' => $this->formatProductionMessage($name, $value, $notices, $definition, false),
+                'message' => $this->formatProductionMessage($name, $value, $evaluated['notices'], $definition, false),
             ];
         }
 
@@ -623,94 +578,11 @@ class EnvCheckCommand extends Command
     }
 
     /**
-     * 规则名是否已实现 | Is the rule implemented
-     *
-     * @param string $rule 规则名（`min_length:32` 形式带参数）
-     */
-    protected function isKnownProductionRule(string $rule): bool
-    {
-        if (in_array(
-            $rule,
-            ['not_empty', 'not_placeholder', 'positive_int', 'not_root', 'not_dev_default_credential', 'bool_false'],
-            true
-        )) {
-            return true;
-        }
-
-        return preg_match('/^min_length:\d+$/', $rule) === 1;
-    }
-
-    /**
-     * 执行单条生产规则 | Evaluate one production rule
-     *
-     * @param string $rule  规则名
-     * @param mixed  $value 当前取值
-     * @return string|null 不合格时返回「原因」文案（可直接打印，**不含**敏感值原值）；通过返回 null
-     */
-    protected function evaluateProductionRule(string $rule, mixed $value): ?string
-    {
-        $text = trim($this->valueToString($value));
-
-        switch ($rule) {
-            case 'not_empty':
-                return $text === '' ? '未配置或为空：生产环境不允许留空' : null;
-
-            case 'not_placeholder':
-                $upper = strtoupper($text);
-                foreach (self::PLACEHOLDER_MARKERS as $marker) {
-                    if (str_contains($upper, $marker)) {
-                        return sprintf(
-                            '命中占位标记「%s」：这是模板/示例值，必须替换为真实配置',
-                            $marker
-                        );
-                    }
-                }
-
-                return null;
-
-            case 'positive_int':
-                return preg_match('/^[1-9][0-9]*$/', $text) === 1
-                    ? null
-                    : '必须是正整数（> 0）：0、负数、小数与非数字都会被中间件判为「未配置」';
-
-            case 'not_root':
-                return strtolower($text) === 'root'
-                    ? '不允许使用 MySQL 超级账号 root：应用以全库权限运行，一次注入或泄露即整库失守'
-                    : null;
-
-            case 'not_dev_default_credential':
-                return in_array(strtolower($text), self::DEV_DEFAULT_CREDENTIALS, true)
-                    ? '仍是仓库内公开的 dev 默认口令（见 .env.example / docker compose），等于全网已知'
-                    : null;
-
-            case 'bool_false':
-                // null / 未设置交给 not_empty 报，避免同一个键刷两条重复原因
-                if ($text === '') {
-                    return null;
-                }
-
-                return filter_var($value, FILTER_VALIDATE_BOOL) === false
-                    ? null
-                    : '生产环境必须为 false：true 会把异常堆栈、SQL 与绝对路径回显给调用方';
-
-            default:
-                if (preg_match('/^min_length:(\d+)$/', $rule, $matches) === 1) {
-                    $min = (int) $matches[1];
-
-                    return strlen($text) >= $min
-                        ? null
-                        : sprintf('长度不足：当前 %d 字节，要求 ≥ %d 字节（建议 openssl rand -hex 32 生成）', strlen($text), $min);
-                }
-
-                return null;
-        }
-    }
-
-    /**
      * 组装「生产必需项不合格」的多行文案
      *
-     * 逐条给出：哪个键（调用方已输出 `✗ 键名:` 前缀）、当前值（口令/密钥脱敏）、
-     * 为什么不合格、怎么改。输出会被贴进 CI 日志，因此这里绝不拼接完整口令/密钥。
+     * 排版留在本命令（`✗ 键名:` 前缀 + 缩进都是命令侧的约定），
+     * 实际拼装交给 {@see EnvRequirementCatalog::formatMessage()}，避免「命令一套排版、
+     * 预检脚本另一套」时连「脱敏形态」也各写一份。
      *
      * @param string   $name         键名
      * @param mixed    $value        当前取值
@@ -725,49 +597,24 @@ class EnvCheckCommand extends Command
         array $definition,
         bool $isProduction
     ): string {
-        $lines = [sprintf(
-            '%s（%d 条）| current: %s',
+        return EnvRequirementCatalog::formatMessage(
+            $name,
+            $value,
+            $reasons,
+            (string) ($definition['production_hint'] ?? ''),
             $isProduction
-                ? '生产必需项不合格'
-                : '生产环境会失败，当前非生产环境仅提示 | would fail in production',
-            count($reasons),
-            $this->describeValue($name, $value)
-        )];
-
-        foreach ($reasons as $reason) {
-            $lines[] = '      · ' . $reason;
-        }
-
-        $hint = (string) ($definition['production_hint'] ?? '');
-
-        if ($hint !== '') {
-            $lines[] = '      修复: ' . $hint;
-        }
-
-        return implode("\n", $lines);
+        );
     }
 
     /**
      * 把任意 env 取值转成用于比较/打印的字符串 | Stringify an env value
      *
-     * ThinkPHP 的 `env()` 会把 `true/false/on/off` 转成 bool，这里统一还原成文本，
-     * 保证规则判定与输出展示看到的是同一个东西。
+     * ThinkPHP 的 `env()` 会把 `true/false/on/off` 转成 bool，而 `parse_ini_file()` 给出字符串；
+     * 统一还原成文本才能让「同一条规则在两个消费者里看到同一个东西」。
      */
     protected function valueToString(mixed $value): string
     {
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if ($value === null) {
-            return '';
-        }
-
-        if (is_scalar($value)) {
-            return (string) $value;
-        }
-
-        return '';
+        return EnvRequirementCatalog::valueToString($value);
     }
 
     /**
@@ -775,27 +622,14 @@ class EnvCheckCommand extends Command
      *
      * 脱敏规则（硬要求）：键名命中 SENSITIVE_NAME_PATTERN 时只保留**前 2 个字符 + 总长度**。
      * 非敏感键全量显示，但会截断到 64 字符并去掉控制字符，避免一条日志变成多行、污染 CI 日志。
+     * 实现在 {@see EnvRequirementCatalog::describeValue()}（与预检脚本共用，避免一处脱敏、一处不脱敏）。
      *
      * @param string $name  键名
      * @param mixed  $value 当前取值
      */
     protected function describeValue(string $name, mixed $value): string
     {
-        // 控制字符（含换行）会让一条日志裂成多行，先替换掉；刻意不加 /u：
-        // 非 UTF-8 的旧口令在 /u 模式下会让 preg_replace 返回 null，反而把值「吃掉」。
-        $text = (string) preg_replace('/[\x00-\x1F\x7F]+/', '?', $this->valueToString($value));
-
-        if (trim($text) === '') {
-            return '(未设置 / 空值)';
-        }
-
-        if (preg_match(self::SENSITIVE_NAME_PATTERN, $name) === 1) {
-            return sprintf('"%s"***（已脱敏：共 %d 字符）', mb_substr($text, 0, 2), mb_strlen($text));
-        }
-
-        $shown = mb_strlen($text) > 64 ? mb_substr($text, 0, 64) . '…' : $text;
-
-        return sprintf('"%s"', $shown);
+        return EnvRequirementCatalog::describeValue($name, $value);
     }
 
     /**

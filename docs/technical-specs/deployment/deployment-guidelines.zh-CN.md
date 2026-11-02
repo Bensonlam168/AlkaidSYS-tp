@@ -17,12 +17,16 @@
   CI 门禁为 `Env Example Consistency`；改动任一份模板后 **应当** 先本地跑一次。
   缺键不会让进程启动失败，只会在运行期以「以 root 空口令连库」「所有不带 `X-Tenant-ID` 的请求 500」
   「限流退化为全站共用 ip 桶」这类形式暴露，因此必须由门禁而不是靠人 review 守住。
-- **模板静态检查只是第一道，取值合规要由运行期检查兜住**：模板里的键齐全、文件可解析，并不代表这台机器上的
+- **模板静态检查只是第一道，取值合规还要有第二道、第三道**：模板里的键齐全、文件可解析，并不代表这台机器上的
   取值可用（`REPLACE_WITH_*` 忘替换、`DB_USER=root`、`JWT_SECRET` 仍是公开占位符、`APP_DEBUG=true` 都能让
-  「键齐全」的配置在运行时炸掉）。`php think env:check --strict` 在生产类环境（`production` / `prod` /
-  `stage` / `staging`）会逐条判定这些「生产必需项」的取值并以非 0 退出，**发布前必须跑**；
-  非生产环境同一套规则只提示不阻断。两道检查的职责边界、生产必需清单与逐键理由、`TRUSTED_PROXIES`
-  为何是「条件必需」：见 [环境配置的两道校验](./environment-validation.zh-CN.md)。
+  「键齐全」的配置在运行时炸掉）。
+  · **部署前（依赖可能还不通时）**：`php scripts/check-env-production.php --env-file="$ENV_FILE"` ——
+  它**不启动 App**，因此不依赖 Redis / DB，读不到文件或解析失败一律以 1 退出；
+  · **依赖就绪后**：`php think env:check --strict` 在生产类环境（`production` / `prod` / `stage` / `staging`）
+  会逐条判定这些「生产必需项」的生效取值并以非 0 退出，**发布前必须跑**；非生产环境同一套规则只提示不阻断。
+  两者共用同一份规则（单一真相源 `app\support\EnvRequirementCatalog`）。
+  三道检查的职责边界、生产必需清单与逐键理由、`TRUSTED_PROXIES` 为何是「条件必需」、
+  以及生产预检**不能**做什么：见 [环境配置的三道校验](./environment-validation.zh-CN.md)。
 
 ## 3. 日志与可追踪性
 
