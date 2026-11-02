@@ -50,7 +50,13 @@
             <group>performance</group>
         </exclude>
     </groups>
-    <php>
+            <php>
+        <!-- memory_limit：容器 CLI 默认 128M，而全量套件峰值已到约 136M（基线也有 124M，占 97%），
+             会让 php think test（AGENTS.md 记载的标准测试命令）在 84% 处静默 exit 255：
+             看起来像「测试失败」，实际是 OOM，极难定位。
+             提高到 256M 留余量。CI 走拆分套件（testsuite 分 Unit 与 Feature 两条命令）本就不受影响，
+             这里只保证「单进程跑全量」这条路径同样可用。 -->
+        <ini name="memory_limit" value="256M"/>
         <!--
             ============================================================
             A. 连接参数（DB_*）：刻意 **不加** force，必须跟随运行环境
