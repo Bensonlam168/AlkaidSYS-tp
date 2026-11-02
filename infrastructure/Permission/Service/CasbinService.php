@@ -558,22 +558,63 @@ class CasbinService
      * 根据配置的刷新间隔时间判断是否需要重新加载策略。
      * Determine if need to reload policy based on configured reload interval.
      *
+     * 【为什么这里必须有 try/catch（R6：缓存故障 × 鉴权路径）】
+     *   本方法在**每次鉴权**的路径上被调用（{@see self::check()} 与
+     *   {@see self::getUserPermissions()} 各一次）。`Cache::get()` 在 Redis 不可用、
+     *   连接池已释放等情况下会抛异常（`think\cache\Exception` 或驱动自身的 `\Throwable`，
+     *   例如 `\TypeError`）。旧写法没有任何兜底，于是「读一次缓存失败」= **每一次鉴权 500**。
+     *   缓存是旁路：它的失败不该决定「这次请求还能不能鉴权」。
+     *
+     * 【读失败为什么返回 true，而不是 false】（选项 A：保守优先）
+     *   `false` 的语义是「按内存里已有的策略继续判」。但缓存读失败时我们**无法知道**
+     *   内存里的那份策略是否已经过期 —— 这时返回 false 就是「策略在故障期永远不刷新」：
+     *   DB 里改了授权却不生效，而且没有任何错误提示（错得最安静）。
+     *   返回 true 只是「多刷一次」：{@see self::reloadPolicy()} 对 `loadPolicy()` 失败
+     *   有日志且**原样上抛**，不会把「策略没装好」伪装成成功，因此保守重载不会引入
+     *   「静默全拒绝」的风险。代价是缓存故障期间每次鉴权都会触发一次全量策略重载
+     *   （DB 上的一次性查询），这是故障期可接受的降级成本，且日志里能直接看到。
+     *
+     * 【为什么先判 `reload_ttl = 0`，再去读缓存】
+     *   `reload_ttl = 0` 是运维**显式关闭**自动刷新。若先读缓存，故障期会被
+     *   「读失败 → true」把这个配置推翻，等于在故障期把「关闭」改成「每个请求都重载」——
+     *   与运维意图完全相反。关闭语义不应依赖缓存是否可用，故把该判断提到读取之前。
+     *
      * @return bool 是否需要重新加载 | Whether need to reload
      */
     protected function shouldReload(): bool
     {
-        // 获取上次加载时间
-        // Get last reload time
-        $lastReload = Cache::get('casbin_last_reload', 0);
-
         // 获取刷新间隔时间（秒）
         // Get reload interval (seconds)
-        $reloadTtl = Config::get('casbin.reload_ttl', 300);
+        // 注意 (int) 强转：env() 读出来的是字符串（'0' / '300'），旧写法用 `=== 0` 严格比较，
+        // 配置成 '0' 时会**判不出关闭**，静默退化成「每次都按 0 秒窗口重载」。
+        $reloadTtl = (int) Config::get('casbin.reload_ttl', 300);
 
-        // 如果设置为 0，表示不自动刷新
-        // If set to 0, means no auto reload
+        // 如果设置为 0，表示不自动刷新（显式关闭，不依赖缓存可用性）
+        // If set to 0, means no auto reload (explicitly disabled, independent of cache health)
         if ($reloadTtl === 0) {
             return false;
+        }
+
+        try {
+            // 获取上次加载时间
+            // Get last reload time
+            // (int) 强转同样是兜底：File 驱动返回的是字符串时间戳，异常驱动也可能返回
+            // 空数组等非数字值 —— 旧写法 `time() - []` 会直接抛 \TypeError。
+            $lastReload = (int) Cache::get('casbin_last_reload', 0);
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】\Error（含 \TypeError）不继承 \Exception，只捕 \Exception 会漏接。
+            // 【为什么是 warning】这是旁路降级，不是业务失败：本次鉴权可以继续（改为重载策略）。
+            // 上下文里带 reason = 'cache_read_failed'，便于与其它 Casbin 故障日志区分。
+            Log::warning('Casbin reload decision: cache read failed (fallback: reload)', [
+                'reason' => 'cache_read_failed',
+                'error_type' => get_class($e),
+                'error_message' => $e->getMessage(),
+                'reload_ttl' => $reloadTtl,
+            ]);
+
+            // 读不到「上次重载时间」= 无法证明内存策略是新的 → 保守重载
+            // Unknown last-reload time means we cannot prove the in-memory policy is fresh
+            return true;
         }
 
         // 判断是否超过刷新间隔
