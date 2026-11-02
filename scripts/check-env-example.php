@@ -36,9 +36,11 @@ declare(strict_types=1);
  *        且解析器的容忍度随 PHP 版本可能变化。
  *      · `;` 行 + 任意命中字符 —— `;` 注释不参与 INI 词法分析（实测不影响解析），
  *        同样按**告警**处理以保持规则一致性。
- *   D. 必需键存在：DB_HOST / DB_NAME / DB_USER / DB_PASS / DB_CHARSET / JWT_SECRET。
+ *   D. 必需键存在：清单来自 `app\support\EnvRequirementCatalog` 的 `template_required` 维度
+ *      （`DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` / `DB_CHARSET` / `JWT_SECRET`）。
  *      这些键缺失时进程启动**不会**失败，只在运行期以「连不上库 / 鉴权全挂」的形式暴露，
- *      因此必须显式登记。若某天真的要移除某个键，需同步改本脚本（属显式决策，而非静默丢失）。
+ *      因此必须显式登记。若某天真的要移除某个键，需改 catalog 的该维度（属显式决策，
+ *      而非静默丢失）。
  *   E. 生产模板 `.env.production.example` 覆盖示例键集合（**单向**）：
  *      `.env.example` 里的每个键都必须出现在生产模板里，反向不要求。
  *      同时对生产模板做三项同源校验 —— 可解析、无伪键、注释行规范：
@@ -73,6 +75,8 @@ declare(strict_types=1);
  * @package scripts
  */
 
+use app\support\EnvRequirementCatalog;
+
 // ---------------------------------------------------------------------------
 // 配置
 // ---------------------------------------------------------------------------
@@ -84,6 +88,18 @@ const REPO_ROOT = __DIR__ . '/..';
 const TARGET_FILE = '.env.example';
 
 /**
+ * 规则目录类（相对仓库根）—— 零依赖，可直接 require，无需 vendor/
+ *
+ * 「模板必需键清单」的**唯一真相源**。这里**曾经**有一份 6 键的 `REQUIRED_KEYS` 镜像副本，
+ * 与 `EnvCheckCommand` / 预检脚本各写一套：只要有人只改其中一处，
+ * 「模板必须有这个键」与「生产取值必须合格」就会悄悄错位，而两边各有各的门禁、谁也不会报错。
+ * 现在两个维度都在 catalog 里（`production_*` 与 `template_required`），本脚本只消费后者。
+ * 一致性由 `tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest` 钉住
+ * （含「代码里再出现硬编码键清单就变红」与「运行时确实读该类」两条）。
+ */
+const CATALOG_FILE = 'app/support/EnvRequirementCatalog.php';
+
+/**
  * 生产环境模板（相对仓库根）
  *
  * 运维从它复制出 `.env.production`，后者是 docker-compose.prod.yml 的 env_file。
@@ -93,20 +109,6 @@ const PROD_TEMPLATE_FILE = '.env.production.example';
 
 /** 本机真实配置（未跟踪，仅用于只读对比） */
 const LOCAL_FILE = '.env';
-
-/**
- * 必需键清单
- *
- * 判定标准：缺了它应用不会启动失败，但一定在运行期出问题。
- */
-const REQUIRED_KEYS = [
-    'DB_HOST',
-    'DB_NAME',
-    'DB_USER',
-    'DB_PASS',
-    'DB_CHARSET',
-    'JWT_SECRET',
-];
 
 /** 合法键名模式：大写字母开头，只含大写字母/数字/下划线 */
 const KEY_PATTERN = '/^[A-Z][A-Z0-9_]*$/';
@@ -579,6 +581,28 @@ function checkProdTemplate(array $exampleKeys, array $prod): array
 
 $strict = in_array('--strict', $argv, true);
 
+// 规则目录：优先走 composer autoload（若已注册），否则直接 require 源文件。
+// 直接 require 是刻意设计的：该 catalog 零依赖（不 import ThinkPHP 类、不调 env()、不碰容器），
+// 因此本脚本在 `composer install` 之前、在没有 vendor/autoload.php 的 CI 环境里同样能跑。
+// 与 scripts/check-env-production.php 完全同一套加载方式（同一个类、同一份规则）。
+$catalogPath = __DIR__ . '/../' . CATALOG_FILE;
+if (!class_exists(EnvRequirementCatalog::class)) {
+    if (!is_file($catalogPath)) {
+        // fail-closed：类文件都没了就别继续 —— 检查 D 的键清单无从得知，
+        // 「跳过检查 D 却仍然 exit 0」会让这条 required 门禁变成摆设。
+        echo colorize('致命错误: 规则目录不存在 ' . CATALOG_FILE, 'red') . PHP_EOL;
+        echo '本脚本的「必需键」清单来自该类的 template_required 维度，缺失时无法给出可信结论。' . PHP_EOL;
+        exit(1);
+    }
+    require_once $catalogPath;
+}
+if (!class_exists(EnvRequirementCatalog::class, false)) {
+    // require 成功但类仍不存在（命名空间/类名被改写）同样必须立刻失败
+    echo colorize('致命错误: 无法加载规则目录 ' . CATALOG_FILE, 'red') . PHP_EOL;
+    echo '本脚本的「必需键」清单来自该类的 template_required 维度，缺失时无法给出可信结论。' . PHP_EOL;
+    exit(1);
+}
+
 echo colorize('Environment Example Check | 环境配置模板门禁（.env.example + .env.production.example）', 'blue') . PHP_EOL;
 echo str_repeat('=', 64) . PHP_EOL;
 
@@ -680,7 +704,8 @@ if (!$parsed['ok']) {
         $present[$item['key']] = true;
     }
     $dIssues = [];
-    foreach (REQUIRED_KEYS as $key) {
+    // 键清单来自 catalog 的 template_required 维度（顺序即报错顺序），本脚本不再自带副本
+    foreach (EnvRequirementCatalog::templateRequiredKeys() as $key) {
         if (!isset($present[$key])) {
             $dIssues[] = $key;
         }

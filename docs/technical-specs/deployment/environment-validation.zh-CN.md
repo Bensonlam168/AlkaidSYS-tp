@@ -4,13 +4,17 @@
 > `php scripts/check-env-example.php --strict`（模板静态检查，检查 A~F）、
 > `php scripts/check-env-production.php`（**生产预检，不启动 App**，因此不依赖 Redis / DB）、
 > `php think env:check`（运行期检查，含生产必需项的取值规则与条件必需项告警）、
-> 生产必需项的**单一真相源** `app\support\EnvRequirementCatalog`（命令与预检脚本共用一份规则）、
+> 生产必需项的**单一真相源** `app\support\EnvRequirementCatalog`
+> （`production_*` 与 `template_required` 两个正交维度，三个消费者共用一份规则）、
 > 生产类环境的失败退出码与脱敏输出、
 > **boot 期失败 ⇒ 控制台进程退出码非 0 的通用机制（R51，见 §11）**。
 > 未实现：`docs/deployment/environment-variables.md` 仍由 `env:check --generate` 生成，
 > 尚未包含 `DEFAULT_TENANT_ID` / `APP_ENV` 的新增行（该文件不在本规范维护范围内）；
-> `scripts/check-env-example.php` 的 `REQUIRED_KEYS` 仍是一份独立清单（它是「模板必须有这些键」，
-> 与「取值规则」语义不同，见 §8.4）；CI 尚未接入生产预检（方案见 §9）。
+> CI 尚未接入生产预检（方案见 §9）。
+>
+> **「第 4 份清单」已收敛**（见 §8.4）：`scripts/check-env-example.php` 不再自带 `REQUIRED_KEYS`，
+> 改为消费 catalog 的 `template_required` 维度；一致性由
+> `tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest`（含运行时劫持 catalog 的用例）钉住。
 
 本文回答四个问题：三个校验工具**各自管什么**、**什么时候跑哪个**、**「生产必需」到底包不包含某个键**、
 以及**规则养在哪里**（避免两处各写一份）。
@@ -25,7 +29,7 @@
 | 是否需要启动 App | 不需要 | **不需要**（不 `new App()`、不 `initialize()`） | 需要（整个 `App::initialize()`） |
 | 依赖 | 无（无 DB、无 Redis、无网络） | 无（无 DB、无 Redis、无网络） | **生产类环境要求 Redis 可达**（见 §2 前提 1） |
 | 运行时机 | 提交前 / CI | 部署前（含「依赖还不通」的时刻） | 部署前（依赖已就绪时） |
-| 判定内容 | 可解析 / 无伪键 / 注释字符规范 / 必需键存在 / 生产模板键覆盖 | 文件可解析 / 8 个生产必需项的**取值** / 条件必需项 | 键是否配置、取值是否合规（占位符、正整数、长度、root、bool）、条件必需项 |
+| 判定内容 | 可解析 / 无伪键 / 注释字符规范 / 必需键存在（清单来自 catalog 的 `template_required`）/ 生产模板键覆盖 | 文件可解析 / 8 个生产必需项的**取值** / 条件必需项 | 键是否配置、取值是否合规（占位符、正整数、长度、root、bool）、条件必需项 |
 | 失败语义 | 模板坏了 → 所有人都会踩 | 这份文件**照抄上生产**就会炸 | 这台机器的配置坏了 → 只有本次部署会炸 |
 | 退出码 | 有问题即 1（`--strict` 下告警也算） | 不合格 / 读不到 / 解析失败即 1；`--strict` 下告警也算 | 生产类环境有不合格项即 1；非生产环境只提示 |
 | CI 门禁 | `Env Example Consistency` | 尚未接入（方案见 §9） | 无（属部署侧动作） |
@@ -245,7 +249,7 @@ $ echo $?
 | --- | --- | --- |
 | `CACHE_DRIVER` | 调优/拓扑项 | 生产类环境被 `config/cache.php` **强制为 redis**，这个键在生产的实际影响已被覆盖；单实例用 `file` 也是合法部署 |
 | `REDIS_*` | 已由启动期自检覆盖 | `RedisHealthCheckService` 在启动期做读写自检并 fail-closed（含 host/port），重复登记只会产生第二处真相 |
-| `DB_PORT` / `DB_CHARSET` / `DB_PREFIX` / `DB_TYPE` | 非必需 | 有安全且通用的默认值（3306 / utf8mb4 / 空前缀 / mysql），属于部署细节 |
+| `DB_PORT` / `DB_CHARSET` / `DB_PREFIX` / `DB_TYPE` | 非必需（**取值**维度） | 有安全且通用的默认值（3306 / utf8mb4 / 空前缀 / mysql），属于部署细节。注意 `DB_CHARSET` 虽然不判**取值**，但它**在模板维度是必需键**（模板里必须有这一行），见 §8.4 |
 | `CORS_ALLOWED_ORIGINS` | 保留原 `production_warning`（只告警，仅在 `env:check` 里） | 是否需要跨域取决于前端是否同源部署；硬性必填会把「同源部署」误判为不合格。它**不在** catalog 里，因此生产预检不判它 |
 | `ALLOW_RUNTIME_DDL` | 不检查 | 生产类环境即便设为 `true` 也会被 `SchemaBuilder` 拦截（纵深防御已在代码里），不必重复 |
 
@@ -277,22 +281,28 @@ $ echo $?
 ### 8.2 现在的结构
 
 ```text
-app/support/EnvRequirementCatalog.php        ← 唯一一份：8 个键 + 规则 + 提示 + 脱敏 + 求值
+app/support/EnvRequirementCatalog.php        ← 唯一一份：
+        │                                       · production_*（8 键的取值规则 + 提示 + 脱敏 + 求值）
+        │                                       · template_required（9 键的「模板里必须有这一行」表态）
         ├── app/command/EnvCheckCommand.php            （composer autoload，读生效配置，按分类排版输出）
-        └── scripts/check-env-production.php           （require 源文件，读文件，按清单排版输出）
+        ├── scripts/check-env-production.php           （require 源文件，读文件，按清单排版输出）
+        └── scripts/check-env-example.php              （require 源文件，只消费 template_required 维度）
 ```
 
 分工：
 
 | 层 | 由谁负责 |
 | --- | --- |
-| 键清单 / 规则名 / 规则实现 / 脱敏 / 提示文案 | `EnvRequirementCatalog`（**零依赖**：不 import ThinkPHP 类、不调 `env()`、不碰容器） |
-| 取值来源 | 命令：`env()`；脚本：`parse_ini_file(..., INI_SCANNER_RAW)` |
-| 排版与退出码 | 各自负责（命令用 `✗/⚠` + Summary；脚本用 `检查 A/B/C` + `[TAG]`） |
+| 键清单 / 规则名 / 规则实现 / 脱敏 / 提示文案 / 模板必需键 | `EnvRequirementCatalog`（**零依赖**：不 import ThinkPHP 类、不调 `env()`、不碰容器） |
+| 取值来源 | 命令：`env()`；两个脚本：`parse_ini_file(..., INI_SCANNER_RAW)` |
+| 排版与退出码 | 各自负责（命令用 `✗/⚠` + Summary；脚本用 `检查 A/B/C/...` + `[TAG]`） |
 
 **零依赖是刻意的**：脚本要在「Redis / DB 可能根本不通」的时刻运行，甚至要在
 `composer install` 之前运行（部署流水线的第一步）。因此脚本不 require `vendor/autoload.php`，
 而是直接 `require_once app/support/EnvRequirementCatalog.php`（若 composer autoload 已注册则优先用它）。
+`check-env-example.php` 走的是同一套加载方式，并且**类文件缺失时 fail-closed**
+（打印「致命错误: 规则目录不存在 …」并 `exit(1)`），而不是「跳过检查 D 却 exit 0」——
+一条 required 门禁一旦静默跳过就等于不存在。
 
 ### 8.3 落地后的三条保证（都有测试钉住）
 
@@ -301,19 +311,44 @@ app/support/EnvRequirementCatalog.php        ← 唯一一份：8 个键 + 规�
 | catalog 里每个键都必须在命令的定义表里有分类/描述（否则它不会出现在 `env:check` 输出里） | `tests/Unit/Command/EnvRequirementCatalogConsistencyTest::testCommandDefinitionsCoverEveryCatalogKey` |
 | 命令里的 `production_rules` / `production_hint` **就是** catalog 里的那份（合并来的，不是副本） | 同上 `::testMergedRulesAndHintsMatchCatalog` |
 | 声明的规则名都已实现（拼错会「永远通过」） | 同上 `::testEveryDeclaredRuleIsImplemented` |
+| `check-env-example.php` 消费的键集合 **==** catalog 的 `template_required`（脚本里不得再出现硬编码键清单） | `tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest::testScriptHasNoHardCodedKeyList` |
+| 该脚本在**运行时**确实读 catalog（用替身类劫持 catalog ⇒ 脚本必须跟着变），且在无 `vendor/` 的干净进程里仍能跑通 | 同上 `::testScriptReportsMissingKeyFromCatalogAtRuntime` / `::testScriptPassesInCleanProcessWithoutAutoload` |
 
 另外，脚本自身的行为（含「Redis 不可达仍能跑」）由
 `tests/Unit/Scripts/EnvProductionPrecheckTest` 用**真实子进程**覆盖。
 
-### 8.4 尚未收敛的第四份清单
+### 8.4 第 4 份清单已收敛：`template_required` 维度
 
-`scripts/check-env-example.php` 的 `REQUIRED_KEYS`（`DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` /
-`DB_CHARSET` / `JWT_SECRET`）**没有**并入 catalog，理由是它回答另一个问题：
-「**模板文件**里必须有这些键」（键存在性，`DB_CHARSET` 也在其中），而 catalog 回答
-「**取值**是否合格」（`DB_CHARSET` 刻意不判值）。
-把两者强行合并会逼着 `DB_CHARSET` 要么进 catalog（违反 §6 的结论）要么从模板检查里消失（丢失保护）。
-若将来要收敛，正确的形状是 catalog 增加一个 `template_required => bool` 维度，而不是把两份清单取并集 ——
-那需要单独一轮评审（`check-env-example.php` 是 CI 的 required 门禁）。
+**之前**：`scripts/check-env-example.php` 自带一份 `REQUIRED_KEYS`
+（`DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` / `DB_CHARSET` / `JWT_SECRET`），
+于是同一个「哪些键重要」的问题散落在四处（catalog、命令、该脚本、两份模板），
+任何一处单独改动都会让「模板里必须有这个键」与「生产取值必须合格」悄悄错位。
+
+**现在**：catalog 增加一个**与 `production_*` 正交的维度** `template_required`
+（`EnvRequirementCatalog::TEMPLATE_REQUIREMENTS`），脚本只消费它，镜像副本已删除：
+
+| 键 | production 维度（取值） | template 维度（模板里有这一行） | 理由 |
+| --- | --- | --- | --- |
+| `DB_HOST` / `DB_NAME` / `DB_USER` / `DB_PASS` | ✅ 判值 | ✅ 必需 | 缺行时 `.env.production` 里没有可填位置，运维只能凭记忆补键名；写错键名不报错、只静默不生效 |
+| `DB_CHARSET` | ❌ **刻意不判值** | ✅ 必需 | 判值只能靠白名单（`utf8mb4_0900_ai_ci` 之类的合法形态会被误伤）；但缺行会回落默认字符集，默认值一旦是 `utf8` 就是「写入报 1366 / 静默截断」——**唯一只能靠模板维度守的键** |
+| `JWT_SECRET` | ✅ 判值 | ✅ 必需 | 缺行时密钥为空 → 回退内置开发密钥 → 「登录 200 带 token、随后每个受保护接口 401」 |
+| `APP_ENV` | ✅ 判值 | ❌ 不进 | 危险形态是「值写错（如 `prodcution`）」，由 `production_env` 规则拦下；`.env.example` 是**本地开发**模板，本地就该是 dev |
+| `APP_DEBUG` | ✅ 判值 | ❌ 不进 | `.env.example` 里 `APP_DEBUG = true` 是**本地正确值**；生产必须为 false 已由 `not_empty` + `bool_false` 拦下 |
+| `DEFAULT_TENANT_ID` | ✅ 判值 | ❌ 不进 | 缺失/非法由 `not_empty` + `positive_int` 拦下（`TenantIdentify` 本身也 fail-closed），且它今天已同时出现在两份模板里，存在性还受检查 E 间接保护 |
+
+**为什么不把两个维度取并集**（这是收敛方案的关键约束）：
+并集会让 `DB_CHARSET` 被迫进入取值判定（与 §6「不判值」的结论冲突），
+或者让 `APP_DEBUG` 的「模板缺失」变成 CI 错误（把门禁从 6 键扩到 8 键，
+属于需要单独评审的显式决策，不该随实现漂移）。
+
+**为什么把「不进」的键也写进表里**：表里覆盖 9 个键并逐个写明 `true` / `false`，
+这样「新增一个生产必需键、但忘了想清楚模板要不要」会被
+`EnvExampleTemplateRequiredConsistencyTest::testEveryKeyHasAnExplicitTemplateDecision` 立刻发现，
+而不是等到某次部署踩坑才暴露。
+
+**行为不变的证据**：收敛前后 `php scripts/check-env-example.php`（含 `--strict`）的
+标准输出与退出码**逐字节相同**（sha256 一致，见该轮的交付报告）—— 这次只换了「清单从哪来」，
+没有改任何检查项、文案或退出码。
 
 ---
 
@@ -408,7 +443,11 @@ app/support/EnvRequirementCatalog.php        ← 唯一一份：8 个键 + 规�
    先前在 dev 跑 `--strict` 是绿的，现在会红 —— 这是刻意的：严格模式就是「按生产标准判」。
 5. **`docs/deployment/environment-variables.md` 由 `env:check --generate` 生成**，
    新增的 `DEFAULT_TENANT_ID` / `APP_ENV` 行需由该命令重新生成后回填（该文件不在本规范维护范围）。
-6. **`REQUIRED_KEYS` 仍是独立清单**（§8.4），收敛它需要改一个 CI required 门禁，属单独评审。
+6. **`check-env-example.php` 的键清单已并入 catalog**（§8.4），第 4 份清单不再存在。
+   剩余的约束是**结构性的**：该脚本现在 `require_once app/support/EnvRequirementCatalog.php`，
+   若有人改了这个类的命名空间/路径，脚本会走 fail-closed 分支（打印致命错误 + `exit(1)`），
+   不会静默跳过检查 D；`EnvExampleTemplateRequiredConsistencyTest` 会同时因为
+   `class_exists()` 断言与「代码里必须调用 `templateRequiredKeys()`」而变红。
 
 ---
 
