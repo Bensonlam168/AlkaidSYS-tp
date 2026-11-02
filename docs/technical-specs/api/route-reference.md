@@ -163,6 +163,7 @@ This document lists all API routes in AlkaidSYS-tp.
 | OPTIONS | `/<MISS>` | Closure | - |
 | GET | `/healthz` | HealthController@index | - |
 | GET | `/hello/<name>` | index/hello | - |
+| GET | `/readyz` | HealthController@ready | - |
 | GET | `/think` | Closure | - |
 
 ---

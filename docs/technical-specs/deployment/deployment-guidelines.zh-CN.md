@@ -28,12 +28,25 @@
 
 - 服务 **应当** 暴露与选用监控体系兼容的指标端点。
 - 在编排环境中，存活探针与就绪探针 **必须** 实现并正确配置。
-- 后端已提供 **`GET /healthz`**（`app\controller\HealthController`）：不查库、不鉴权、无副作用，
-  返回统一响应结构 + `Cache-Control: no-store`，供 `Dockerfile` 的 `HEALTHCHECK`、
-  `docker-compose.yml` 的 backend/nginx healthcheck 与负载均衡使用。
-  ⚠️ 它只证明「worker 能响应」，**不证明** Redis / MySQL 可用（全局 `SessionInit` 会读 Redis 会话，
-  Redis 故障时探针会 500）；探针语义边界与应对方式见
-  [镜像与编排的生产要求](./image-and-orchestration-production-requirements.md) §6.1。
+- 后端提供两个语义**不同**的探针端点（`app\controller\HealthController`）：
+
+  | 端点 | 语义 | 依赖面 | 失败时该怎么办 |
+  | --- | --- | --- | --- |
+  | `GET /healthz` | **liveness**：worker 还能不能把请求处理完 | 0 个（不查库、不读缓存、不鉴权） | **重启**容器 |
+  | `GET /readyz` | **readiness**：运行时依赖是否可用 | 数据库 + Redis + 配置 | **摘流量**，不要重启 |
+
+  - 两者都返回统一响应结构 + `Cache-Control: no-store`，都无鉴权、幂等、无副作用；
+  - 两者都由全局中间件 `app\middleware\HealthProbeBypass` 在 `SessionInit` **之前**短路，
+    因此 **Redis 抖动不会把 liveness 打成 500**（否则 K8s 会把全部实例一起重启，
+    把局部故障放大成全局故障）。是否真的命中了旁路，看响应头 `X-Health-Probe-Bypass`
+    （值为 `healthz` / `readyz`）——没有这个头说明请求走的是路由兜底，免疫性**未生效**；
+  - `/readyz` 失败返回 **503**，响应体逐项列出 `checks.{database,redis,config}` 的
+    `ok` / `latency_ms` / `error`，各项**独立超时（2s）、互不阻塞**，可以一次看全所有失败项；
+  - `/readyz` 的 `config` 检查包含两条 fail-closed 前提：`DEFAULT_TENANT_ID` 已配置且为正整数
+    （ER-04），生产类环境下 `APP_DEBUG=false`；
+  - `Dockerfile` 的 `HEALTHCHECK` 与 `docker-compose.yml` 的 backend/nginx healthcheck 用的都是
+    `/healthz`（compose 没有 readiness 概念）；K8s / Swarm 下的探针配置见
+    [镜像与编排的生产要求](./image-and-orchestration-production-requirements.md) §6.1。
 - 关键业务指标与错误率 **应当** 配置告警规则。
 
 ## 5. 缓存、会话与队列

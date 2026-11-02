@@ -8,6 +8,21 @@ return [
     // CORS 必须在 Session 之前，以便正确处理 OPTIONS 预检请求
     \app\middleware\Cors::class,
 
+    // 健康探针旁路：必须在 SessionInit **之前**，否则 Redis 一抖动，
+    // /healthz（liveness）就会在路由之前被 SessionInit 抛异常打成 500 ——
+    // K8s/Swarm 随即重启全部后端实例，把局部故障放大成全局故障。
+    //
+    // 为什么放在 Trace / Cors 之后而不是整条链的最前面：
+    //   - Trace 只做 random_bytes() 生成 trace_id（零外部依赖），放在它后面探针响应才带
+    //     trace_id / X-Trace-Id，能和 nginx 日志、AccessLog 对齐排查；
+    //   - Cors 只读配置与请求头并给响应补头，不碰 DB/Redis/会话；
+    //   - 再往后的 SessionInit / TenantIdentify / SiteIdentify / AccessLog / RateLimit
+    //     才是探针必须绕开的部分（读 Redis 会话、fail-closed 抛异常、写日志、限流）。
+    //
+    // 匹配规则是 **pathinfo 全等 + 只允许 GET/HEAD**（见 app\middleware\HealthProbeBypass），
+    // 不要改成 str_starts_with 之类的前缀匹配：那会静默跳过 AccessLog 与 RateLimit。
+    \app\middleware\HealthProbeBypass::class,
+
     // Session 初始化
     \think\middleware\SessionInit::class,
 

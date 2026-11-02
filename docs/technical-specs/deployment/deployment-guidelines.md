@@ -30,13 +30,30 @@ This document defines deployment and operations practices for AlkaidSYS, focusin
 
 - Services **SHOULD** expose metrics endpoints compatible with the chosen monitoring stack.
 - Liveness and readiness probes **MUST** be implemented and configured for orchestrated environments.
-- The backend exposes **`GET /healthz`** (`app\controller\HealthController`): no database access,
-  no auth, no side effects, unified response envelope with `Cache-Control: no-store`. It is used by
-  the `Dockerfile` `HEALTHCHECK` and the backend/nginx healthchecks in `docker-compose.yml`.
-  ⚠️ It proves the worker can answer a request; it does **not** prove Redis/MySQL are usable
-  (the global `SessionInit` middleware reads the Redis session store, so the probe returns 500
-  during a Redis outage). See §6.1 of
-  [Image & Orchestration Production Requirements](./image-and-orchestration-production-requirements.md).
+- The backend exposes two probes with **different** semantics (`app\controller\HealthController`):
+
+  | Endpoint | Semantics | Dependencies | What to do on failure |
+  | --- | --- | --- | --- |
+  | `GET /healthz` | **liveness**: can the worker still finish a request | none (no DB, no cache, no auth) | **restart** the container |
+  | `GET /readyz` | **readiness**: are the runtime dependencies usable | database + Redis + config | **take it out of rotation**, do not restart |
+
+  - Both return the unified response envelope plus `Cache-Control: no-store`; both are
+    unauthenticated, idempotent and side-effect free.
+  - Both are short-circuited by the global `app\middleware\HealthProbeBypass` middleware
+    **before** `SessionInit`, so a **Redis blip cannot turn liveness into a 500** (otherwise
+    Kubernetes would restart every instance and turn a local failure into a global one).
+    Check the `X-Health-Probe-Bypass` response header (`healthz` / `readyz`) to confirm the
+    bypass actually applied; without it the request took the routing fallback and the immunity
+    is **not** in effect.
+  - `/readyz` answers **503** on failure and lists every check under `checks.{database,redis,config}`
+    (`ok` / `latency_ms` / `error`). Each check has its **own 2s timeout** and never blocks the
+    others, so all failures are reported at once.
+  - The `config` check enforces two fail-closed preconditions: `DEFAULT_TENANT_ID` is configured
+    and positive (ER-04), and `APP_DEBUG=false` in production-like environments.
+  - The `Dockerfile` `HEALTHCHECK` and the backend/nginx healthchecks in `docker-compose.yml`
+    use `/healthz` (compose has no readiness concept). For Kubernetes / Swarm probe
+    configuration see §6.1 of
+    [Image & Orchestration Production Requirements](./image-and-orchestration-production-requirements.md).
 - Critical business KPIs and error rates **SHOULD** be monitored with alerts.
 
 ## 5. Caching, Sessions and Queues

@@ -15,19 +15,22 @@ use think\facade\Db;
  * 本文件锁定的是**探针契约**，不是「能不能返回 200」这么简单：
  *   1. 探针**不查库**（用 ORM 的 SQL 监听器逐条计数，零条才算通过）；
  *   2. 探针**不被自己的限流拒掉**（容量 3 的 ip 桶下连打 200 次必须全 200），
- *      并额外用「拆掉这条白名单 → 立刻 429」证明第 2 条不是空转；
+ *      并用「同一条紧配额下普通路由必须 429」证明第 2 条不是空转；
  *   3. 演示路由（`/think`、`/hello/:name`）在生产环境**不注册**，且控制器层也 404
  *      （只删路由不够，见 `app\controller\Index` 的类注释）；
- *   4. 探针的访问日志行为被**显式固定**（每次一行，`rate_limited=false`）——
- *      将来若有人决定「探针不记访问日志」，这条用例会红，迫使这个决定被显式做出。
+ *   4. 探针的访问日志行为被**显式固定** —— 本轮的结论是「旁路命中时**不写**访问日志」，
+ *      理由与补偿见对应用例的注释。
  *
- * ## 未在此文件覆盖的边界（放在报告里，因为它做不到）
+ * ## 本轮变化：`/healthz` 在 `SessionInit` **之前**就被短路
  *
- * 「Redis 不可用 → `/healthz` 仍 200」**在当前架构下做不到**：全局中间件
- * `think\middleware\SessionInit` 会在每个请求上读 `session.store`（本项目配置为 `redis`）
- * 的会话数据，Redis 一挂就在路由之前抛异常。要满足这条需要让探针绕过 SessionInit，
- * 也就是改 `app/middleware.php`（本轮被明确禁止）。详见
- * `docs/technical-specs/deployment/image-and-orchestration-production-requirements.md` §6。
+ * 上一轮本文件记录过一条「做不到」的边界：「Redis 不可用 → `/healthz` 仍 200」在当前架构下
+ * 做不到，因为全局 `think\middleware\SessionInit` 会在路由之前读 Redis 会话。
+ * 本轮由 `app\middleware\HealthProbeBypass`（注册在 `SessionInit` 之前）解决，
+ * 真实进程证据见 `tests/Feature/ReadinessProbeTest`（故意把 session 的 Redis 指到
+ * `127.0.0.1:1`，`/healthz` 仍 200、同一环境下的普通路由 500）。
+ *
+ * 也就是说：本文件负责「liveness 契约 + 不受限流影响 + 演示路由边界」，
+ * 依赖故障下的行为与 readiness 契约由 `ReadinessProbeTest` 负责，两者不要重复也不要冲突。
  *
  * @package Tests\Feature
  */
@@ -151,8 +154,11 @@ class HealthzProbeTest extends ThinkPHPTestCase
     /**
      * 容量只有 3 的 ip 令牌桶下，连续 200 次探针必须**全部** 200
      *
-     * 若 `/healthz` 没被 `config/ratelimit.php` 的路径级放行覆盖，第 4 次就会 429 ——
-     * 也就是说这条用例真正验证的是「白名单生效」，而不是「默认限流关着所以没限」。
+     * 本轮起探针在 `SessionInit` 之前就被 `HealthProbeBypass` 短路，**压根到不了**
+     * `RateLimit` 中间件 —— 因此这条用例现在的含义是「旁路生效，探针永远不会被限流」。
+     * 它仍然有价值：一旦有人把旁路从 `app/middleware.php` 里删掉或挪到 `RateLimit` 之后，
+     * 只要 `config/ratelimit.php` 的路径放行还在，本用例依旧绿（纵深防御），
+     * 但 `testTightQuotaRejectsRegularRouteWhileProbeStaysExempt()` 会暴露「旁路没了」。
      */
     public function testProbeIsNotRejectedTwoHundredTimesInARowUnderTightQuota(): void
     {
@@ -172,25 +178,45 @@ class HealthzProbeTest extends ThinkPHPTestCase
     }
 
     /**
-     * 对照组：**拆掉** `/healthz` 的路径放行后，同样的紧配额立刻 429
+     * 对照组：同一条紧配额下，**普通路由**必须被限流 —— 证明限流器真的在工作
      *
-     * 没有这条，「连打 200 次全 200」可能只是因为限流中间件压根没在工作（历史上
-     * `RATELIMIT_ENABLED` 未设置时中间件全程直通，那种用例是空转的）。
+     * 上一轮这条用例的做法是「拆掉 `/healthz` 的路径级放行 → 探针立刻 429」。
+     * 本轮起这个手法**失效了**，而且不是断言放宽、是行为本身变了：
+     * `/healthz` 在 `SessionInit` 之前就被 `HealthProbeBypass` 短路，**根本到不了**
+     * `RateLimit` 中间件 —— 拆不拆 `config/ratelimit.php` 里的白名单，对探针都不再有影响。
+     *
+     * 因此对照组换成「同一条紧配额打普通路由」：
+     *   1. 探针（即使显式删掉白名单）→ 连续 5 次全部 200，证明免疫来自旁路而不是白名单；
+     *   2. 普通路由 `/think` → 必须出现 429，证明限流器本身没有空转。
+     *
+     * 白名单**仍然保留**在 `config/ratelimit.php`（纵深防御）：万一将来旁路被误删、
+     * 或注册顺序被挪到 `RateLimit` 之后，探针也不会被自己的限流拒掉。
      */
-    public function testTightQuotaActuallyRejectsWhenProbeExemptionIsRemoved(): void
+    public function testTightQuotaRejectsRegularRouteWhileProbeStaysExempt(): void
     {
         $clientIp = '203.0.113.241';
         $this->useTightIpQuota($clientIp);
 
-        // 只删掉本用例要验证的那一条路径级放行，其余配置保持原样
+        // 显式删掉探针的路径级放行：证明「探针免疫」不是白名单带来的
         $config = (array) config('ratelimit');
         unset($config['routes']['/healthz']);
         Config::set($config, 'ratelimit');
 
+        $probeCodes = [];
+        for ($i = 0; $i < 5; $i++) {
+            $probeCodes[$this->probe('/' . self::PROBE_PATH, $clientIp)->getCode()] = true;
+        }
+        $this->assertSame(
+            [200],
+            array_keys($probeCodes),
+            '去掉白名单后探针仍必须全部 200（免疫来自 HealthProbeBypass 旁路）。实际状态码：'
+            . json_encode(array_keys($probeCodes))
+        );
+
         $saw429 = false;
         $codes  = [];
         for ($i = 0; $i < 20; $i++) {
-            $code = $this->probe('/' . self::PROBE_PATH, $clientIp)->getCode();
+            $code    = $this->probe('/think', $clientIp)->getCode();
             $codes[] = $code;
             if ($code === 429) {
                 $saw429 = true;
@@ -200,7 +226,7 @@ class HealthzProbeTest extends ThinkPHPTestCase
 
         $this->assertTrue(
             $saw429,
-            '容量 3 的 ip 桶下，去掉 /healthz 放行后必须出现 429（否则说明限流中间件根本没生效）。实际状态码：'
+            '容量 3 的 ip 桶下，普通路由 /think 必须出现 429（否则说明限流中间件根本没生效）。实际状态码：'
             . json_encode($codes)
         );
     }
@@ -274,34 +300,54 @@ class HealthzProbeTest extends ThinkPHPTestCase
     }
 
     // -----------------------------------------------------------------------
-    // 4. 访问日志：显式固定「保留」这个决定
+    // 4. 访问日志：显式固定「旁路命中时不写」这个决定
     // -----------------------------------------------------------------------
 
     /**
-     * 探针每次调用**恰好**产生一条访问日志，且 `rate_limited=false`
+     * 旁路命中探针时**不写**访问日志 —— 这是一个显式的决定，不是顺手丢掉
      *
-     * 为什么保留而不是静默掉：探针日志是「编排层确实在探」的唯一应用侧证据；
-     * 实测单行 296 字节，按 compose 的 15s 间隔算，backend + nginx 合计约 1.15 万行/天
-     * （约 3.4 MB/天），不构成「刷爆日志」。若将来要静音，应改 `app\middleware\AccessLog`
-     * 并把本用例一起改 —— 让这个决定被迫显式做出，而不是悄悄漂移。
+     * 上一轮本用例断言「每次探针恰好一行访问日志」。本轮 `/healthz` 由
+     * `HealthProbeBypass` 在 `SessionInit` **之前**短路，而 `AccessLog` 在链路上更靠后，
+     * 因此它**必然**不会执行。把新结论同样钉死：精确命中时行数必须**不变**。
+     *
+     * 补偿与边界（直说）：
+     *   - 代价：应用侧不再有「编排层在探我」的直接日志证据；
+     *   - 补偿 1：nginx 的 access log 仍然有（docker-compose 的 nginx 探针就是端到端经过它的）；
+     *   - 补偿 2：探针响应自带 `X-Trace-Id`，可与反代日志对齐；
+     *   - 反向对照：**近似**路径（`/healthz/`、`/healthz/x`、`/HEALTHZ`）不走旁路，
+     *     仍然各写一行 —— 见 `ReadinessProbeTest::testOnlyExactProbePathsAreBypassed()`，
+     *     那条用例同时证明了「旁路真的生效」而不是「访问日志坏了」。
+     *   - 若将来确实需要应用侧证据，正确做法是让旁路分支写一条**独立**的 probe 日志，
+     *     而不是把探针重新塞回 `AccessLog` 之后（那会把日志 I/O 重新变成 liveness 的依赖）。
      */
-    public function testProbeWritesExactlyOneAccessLogLinePerCall(): void
+    public function testProbeBypassWritesNoAccessLogLine(): void
     {
         $file = dirname(__DIR__, 2) . '/runtime/log/access/access-' . date('Ymd') . '.log';
         $before = is_file($file) ? count(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)) : 0;
 
-        $this->probe('/' . self::PROBE_PATH);
+        $response = $this->probe('/' . self::PROBE_PATH);
+        $this->assertSame(200, $response->getCode(), '响应体：' . (string) $response->getContent());
+        // 先证明「旁路确实接管了」——否则「没有新增日志」可能只是请求压根没发生
+        $this->assertSame(
+            self::PROBE_PATH,
+            (string) $response->getHeader(\app\middleware\HealthProbeBypass::BYPASS_HEADER),
+            '探针响应必须由 HealthProbeBypass 直接产出'
+        );
 
         $after = is_file($file) ? count(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)) : 0;
-        $this->assertSame($before + 1, $after, '一次探针应恰好写一行访问日志');
+        $this->assertSame($before, $after, '旁路命中时 AccessLog 不应执行（因此不应新增任何访问日志行）');
 
-        $lines = file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        $entry = json_decode((string) end($lines), true);
+        // 正向对照：同一个计数手法在**非探针**路径上必须观察到新增行。
+        // 没有这条，「没有新增」也可能只是日志机制整体失效 —— 那样本用例就是空转的。
+        $controlBefore = $after;
+        $this->probe('/think');
+        $controlAfter = is_file($file) ? count(file($file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES)) : 0;
 
-        $this->assertIsArray($entry);
-        $this->assertSame('/healthz', $entry['path'] ?? null);
-        $this->assertSame(200, $entry['status_code'] ?? null);
-        $this->assertFalse((bool) ($entry['rate_limited'] ?? true), '探针不应被标记为已限流');
+        $this->assertSame(
+            $controlBefore + 1,
+            $controlAfter,
+            '对照组失败：非探针路径 /think 应恰好写一行访问日志（说明本用例的计数手段已失效）'
+        );
     }
 
     // -----------------------------------------------------------------------

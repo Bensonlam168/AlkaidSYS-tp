@@ -2,8 +2,10 @@
 
 > 🔶 **实现状态**：**部分实现** —— 已实现：`Dockerfile` 层缓存拆分、composer 固定版本、非 root 运行、
 > `HEALTHCHECK`、`EXPOSE` 端口纠正、`.dockerignore`、`docker-compose.yml` 加固（restart / healthcheck /
-> 资源限制 / 端口收敛 / 凭据参数化）、`docker-compose.prod.yml` 生产 override。
-> 未实现：镜像签名与 SBOM、CVE 扫描门禁、Kubernetes 编排清单、静态资源 CDN 化。
+> 资源限制 / 端口收敛 / 凭据参数化）、`docker-compose.prod.yml` 生产 override、
+> **liveness / readiness 分离**（`/healthz` 由 `HealthProbeBypass` 在 `SessionInit` 之前短路；
+> `/readyz` 逐项检查 DB/Redis/配置并返回 503，见 §6.1）。
+> 未实现：镜像签名与 SBOM、CVE 扫描门禁、Kubernetes 编排清单（只在文档里给了探针 YAML 片段）、静态资源 CDN 化。
 
 本文是 `deployment-guidelines.md` 在**容器层**的落地细则：上面那份讲「部署流程与可观测性」的原则，
 本文讲「镜像怎么造、编排怎么配、怎么验证」。两者冲突时，以本文的容器专属结论为准。
@@ -192,7 +194,8 @@ TASK 模式下 boot 脚本里有一个 `enable-blackfire-agent.sh`，它在检�
 | mysql | `mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent` | MySQL 8 官方镜像自带 `mysqladmin`；`--silent` 让成功时无输出 |
 | redis | `redis-cli ping` | 镜像自带；返回 `PONG` 且退出码 0 |
 | rabbitmq | `rabbitmq-diagnostics -q ping` | 比 `rabbitmqctl status` 轻，3.12-management-alpine 自带 |
-| backend | `curl -fsS http://127.0.0.1:8080/healthz` | 见下 |
+| backend（liveness） | `curl -fsS http://127.0.0.1:8080/healthz` | 见 §6.1.1 |
+| backend（readiness） | `curl -fsS http://127.0.0.1:8080/readyz`（**仅 K8s/Swarm**） | 见 §6.1.2；compose 没有 readiness 概念 |
 | nginx | `wget -q -O /dev/null http://127.0.0.1/healthz` | 端到端：能反代到后端并拿到 200 才算就绪 |
 
 **backend 为什么探 `/healthz` 而不是 `/`、也不经 nginx：**
@@ -215,33 +218,81 @@ TASK 模式下 boot 脚本里有一个 `enable-blackfire-agent.sh`，它在检�
 （`url_route_must=false` 时 `/index`、`/index/hello` 仍会被自动解析 —— 只删路由堵不住）。
 因此 `HEALTHCHECK` 若继续探 `/think`，在生产镜像里会**稳定失败**。
 
-**局限（直说，必须知道）：`/healthz` 只证明「worker 能响应」，不证明依赖可用。**
+#### 6.1.1 liveness：`/healthz` 现在真的免疫依赖故障（R-本轮）
 
-| 依赖 | 探针是否需要 | 实测结论 |
+**上一版本节记录的缺陷**：`/healthz` 的语义其实是「worker + 会话存储都活着」——
+全局中间件 `think\middleware\SessionInit` 会在**路由之前**读 Redis 会话
+（`config/session.php` 的 `type = cache`、`store = redis`），Redis 一挂，任何控制器都救不回来。
+在 K8s / Swarm 下 liveness 失败会触发**重启**，于是一次 Redis 抖动 → 全部后端实例一起重启
+→ 连接风暴 → Redis 更难恢复。**这不是可用性保护，是把局部故障放大成全局故障。**
+
+**现在**：全局中间件 `app\middleware\HealthProbeBypass` 注册在 `app/middleware.php` 里
+`Trace` / `Cors` **之后**、`SessionInit` **之前**，命中探针路径就直接产出响应，
+`SessionInit` / `TenantIdentify` / `SiteIdentify` / `AccessLog` / `RateLimit` **全都不执行**。
+
+| 细节 | 取值 / 结论 |
+| --- | --- |
+| 匹配规则 | `pathinfo()` **全等** `healthz` / `readyz`，且方法只允许 `GET` / `HEAD`；尾斜杠、子路径、大小写变体一律**不命中**（`str_starts_with` 之类的前缀匹配被明确禁止 —— 那会静默跳过 AccessLog 与 RateLimit） |
+| 为什么不在 Trace 之前 | `Trace` 只做 `random_bytes()` 生成 trace_id（零外部依赖），放在它后面探针响应才带 `trace_id` / `X-Trace-Id`，才能与 nginx 日志对齐；`Cors` 同理只读配置与请求头 |
+| 如何确认旁路生效 | 响应头 **`X-Health-Probe-Bypass: healthz`**。**没有这个头**说明请求走的是路由兜底（`route/app.php` 仍注册 `/healthz` 作为中间件失效时的兜底），此时 Redis 故障会重新把它打成 500 |
+| 实测证据 | `tests/Feature/ReadinessProbeTest`：在**独立 PHP 进程**里把 session 的 Redis 指到 `127.0.0.1:1`，`/healthz` 仍 **200**；同一进程环境里普通路由 `/think` **500**（`RedisException: Connection refused`，栈顶就是 `SessionInit`） |
+| 零 SQL | 旁路直接调用控制器，`/healthz` 依旧零条 SQL（`HealthzProbeTest` 用 ORM 监听器断言） |
+| 已知代价 | 探针不再走 `AccessLog`（应用侧少一条「编排层在探我」的日志）。补偿：nginx access log 仍有（端到端探针经过它），且响应自带 `X-Trace-Id`。**不要**为了这条日志把探针塞回 `AccessLog` 之后 —— 那会把日志 I/O 重新变成 liveness 的依赖 |
+
+#### 6.1.2 readiness：`/readyz`（本轮新增）
+
+`/readyz` 回答的是另一个问题：**依赖现在能不能用**。它同样绕开 `SessionInit`
+（否则 Redis 一挂它就 500，永远拿不到「哪一项挂了」这个唯一有用的信息），
+但**响应绝不是常量**：它真的去查 DB / Redis / 配置。
+
+| 检查项 | 做法 | 独立超时 |
 | --- | --- | --- |
-| MySQL | ❌ 不需要 | 把 DB 指到 `127.0.0.1:1`（无人监听）后 `/healthz` 仍 **200** |
-| Redis | ⚠️ **需要** | 把 Redis 指到 `127.0.0.1:1` 后 `/healthz` 变 **500**（`RedisException: Connection refused`） |
+| `database` | `SELECT 1`，走一条**按当前连接配置复制**出来的短超时连接（`PDO::ATTR_TIMEOUT`），不复用业务连接池里的长超时连接 | 2s |
+| `redis` | 建一条**独立**连接（`connect` + 读超时都设 2s）后 `PING`，用完 `close()`。**不**在业务共享连接上改 `OPT_READ_TIMEOUT` —— 实测恢复成 `0.0` 会让后续业务读取报 `read error on connection` | 2s |
+| `config` | `DEFAULT_TENANT_ID` 必须已配置且为正整数（ER-04 的 fail-closed 前提）；**生产类环境**（`production/prod/stage/staging`）下 `APP_DEBUG` 必须为 false（否则错误页泄露堆栈/SQL/绝对路径） | 纯内存 |
 
-Redis 这条硬依赖不是 `HealthController` 造成的，而是**全局中间件**造成的：
-`app/middleware.php` 里的 `think\middleware\SessionInit` 会在每个请求上
-`GET` / `DEL` 一个 `alkaid:session:<id>` 键（`config/session.php` 的
-`type = cache`、`store = redis`），`redis-cli monitor` 实测可见；Redis 一挂，
-它在**路由之前**就抛异常，任何控制器都救不回来。
+- 返回：全通过 **200**（`{"code":0,"data":{"status":"ok","checks":{…}}}`）；
+  任一失败 **503** + `data.status=degraded`，`checks.<name>.ok=false` 并带 `error`；
+- 三项**互相独立**：每项各自 try/catch，一项失败不影响其它项执行，因此一次就能列全失败项，
+  而不是「改一次配置、重启一次、再看下一个错误」；
+- 幂等、无副作用（只 `SELECT 1` + `PING`）、无鉴权。
 
-结论与建议：
+**K8s 用法（compose 没有 readiness 概念，只能在编排层表达）：**
 
-- 当前探针的语义其实是「worker + 会话存储都活着」。在 `docker compose` 下这只会让容器显示
-  `(unhealthy)`（Docker 本身不会因 unhealthy 重启容器），影响的是监控告警与
-  `depends_on: service_healthy` 的启动门；
-- **但在 K8s / Swarm 里，liveness 失败会触发重启** —— 那会把「Redis 抖动」放大成
-  「全部后端实例重启」。上 K8s 前必须二选一：
-  1. 让探针绕过 `SessionInit`（在 `app/middleware.php` 的最前面加一个
-     `HealthProbeBypass` 中间件，命中 `/healthz` 就直接返回 200）——
-     这需要改动全局中间件注册，属于独立任务，本次**未做**；
-  2. 把 `/healthz` 只配置成 **readiness** 探针，另配一个不依赖应用的存活探针
-     （例如 `nc -z 127.0.0.1 8080`，只证明 Swoole 端口在听）。
-- 无论如何都**不要**把 `/healthz` 当成「数据库/Redis 可用」的证据 ——
-  那需要单独的 readiness 端点（逐项 check + 各自超时），当前没有。
+```yaml
+containers:
+  - name: backend
+    livenessProbe:
+      httpGet: { path: /healthz, port: 8080 }
+      periodSeconds: 10
+      timeoutSeconds: 2
+      failureThreshold: 3          # 只有「进程死了」才会累计到这里
+    readinessProbe:
+      httpGet: { path: /readyz, port: 8080 }
+      periodSeconds: 5
+      # /readyz 最坏情况约 4s（DB 2s + Redis 2s，且两项串行），超时必须 ≥ 5s
+      timeoutSeconds: 5
+      failureThreshold: 2
+    startupProbe:
+      httpGet: { path: /healthz, port: 8080 }
+      failureThreshold: 30
+      periodSeconds: 2             # 覆盖 Swoole 冷启动 + 连接池预热
+```
+
+**不要把 `/readyz` 配成 livenessProbe**：Redis/MySQL 抖动时重启后端毫无帮助（新实例同样连不上），
+只会让所有实例一起重启、把连接风暴放大。
+
+**startup 期的 fail-fast 仍然存在（别混淆）**：`app/service.php` 里的
+`RedisHealthCheckService` 会在 `App::initialize()` 阶段做一次 Redis 读写自检，
+**连不上就抛异常**（启动失败 → 容器崩溃重启）。那条是「启动前必须满足」的硬门槛，
+readiness 管的是「启动之后依赖中途挂掉」——两者不是一件事，也不能相互替代。
+
+#### 6.1.3 使用边界（照做就行）
+
+- `HEALTHCHECK`（`Dockerfile`）、`docker-compose.yml` 的 backend/nginx healthcheck → **只用 `/healthz`**；
+- K8s / Swarm：liveness → `/healthz`，readiness → `/readyz`，启动门 → `/healthz`；
+- **永远不要**把 `/healthz` 当成「数据库/Redis 可用」的证据（那是 `/readyz`）；
+- **永远不要**把 `/readyz` 配成会触发重启的探针（那是 liveness）。
 
 
 ### 6.2 `start_period` 为什么给这么长
@@ -469,10 +520,12 @@ docker history <image> --no-trunc | grep -i -E "password|secret" || echo "OK: no
    `MYSQL_ROOT_PASSWORD` / `MYSQL_USER` / `MYSQL_PASSWORD` / `RABBITMQ_DEFAULT_USER` / `RABBITMQ_DEFAULT_PASS`。
    它们是 **compose 的插值变量**，只从 shell 环境或 compose 的项目级 `.env` 读取；
    写进 `.env.production` 不会满足它们，因为后者是容器的 `env_file`。详见 §8.2 的三层策略。
-4. **`/healthz` 已落地（本次），但它不是纯 liveness 探针**：全局 `SessionInit` 会读 Redis 会话，
-   因此 Redis 故障时探针会 500（实测，见 §6.1 的「局限」）。上 K8s 前必须先决定
-   「探针绕过 SessionInit」还是「只当 readiness 用」，否则一次 Redis 抖动会变成全实例重启。
+4. **`/healthz` 现在是纯 liveness（本轮修复），`/readyz` 是 readiness**：
+   两者都由全局中间件 `app\middleware\HealthProbeBypass` 在 `SessionInit` **之前**短路，
+   因此 Redis 故障不再把 liveness 打成 500（上一版本这里是「Redis 故障时探针 500」的已知缺陷）。
+   `/readyz` 逐项检查 DB / Redis / 配置，失败返回 503 —— 失败时**摘流量**，不要重启。
    旧用法 `/think` 已废弃：它在生产环境不再注册（`route/app.php` + `app\controller\Index` 双保险）。
+   细节与 K8s 探针 YAML 见 §6.1.1 ~ §6.1.3。
 5. **nginx 的 `root /var/www/alkaid/public` 在生产 override 下指向空目录**（源码挂载被清掉）。
    由于现在所有请求都 `proxy_pass` 到后端，实际不影响 API；但 `location ~* \.(jpg|...)$`
    这类静态资源规则会 404。静态资源应改由 CDN / 对象存储提供，属于后续工作。

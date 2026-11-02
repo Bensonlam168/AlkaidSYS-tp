@@ -36,9 +36,15 @@
 #    全部 success，因此不再需要忽略平台检查 —— 保留它只会让「扩展真的缺了」
 #    这件事在构建期静默通过、在运行期炸掉。
 #
-# 6) HEALTHCHECK 直连容器内 8080 的 /healthz。
+# 6) HEALTHCHECK 直连容器内 8080 的 /healthz（**liveness**）。
 #    /healthz 是 route/app.php 注册的专用 liveness 探针（app\controller\HealthController），
 #    **不查库、不读缓存业务键、不鉴权**，也不经 nginx，实测容器内 8080 直连返回 200。
+#    它由全局中间件 app\middleware\HealthProbeBypass 在 SessionInit **之前**短路，
+#    因此 Redis 抖动不会把它打成 500（否则 Docker/K8s 会把「Redis 抖动」当成「进程死了」）。
+#    ⚠️ 不要在这里改成 /readyz：readiness 失败意味着「别给我流量」，不是「重启我」。
+#       Dockerfile HEALTHCHECK 的语义与 liveness 一致（失败 → unhealthy），
+#       readiness 只能在 K8s/Swarm 的 readinessProbe 里表达（见
+#       docs/technical-specs/deployment/image-and-orchestration-production-requirements.md §6.1.2）。
 #    历史用法是框架演示路由 /think —— 零业务价值的示例闭包，且本镜像
 #    `ENV APP_ENV=production` 下它根本不会注册（route/app.php），因此不能继续依赖它。
 #    对照：/v1/admin/permission-monitor/health 需要鉴权（401），不适合做探针。

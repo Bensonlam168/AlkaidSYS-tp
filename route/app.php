@@ -12,22 +12,33 @@
 use think\facade\Route;
 
 // ===========================================================================
-// 健康探针 | Health probe
+// 健康探针 | Health probes
 // ===========================================================================
 //
-// `GET /healthz` —— **liveness** 探针：只回答一个问题「这个 Swoole worker 还能不能响应请求」。
+// 两个端点、两种语义，**不要混用**：
+//
+// | 端点 | 语义 | 依赖面 | 失败时编排层该做什么 |
+// | --- | --- | --- | --- |
+// | `GET /healthz` | **liveness**：本 Swoole worker 还能不能把请求处理完 | 0 个（不查库/不读缓存/不鉴权） | 重启容器 |
+// | `GET /readyz`  | **readiness**：运行时依赖（DB/Redis/配置）是否可用 | DB + Redis + 配置 | 摘流量，**不要**重启 |
 //
 // 边界（都是刻意的）：
-//   - **不查库**：控制器里没有任何 Db/Cache 调用，也不做鉴权（不挂 Auth / Permission），
-//     被容器 HEALTHCHECK、docker-compose healthcheck、负载均衡高频调用时必须便宜且无副作用；
-//   - **无副作用**：同一个请求打 1 次和打 1 万次，业务状态都不变（幂等）；
+//   - **无副作用 / 幂等**：打 1 次和打 1 万次，业务状态都不变（`/readyz` 只 `SELECT 1` + `PING`）；
+//   - **无鉴权**：不挂 Auth / Permission —— 编排层不可能持有业务凭据；
 //   - **返回统一响应结构**：`code / message / data / timestamp(/ trace_id)`，见
 //     `AGENTS.md` 的「REST 与错误码」约束与 `app\controller\ApiController` 的类注释。
 //
-// ⚠️ 它**不能**证明「数据库 / Redis 可用」（那属于 readiness 探针的职责）。
-//    具体原因（全局 `SessionInit` 会读 Redis 会话）与后续做法见
-//    `docs/technical-specs/deployment/image-and-orchestration-production-requirements.md` §6.
+// ⚠️ 这两个路由的**实际入口是中间件** `app\middleware\HealthProbeBypass`
+//    （`app/middleware.php` 里注册在 `SessionInit` 之前）：它命中探针路径就直接调用控制器，
+//    绕开会读 Redis 会话的 `SessionInit` 与 fail-closed 的 `TenantIdentify`。
+//    没有那层旁路，Redis 一抖动 `/healthz` 就会在路由之前 500，K8s 会把全部实例重启。
+//
+//    这里仍然注册路由，是作为「中间件没生效时的兜底」：两条路径**共用同一个控制器方法**，
+//    响应字段与缓存头完全一致，因此不存在「两条路径都能响应但行为不同」的歧义。
+//    代价是：兜底路径会重新经过 SessionInit（见
+//    `docs/technical-specs/deployment/image-and-orchestration-production-requirements.md` §6）。
 Route::get('healthz', 'app\controller\HealthController@index');
+Route::get('readyz', 'app\controller\HealthController@ready');
 
 // ===========================================================================
 // 框架演示路由（仅非生产环境注册）| Framework demo routes (non-production only)

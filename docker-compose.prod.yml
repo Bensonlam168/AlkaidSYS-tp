@@ -117,6 +117,28 @@ services:
       - swoole
     security_opt:
       - no-new-privileges:true
+    # 健康检查：与基文件同值，**显式写一遍是为了把约束固定在这里**（不是重复配置）。
+    #
+    # liveness vs readiness（两者语义不同，配错会把局部故障放大成全局故障）：
+    #   - liveness  = 进程还能不能响应 → `/healthz`（本 healthcheck）。
+    #     它由全局中间件 HealthProbeBypass 在 SessionInit 之前短路，
+    #     因此 **Redis 抖动不会让它 500** —— 生产上这条尤其重要：
+    #     若它被 Redis 拖成 unhealthy，编排层会重启**全部**后端实例，
+    #     Redis 恢复前新实例也起不来（`RedisHealthCheckService` 在启动期 fail-fast）。
+    #   - readiness = 依赖（DB / Redis / 配置）是否可用 → `/readyz`。
+    #     失败返回 **503** 并逐项列出 checks，编排层的正确反应是**摘流量**，不是重启。
+    #
+    # ⚠️ compose 没有 readiness 概念：本文件只能表达 liveness。
+    #    生产若跑 K8s / Swarm，必须另外配 readinessProbe=/readyz（timeoutSeconds ≥ 5s），
+    #    完整 YAML 与理由见
+    #    docs/technical-specs/deployment/image-and-orchestration-production-requirements.md §6.1.2。
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Swoole 冷启动 + 连接池预热（含启动期 Redis 读写自检）需要时间
+      start_period: 60s
     deploy:
       resources:
         limits:
