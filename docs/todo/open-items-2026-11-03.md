@@ -109,6 +109,9 @@ IProcessTaskHistoryService   IScheduler
 | 3.5 | `/storage/` 与 `/tmp/` 是 root-anchored 且仅匹配目录：根下一个名叫 `storage` 的**文件**不被忽略 | 路径矩阵实测 |
 | 3.6 | `check-raw-sql-tenant.php` / `check-rawsql-safety.php` / `check-env-production.php` 基线即 exit=1，均**不在**十道门禁内 | 前两者是人工审查工具，最后一个是生产配置预检（本地无 `.env.production`） |
 | 3.7 | `plugins/workflow-engine/vendor` 已出库，但仓库里的本地副本仍是旧 source 口径；跑一次 `composer install` 才会切到 dist | `vendor/composer/installed.json` 的 `installation-source` 仍是 source |
+| 3.8 | `Dockerfile` 里的 `composer dump-autoload` 仍会触发 `post-autoload-dump` → `php think service:discover` → Redis 自检；构建期无 `.env`、无 `redis` 主机，**`docker build` 在任何环境都失败**。CI 已改走 runner 直接跑 PHP，是绕过而非修好 | 需在 Dockerfile 该层加 `--no-scripts`，并在容器启动后补一次 `service:discover` |
+| 3.9 | `.github/workflows/branch-protection.yml` 有一处同样的缺陷：`composer install` 未加 `--no-scripts` 且全程不生成 `.env`。它只在 `pull_request` 触发，**下一个 PR 会以同样的 `getaddrinfo for redis` 红** | 加 `--no-scripts` 即可 |
+| 3.10 | `.github/workflows/git-metrics.yml` 每次推送都以 `event=push` 红了、**0 个 job**，属工作流加载期失败。它只声明了 `schedule` 与 `workflow_dispatch`，不是门禁 | 需单独排查；不影响合并 |
 
 ---
 
@@ -158,3 +161,4 @@ cd plugins/workflow-engine && composer install
 |---|---|
 | 2026-11-03 | 建立台账；登记远端分叉、DI 契约三项决策、B 类测试归属、7 项小遗留 |
 | 2026-11-03 | §1 远端分叉已解决：推送 `develop` 至 `1e5c00e`，本地与远端同步 |
+| 2026-11-03 | CI 首次在这批工作上运行：五道门禁工作流已全绿（含 `PHPUnit Tests`）。根因是 `composer install` 的 `post-autoload-dump` 会启动应用并触发 Redis 自检；另修一处 `.env` 的 `sed` 静默失效与 `route:verify` 依赖 `variables_order` 的问题 |
