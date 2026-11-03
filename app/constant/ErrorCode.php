@@ -41,6 +41,7 @@ final class ErrorCode
     public const TOKEN_ISSUER_MISMATCH = 2005; // Token issuer mismatch
     public const WRONG_TOKEN_TYPE = 2006;      // Access token used for refresh
     public const TOKEN_REVOKED = 2007;         // Token revoked or replayed
+    public const REGISTRATION_NOT_ALLOWED = 2008; // Registration not allowed for resolved tenant（注册目标租户不可用/未开放）
 
     // Resource Errors (3001-3999) | 资源错误
     public const NOT_FOUND = 404;

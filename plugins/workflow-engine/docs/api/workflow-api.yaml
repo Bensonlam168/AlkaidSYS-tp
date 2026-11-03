@@ -1,0 +1,2014 @@
+openapi: 3.0.3
+info:
+  title: AlkaidSYS Workflow Engine API
+  description: |
+    AlkaidSYS 工作流引擎 API 接口文档
+
+    ## 概述
+    工作流引擎提供完整的流程管理能力，包括流程定义、实例管理、任务处理和触发器配置。
+
+    ## 认证
+    除 Webhook 端点外，所有接口需要 JWT Bearer Token 认证。
+
+    ## 多租户
+    系统自动根据认证信息识别租户，数据完全隔离。
+
+    ## 权限
+    使用 Casbin RBAC 权限模型，权限码格式：`workflow.{resource}.{action}`
+
+  version: 1.0.0
+  contact:
+    name: AlkaidSYS Team
+    email: team@alkaidsys.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+tags:
+  - name: Definitions
+    description: 工作流定义管理
+  - name: Instances
+    description: 工作流实例管理
+  - name: Tasks
+    description: 工作流任务处理
+  - name: Triggers
+    description: 触发器管理
+  - name: Webhooks
+    description: Webhook 端点
+
+paths:
+  # ========== Workflow Definitions ==========
+  /workflow/definitions:
+    get:
+      tags:
+        - Definitions
+      summary: 列出工作流定义
+      description: 获取当前租户的工作流定义列表，支持分页和筛选
+      operationId: listDefinitions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          description: 定义状态筛选
+          schema:
+            type: string
+            enum: [draft, published, archived]
+        - name: category
+          in: query
+          description: 分类筛选
+          schema:
+            type: string
+        - name: keyword
+          in: query
+          description: 关键字搜索（名称、描述）
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/WorkflowDefinition'
+                          total:
+                            type: integer
+                          page:
+                            type: integer
+                          limit:
+                            type: integer
+              example:
+                code: 0
+                message: success
+                data:
+                  items:
+                    - id: "def-001"
+                      name: "请假审批流程"
+                      key: "leave-approval"
+                      version: 1
+                      status: "published"
+                      category: "hr"
+                      description: "员工请假审批流程"
+                      created_at: "2025-12-17T10:00:00Z"
+                      updated_at: "2025-12-17T10:00:00Z"
+                  total: 1
+                  page: 1
+                  limit: 20
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags:
+        - Definitions
+      summary: 创建工作流定义
+      description: 创建新的工作流定义
+      operationId: createDefinition
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionCreate'
+            example:
+              name: "请假审批流程"
+              key: "leave-approval"
+              description: "员工请假审批流程"
+              category: "hr"
+              bpmn_xml: "<?xml version=\"1.0\"?>..."
+              node_config:
+                - id: "start"
+                  type: "start"
+                  name: "开始"
+                - id: "approval"
+                  type: "approval"
+                  name: "主管审批"
+                  config:
+                    assignee_type: "role"
+                    assignee_value: "manager"
+              trigger_config:
+                type: "manual"
+                config: {}
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowDefinition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /workflow/definitions/{id}:
+    get:
+      tags:
+        - Definitions
+      summary: 获取工作流定义详情
+      description: 根据 ID 获取工作流定义的详细信息
+      operationId: getDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowDefinitionDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags:
+        - Definitions
+      summary: 更新工作流定义
+      description: 更新指定的工作流定义
+      operationId: updateDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowDefinitionUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowDefinition'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags:
+        - Definitions
+      summary: 删除工作流定义
+      description: 删除指定的工作流定义（仅草稿状态可删除）
+      operationId: deleteDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: 无法删除（非草稿状态或存在运行中实例）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /workflow/definitions/{id}/publish:
+    post:
+      tags:
+        - Definitions
+      summary: 发布工作流定义
+      description: 将草稿状态的工作流定义发布为可用状态
+      operationId: publishDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 发布成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id:
+                            type: string
+                          version:
+                            type: integer
+                          status:
+                            type: string
+                            example: published
+        '400':
+          description: 验证失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+  /workflow/definitions/{id}/archive:
+    post:
+      tags:
+        - Definitions
+      summary: 归档工作流定义
+      description: 将工作流定义归档，归档后不可创建新实例
+      operationId: archiveDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 归档成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/definitions/{id}/validate:
+    post:
+      tags:
+        - Definitions
+      summary: 验证工作流定义
+      description: 验证工作流定义的配置是否正确
+      operationId: validateDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 验证结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          valid:
+                            type: boolean
+                          errors:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                node_id:
+                                  type: string
+                                code:
+                                  type: string
+                                message:
+                                  type: string
+              example:
+                code: 0
+                message: success
+                data:
+                  valid: false
+                  errors:
+                    - node_id: "approval-1"
+                      code: "MISSING_ASSIGNEE"
+                      message: "审批节点未配置审批人"
+
+  /workflow/definitions/{id}/clone:
+    post:
+      tags:
+        - Definitions
+      summary: 克隆工作流定义
+      description: 复制现有工作流定义创建新的草稿
+      operationId: cloneDefinition
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 新定义的名称
+                key:
+                  type: string
+                  description: 新定义的 key
+      responses:
+        '200':
+          description: 克隆成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowDefinition'
+
+  # ========== Workflow Instances ==========
+  /workflow/instances:
+    get:
+      tags:
+        - Instances
+      summary: 列出工作流实例
+      description: 获取工作流实例列表，支持分页和筛选
+      operationId: listInstances
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          description: 实例状态筛选
+          schema:
+            type: string
+            enum: [pending, running, suspended, completed, failed, cancelled]
+        - name: definition_id
+          in: query
+          description: 按定义 ID 筛选
+          schema:
+            type: string
+        - name: started_by
+          in: query
+          description: 按发起人筛选
+          schema:
+            type: integer
+        - name: start_time_from
+          in: query
+          description: 开始时间起始
+          schema:
+            type: string
+            format: date-time
+        - name: start_time_to
+          in: query
+          description: 开始时间结束
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/WorkflowInstance'
+                          total:
+                            type: integer
+
+    post:
+      tags:
+        - Instances
+      summary: 启动工作流实例
+      description: 启动新的工作流实例
+      operationId: startInstance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - definition_id
+              properties:
+                definition_id:
+                  type: string
+                  description: 工作流定义 ID
+                variables:
+                  type: object
+                  description: 初始流程变量
+                  additionalProperties: true
+                business_key:
+                  type: string
+                  description: 业务关联键
+            example:
+              definition_id: "def-001"
+              variables:
+                leave_type: "annual"
+                days: 3
+                reason: "家庭事务"
+              business_key: "LEAVE-2025-001"
+      responses:
+        '200':
+          description: 启动成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowInstance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workflow/instances/{id}:
+    get:
+      tags:
+        - Instances
+      summary: 获取工作流实例详情
+      description: 获取指定工作流实例的详细信息
+      operationId: getInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowInstanceDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /workflow/instances/{id}/cancel:
+    post:
+      tags:
+        - Instances
+      summary: 取消工作流实例
+      description: 取消正在运行的工作流实例
+      operationId: cancelInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: 取消原因
+      responses:
+        '200':
+          description: 取消成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: 无法取消（已完成或已取消）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /workflow/instances/{id}/suspend:
+    post:
+      tags:
+        - Instances
+      summary: 暂停工作流实例
+      description: 暂停正在运行的工作流实例
+      operationId: suspendInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 暂停成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/instances/{id}/resume:
+    post:
+      tags:
+        - Instances
+      summary: 恢复工作流实例
+      description: 恢复已暂停的工作流实例
+      operationId: resumeInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 恢复成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/instances/{id}/history:
+    get:
+      tags:
+        - Instances
+      summary: 获取实例执行历史
+      description: 获取工作流实例的完整执行历史
+      operationId: getInstanceHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/InstanceHistoryEntry'
+
+  /workflow/instances/{id}/variables:
+    get:
+      tags:
+        - Instances
+      summary: 获取实例变量
+      description: 获取工作流实例的流程变量
+      operationId: getInstanceVariables
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        additionalProperties: true
+
+    put:
+      tags:
+        - Instances
+      summary: 更新实例变量
+      description: 更新工作流实例的流程变量
+      operationId: updateInstanceVariables
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  # ========== Workflow Tasks ==========
+  /workflow/tasks:
+    get:
+      tags:
+        - Tasks
+      summary: 列出所有任务
+      description: 获取所有工作流任务列表
+      operationId: listTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          description: 任务状态
+          schema:
+            type: string
+            enum: [pending, claimed, completed, delegated, transferred]
+        - name: instance_id
+          in: query
+          description: 按实例 ID 筛选
+          schema:
+            type: string
+        - name: assignee
+          in: query
+          description: 按处理人筛选
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/WorkflowTask'
+                          total:
+                            type: integer
+
+  /workflow/tasks/pending:
+    get:
+      tags:
+        - Tasks
+      summary: 获取待办任务
+      description: 获取当前用户的待办任务列表
+      operationId: getPendingTasks
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/WorkflowTask'
+                          total:
+                            type: integer
+
+  /workflow/tasks/{id}:
+    get:
+      tags:
+        - Tasks
+      summary: 获取任务详情
+      description: 获取指定任务的详细信息
+      operationId: getTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowTaskDetail'
+
+  /workflow/tasks/{id}/approve:
+    post:
+      tags:
+        - Tasks
+      summary: 审批通过
+      description: 通过审批任务
+      operationId: approveTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment:
+                  type: string
+                  description: 审批意见
+                variables:
+                  type: object
+                  description: 更新的流程变量
+            example:
+              comment: "同意，请假理由充分"
+              variables:
+                approved_days: 3
+      responses:
+        '200':
+          description: 审批成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /workflow/tasks/{id}/reject:
+    post:
+      tags:
+        - Tasks
+      summary: 审批拒绝
+      description: 拒绝审批任务
+      operationId: rejectTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - comment
+              properties:
+                comment:
+                  type: string
+                  description: 拒绝理由
+            example:
+              comment: "请假时间与重要会议冲突，建议调整"
+      responses:
+        '200':
+          description: 拒绝成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/tasks/{id}/transfer:
+    post:
+      tags:
+        - Tasks
+      summary: 转办任务
+      description: 将任务转交给其他人处理
+      operationId: transferTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - target_user_id
+              properties:
+                target_user_id:
+                  type: integer
+                  description: 目标用户 ID
+                comment:
+                  type: string
+                  description: 转办说明
+            example:
+              target_user_id: 102
+              comment: "请协助审批"
+      responses:
+        '200':
+          description: 转办成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/tasks/{id}/delegate:
+    post:
+      tags:
+        - Tasks
+      summary: 委托任务
+      description: 委托他人代为处理任务
+      operationId: delegateTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - delegate_to
+              properties:
+                delegate_to:
+                  type: integer
+                  description: 被委托人 ID
+                comment:
+                  type: string
+                  description: 委托说明
+      responses:
+        '200':
+          description: 委托成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/tasks/{id}/claim:
+    post:
+      tags:
+        - Tasks
+      summary: 认领任务
+      description: 认领候选任务
+      operationId: claimTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 认领成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: 任务已被认领
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /workflow/tasks/{id}/unclaim:
+    post:
+      tags:
+        - Tasks
+      summary: 取消认领
+      description: 取消认领任务，释放给其他候选人
+      operationId: unclaimTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 取消成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/tasks/{id}/complete:
+    post:
+      tags:
+        - Tasks
+      summary: 完成任务
+      description: 完成通用任务（非审批类型）
+      operationId: completeTask
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                result:
+                  type: object
+                  description: 任务执行结果
+                variables:
+                  type: object
+                  description: 更新的流程变量
+      responses:
+        '200':
+          description: 完成成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/tasks/{id}/form:
+    get:
+      tags:
+        - Tasks
+      summary: 获取任务表单
+      description: 获取任务关联的表单架构和数据
+      operationId: getTaskForm
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          schema:
+                            type: object
+                            description: 表单架构
+                          data:
+                            type: object
+                            description: 表单数据
+                          readonly:
+                            type: boolean
+                            description: 是否只读
+
+    post:
+      tags:
+        - Tasks
+      summary: 提交任务表单
+      description: 提交任务关联的表单数据
+      operationId: submitTaskForm
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: 提交成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: 表单验证失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+
+  # ========== Workflow Triggers ==========
+  /workflow/triggers:
+    get:
+      tags:
+        - Triggers
+      summary: 列出触发器
+      description: 获取触发器列表
+      operationId: listTriggers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: type
+          in: query
+          description: 触发器类型
+          schema:
+            type: string
+            enum: [manual, webhook, schedule, data_event, form_submit, message, signal, timer_event, system_event]
+        - name: definition_id
+          in: query
+          description: 按定义 ID 筛选
+          schema:
+            type: string
+        - name: enabled
+          in: query
+          description: 按启用状态筛选
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/WorkflowTrigger'
+                          total:
+                            type: integer
+
+    post:
+      tags:
+        - Triggers
+      summary: 创建触发器
+      description: 创建新的工作流触发器
+      operationId: createTrigger
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowTriggerCreate'
+            examples:
+              webhook:
+                summary: Webhook 触发器
+                value:
+                  name: "外部系统 Webhook"
+                  type: "webhook"
+                  definition_id: "def-001"
+                  config:
+                    secret: "my-secret-key"
+                    ip_whitelist: ["192.168.1.0/24"]
+              schedule:
+                summary: 定时触发器
+                value:
+                  name: "每日报表"
+                  type: "schedule"
+                  definition_id: "def-002"
+                  config:
+                    cron: "0 9 * * *"
+                    timezone: "Asia/Shanghai"
+              data_event:
+                summary: 数据事件触发器
+                value:
+                  name: "订单创建触发"
+                  type: "data_event"
+                  definition_id: "def-003"
+                  config:
+                    collection: "orders"
+                    event: "created"
+                    conditions:
+                      amount: { "$gt": 10000 }
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowTrigger'
+
+  /workflow/triggers/types:
+    get:
+      tags:
+        - Triggers
+      summary: 获取触发器类型
+      description: 获取所有可用的触发器类型及其配置说明
+      operationId: getTriggerTypes
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            type:
+                              type: string
+                            name:
+                              type: string
+                            description:
+                              type: string
+                            config_schema:
+                              type: object
+              example:
+                code: 0
+                message: success
+                data:
+                  - type: "manual"
+                    name: "手动触发"
+                    description: "用户主动触发工作流"
+                    config_schema: {}
+                  - type: "webhook"
+                    name: "Webhook 触发"
+                    description: "通过 HTTP 请求触发工作流"
+                    config_schema:
+                      type: "object"
+                      properties:
+                        secret:
+                          type: "string"
+                          description: "签名密钥"
+                  - type: "schedule"
+                    name: "定时触发"
+                    description: "按 Cron 表达式定时触发"
+                    config_schema:
+                      type: "object"
+                      properties:
+                        cron:
+                          type: "string"
+                          description: "Cron 表达式"
+
+  /workflow/triggers/{id}:
+    get:
+      tags:
+        - Triggers
+      summary: 获取触发器详情
+      description: 获取指定触发器的详细信息
+      operationId: getTrigger
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowTriggerDetail'
+
+    put:
+      tags:
+        - Triggers
+      summary: 更新触发器
+      description: 更新指定的触发器
+      operationId: updateTrigger
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowTriggerUpdate'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/WorkflowTrigger'
+
+    delete:
+      tags:
+        - Triggers
+      summary: 删除触发器
+      description: 删除指定的触发器
+      operationId: deleteTrigger
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/triggers/{id}/enable:
+    post:
+      tags:
+        - Triggers
+      summary: 启用触发器
+      description: 启用指定的触发器
+      operationId: enableTrigger
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 启用成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/triggers/{id}/disable:
+    post:
+      tags:
+        - Triggers
+      summary: 禁用触发器
+      description: 禁用指定的触发器
+      operationId: disableTrigger
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      responses:
+        '200':
+          description: 禁用成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+
+  /workflow/triggers/{id}/test:
+    post:
+      tags:
+        - Triggers
+      summary: 测试触发器
+      description: 测试触发器配置是否正确
+      operationId: testTrigger
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                test_data:
+                  type: object
+                  description: 测试数据
+                dry_run:
+                  type: boolean
+                  description: 是否仅模拟执行
+                  default: true
+      responses:
+        '200':
+          description: 测试结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          success:
+                            type: boolean
+                          triggered:
+                            type: boolean
+                          message:
+                            type: string
+                          instance_id:
+                            type: string
+                            description: 如果非 dry_run 且触发成功，返回实例 ID
+
+  /workflow/triggers/{id}/logs:
+    get:
+      tags:
+        - Triggers
+      summary: 获取触发器日志
+      description: 获取触发器的触发日志
+      operationId: getTriggerLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: start_time
+          in: query
+          description: 开始时间
+          schema:
+            type: string
+            format: date-time
+        - name: end_time
+          in: query
+          description: 结束时间
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          items:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/TriggerLogEntry'
+                          total:
+                            type: integer
+
+  # ========== Webhook Endpoint ==========
+  /workflow/triggers/webhook/{key}:
+    post:
+      tags:
+        - Webhooks
+      summary: Webhook 接收端点
+      description: |
+        接收外部系统的 Webhook 请求，触发关联的工作流。
+
+        **签名验证**：
+        如果触发器配置了 secret，请求需要包含签名头：
+        - `X-Webhook-Signature`: HMAC-SHA256 签名
+
+        **签名计算方法**：
+        ```
+        signature = HMAC-SHA256(secret, request_body)
+        ```
+      operationId: handleWebhook
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: Webhook 密钥（32 位十六进制）
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{32}$'
+        - name: X-Webhook-Signature
+          in: header
+          description: HMAC-SHA256 签名
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            example:
+              event: "order.created"
+              data:
+                order_id: "ORD-2025-001"
+                amount: 15000
+                customer_id: 123
+      responses:
+        '200':
+          description: 触发成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 0
+                  message:
+                    type: string
+                    example: success
+                  data:
+                    type: object
+                    properties:
+                      triggered:
+                        type: boolean
+                      instance_id:
+                        type: string
+        '400':
+          description: 请求无效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: 签名验证失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: IP 不在白名单内
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Webhook 不存在或已禁用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT Bearer Token 认证
+
+  parameters:
+    IdParam:
+      name: id
+      in: path
+      required: true
+      description: 资源 ID
+      schema:
+        type: string
+
+    PageParam:
+      name: page
+      in: query
+      description: 页码（从 1 开始）
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    LimitParam:
+      name: limit
+      in: query
+      description: 每页数量
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  schemas:
+    # ========== Common Schemas ==========
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: 状态码，0 表示成功
+          example: 0
+        message:
+          type: string
+          description: 状态消息
+          example: success
+        data:
+          description: 响应数据
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: 错误码
+        message:
+          type: string
+          description: 错误消息
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: Validation failed
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              rule:
+                type: string
+              message:
+                type: string
+
+    # ========== Workflow Definition Schemas ==========
+    WorkflowDefinition:
+      type: object
+      properties:
+        id:
+          type: string
+          description: 定义 ID
+        tenant_id:
+          type: integer
+          description: 租户 ID
+        name:
+          type: string
+          description: 定义名称
+        key:
+          type: string
+          description: 定义唯一键
+        version:
+          type: integer
+          description: 版本号
+        status:
+          type: string
+          enum: [draft, published, archived]
+          description: 状态
+        category:
+          type: string
+          description: 分类
+        description:
+          type: string
+          description: 描述
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    WorkflowDefinitionDetail:
+      allOf:
+        - $ref: '#/components/schemas/WorkflowDefinition'
+        - type: object
+          properties:
+            bpmn_xml:
+              type: string
+              description: BPMN XML 定义
+            node_config:
+              type: array
+              description: 节点配置
+              items:
+                $ref: '#/components/schemas/NodeConfig'
+            trigger_config:
+              type: object
+              description: 触发器配置
+            metadata:
+              type: object
+              description: 元数据
+
+    WorkflowDefinitionCreate:
+      type: object
+      required:
+        - name
+        - key
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        key:
+          type: string
+          maxLength: 50
+          pattern: '^[a-z][a-z0-9-]*$'
+        description:
+          type: string
+          maxLength: 500
+        category:
+          type: string
+          maxLength: 50
+        bpmn_xml:
+          type: string
+        node_config:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeConfig'
+        trigger_config:
+          type: object
+
+    WorkflowDefinitionUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        category:
+          type: string
+        bpmn_xml:
+          type: string
+        node_config:
+          type: array
+          items:
+            $ref: '#/components/schemas/NodeConfig'
+        trigger_config:
+          type: object
+
+    NodeConfig:
+      type: object
+      required:
+        - id
+        - type
+        - name
+      properties:
+        id:
+          type: string
+          description: 节点 ID
+        type:
+          type: string
+          description: 节点类型
+          enum: [start, end, approval, countersign, condition, http_request, delay, notify, script, data_operation]
+        name:
+          type: string
+          description: 节点名称
+        config:
+          type: object
+          description: 节点配置
+
+    # ========== Workflow Instance Schemas ==========
+    WorkflowInstance:
+      type: object
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: integer
+        definition_id:
+          type: string
+        definition_name:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, suspended, completed, failed, cancelled]
+        business_key:
+          type: string
+        started_by:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        current_node:
+          type: string
+
+    WorkflowInstanceDetail:
+      allOf:
+        - $ref: '#/components/schemas/WorkflowInstance'
+        - type: object
+          properties:
+            variables:
+              type: object
+              additionalProperties: true
+            context:
+              type: object
+            execution_path:
+              type: array
+              items:
+                type: string
+            pending_tasks:
+              type: array
+              items:
+                $ref: '#/components/schemas/WorkflowTask'
+
+    InstanceHistoryEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        event_type:
+          type: string
+          enum: [instance.started, instance.completed, instance.failed, node.entered, node.completed, node.failed, task.created, variable.changed]
+        node_id:
+          type: string
+        node_type:
+          type: string
+        message:
+          type: string
+        context:
+          type: object
+        timestamp:
+          type: string
+          format: date-time
+        duration:
+          type: number
+          description: 执行时长（秒）
+
+    # ========== Workflow Task Schemas ==========
+    WorkflowTask:
+      type: object
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: integer
+        instance_id:
+          type: string
+        node_id:
+          type: string
+        task_type:
+          type: string
+          enum: [approval, countersign, task, fill_form]
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, claimed, completed, delegated, transferred]
+        assignee:
+          type: integer
+        candidates:
+          type: array
+          items:
+            type: integer
+        created_at:
+          type: string
+          format: date-time
+        due_date:
+          type: string
+          format: date-time
+
+    WorkflowTaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/WorkflowTask'
+        - type: object
+          properties:
+            instance:
+              $ref: '#/components/schemas/WorkflowInstance'
+            form_schema:
+              type: object
+            form_data:
+              type: object
+            variables:
+              type: object
+            comments:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  user_name:
+                    type: string
+                  action:
+                    type: string
+                  comment:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+
+    # ========== Workflow Trigger Schemas ==========
+    WorkflowTrigger:
+      type: object
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [manual, webhook, schedule, data_event, form_submit, message, signal, timer_event, system_event]
+        definition_id:
+          type: string
+        enabled:
+          type: boolean
+        last_triggered_at:
+          type: string
+          format: date-time
+        trigger_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    WorkflowTriggerDetail:
+      allOf:
+        - $ref: '#/components/schemas/WorkflowTrigger'
+        - type: object
+          properties:
+            config:
+              type: object
+              description: 触发器配置
+            conditions:
+              type: object
+              description: 触发条件
+            webhook_key:
+              type: string
+              description: Webhook 密钥（仅 webhook 类型）
+            webhook_url:
+              type: string
+              description: Webhook URL（仅 webhook 类型）
+
+    WorkflowTriggerCreate:
+      type: object
+      required:
+        - name
+        - type
+        - definition_id
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        type:
+          type: string
+          enum: [manual, webhook, schedule, data_event, form_submit, message, signal, timer_event, system_event]
+        definition_id:
+          type: string
+        config:
+          type: object
+        conditions:
+          type: object
+        enabled:
+          type: boolean
+          default: true
+
+    WorkflowTriggerUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        config:
+          type: object
+        conditions:
+          type: object
+
+    TriggerLogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        trigger_id:
+          type: string
+        triggered_at:
+          type: string
+          format: date-time
+        success:
+          type: boolean
+        instance_id:
+          type: string
+        request_data:
+          type: object
+        error_message:
+          type: string
+        duration_ms:
+          type: integer
+
+  responses:
+    Unauthorized:
+      description: 未认证
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: integer
+                example: 401
+              message:
+                type: string
+                example: Unauthorized
+
+    Forbidden:
+      description: 无权限
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: integer
+                example: 403
+              message:
+                type: string
+                example: Permission denied
+
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              code:
+                type: integer
+                example: 404
+              message:
+                type: string
+                example: Resource not found
+
+    BadRequest:
+      description: 请求无效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'

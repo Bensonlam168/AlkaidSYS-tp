@@ -4,14 +4,14 @@
 
 **强大、现代、低代码的企业级 SAAS 系统框架**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
 [![PHP](https://img.shields.io/badge/PHP-8.2+-777BB4?logo=php&logoColor=white)](https://www.php.net/)
 [![ThinkPHP](https://img.shields.io/badge/ThinkPHP-8.0-brightgreen)](https://www.thinkphp.cn/)
 [![Swoole](https://img.shields.io/badge/Swoole-5.0+-blue)](https://www.swoole.com/)
 [![Vue](https://img.shields.io/badge/Vue-3.x-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-[简体中文](README.md) | [English](README.en.md)
+简体中文 | English（英文版尚未提供）
 
 </div>
 
@@ -35,6 +35,12 @@
 - 🏢 **完善的多租户** - 支持共享数据库和独立数据库模式
 - 💎 **现代化前端** - 直接使用 Vue Vben Admin 5.x
 - 📱 **多端支持** - 覆盖 Admin、PC、小程序、App、H5 所有终端
+
+### 从这里开始
+
+- 🚀 **想先跑起来** → [快速开始](#-快速开始)
+- 🛠️ **想改代码** → [CONTRIBUTING.md](CONTRIBUTING.md)：环境要求、测试、代码风格、提交与 PR 约定
+- 🐛 **遇到问题** → [GitHub Issues](https://github.com/Bensonlam168/AlkaidSYS-tp/issues)
 
 ---
 
@@ -87,8 +93,6 @@ AlkaidSYS 采用**7层整体架构**，从上到下依次为：
 6. **核心服务层（Core Services）** - 框架核心服务（用户、租户、权限、应用、插件）
 7. **数据层（Data Layer）** - 数据存储和缓存（MySQL、Redis、RabbitMQ）
 
-详细架构设计请参考：[架构设计文档](design/01-architecture-design/02-architecture-design.md)
-
 ### 2. 多租户架构
 
 支持三种隔离模式，灵活适应不同业务场景：
@@ -99,7 +103,7 @@ AlkaidSYS 采用**7层整体架构**，从上到下依次为：
 | **独立数据库** | 大型租户 | >100万/租户 | 高 | 高 |
 | **混合模式** | 灵活组合 | 不限 | 中 | 高 |
 
-详细设计请参考：[多租户设计文档](design/01-architecture-design/04-multi-tenant-design.md)
+多租户的字段与隔离约定见 [数据库设计规范](docs/technical-specs/database/database-guidelines.zh-CN.md)。
 
 ### 3. 应用和插件两层架构
 
@@ -119,7 +123,7 @@ AlkaidSYS 采用**7层整体架构**，从上到下依次为：
 - 🔌 **通用插件** - 支付网关、短信服务、存储服务
 - ⚙️ **应用专属插件** - 优惠券、审批流、客户画像
 
-详细设计请参考：[应用插件系统设计文档](design/01-architecture-design/06-application-plugin-system-design.md)
+插件系统的落实现状与清单约定见 [插件系统基础](docs/technical-specs/plugin/plugin-system-foundation.md)。
 
 ### 4. 应用市场和插件市场
 
@@ -130,8 +134,6 @@ AlkaidSYS 采用**7层整体架构**，从上到下依次为：
 - 👨‍💻 **开发者中心** - 应用管理、收益管理、数据统计
 - 🎓 **开发者等级体系** - 4 级等级（普通/认证/金牌/钻石）
 - 💰 **阶梯式分成** - 根据价格和等级动态调整（70%-95%）
-
-详细设计请参考：[应用插件生态设计文档](design/02-app-plugin-ecosystem/)
 
 ### 5. 低代码能力（开发者工具）
 
@@ -152,7 +154,7 @@ AlkaidSYS 提供强大的低代码能力，作为**开发者工具**帮助快速
 | 创建工作流 | 8 小时 | 10 分钟 | **48 倍** |
 | 生成 CRUD | 6 小时 | 5 分钟 | **72 倍** |
 
-详细设计请参考：[低代码框架设计文档](design/09-lowcode-framework/)
+低代码的开发约定见 [低代码开发规范](docs/technical-specs/lowcode/lowcode-guidelines.zh-CN.md)。
 
 ---
 
@@ -164,25 +166,19 @@ AlkaidSYS 提供强大的低代码能力，作为**开发者工具**帮助快速
 - MySQL 8.0+
 - Redis 6.0+
 - Composer 2.0+
-- Node.js 18+ & pnpm 8+（前端开发）
-- Swoole 5.0+（可选，用于高性能模式）
+- Swoole 5.0+（**必需**：`topthink/think-swoole` 要求 `ext-swoole`，缺失时 `composer install` 会因平台检查失败）
+- Node.js 20.10+ & pnpm 9.12+（前端开发，版本取自 `frontend/package.json` 的 `engines`）
 
 ### 安装步骤
 
 #### 1. 克隆项目
 
 ```bash
-git clone https://github.com/your-org/AlkaidSYS-tp.git
+git clone https://github.com/Bensonlam168/AlkaidSYS-tp.git
 cd AlkaidSYS-tp
 ```
 
-#### 2. 安装后端依赖
-
-```bash
-composer install
-```
-
-#### 3. 配置环境
+#### 2. 配置环境
 
 ```bash
 # 复制环境配置文件
@@ -192,52 +188,67 @@ cp .env.example .env
 vim .env
 ```
 
-#### 4. 数据库初始化
+> 在宿主机直连本地 MySQL / Redis 时，请把 `DB_HOST` 改为 `127.0.0.1`，并补一行 `REDIS_HOST = 127.0.0.1`
+> —— `.env.example` 里的 `mysql` / `redis` 是 docker compose 的服务名，且 `.env.example` 本身不含 `REDIS_HOST`。
+
+#### 3. 安装后端依赖
 
 ```bash
-# 创建数据库
+# --no-scripts：composer.json 的 post-autoload-dump 会执行 php think service:discover，
+# 等同于启动应用（含 Redis 自检）；依赖装完后按第 4 步手动执行一次即可。
+composer install --no-scripts
+```
+
+#### 4. 服务发现
+
+```bash
+# 生成 vendor/services.php，注册 migrate / queue / swoole 等由 composer 包提供的命令
+php think service:discover
+```
+
+#### 5. 数据库初始化
+
+```bash
+# 执行数据库迁移（请先自行创建 .env 中 DB_NAME 指定的数据库，迁移不会建库）
 php think migrate:run
 
 # 填充初始数据（可选）
 php think seed:run
 ```
 
-#### 5. 启动服务
+#### 6. 启动服务
 
-**传统模式（PHP-FPM）**：
+**内置服务器**：
 ```bash
-php think run
+php think run          # 默认 0.0.0.0:8000
 ```
 
 **高性能模式（Swoole）**：
 ```bash
-php think swoole:server start
+php think swoole       # 默认 0.0.0.0:8080（端口见 config/swoole.php）
 ```
 
-#### 6. 访问项目
+#### 7. 访问项目
 
-- 后端 API: http://localhost:8000
-- Admin 管理端: http://localhost:3000（需单独启动前端项目）
+- 后端 API: http://localhost:8000（`php think run`）或 http://localhost:8080（`php think swoole`）
+- Admin 管理端: http://localhost:5666（前端需单独启动，见下）
 
 ### 前端开发
 
-详细的前端开发指南请参考：[前端开发文档](design/06-frontend-design/)
+前端工程说明见 [`frontend/README.md`](frontend/README.md)（Vue Vben Admin 5.x monorepo）。
+
+```bash
+cd frontend
+corepack enable
+pnpm install
+pnpm dev:antd          # 开发服务器，默认 http://localhost:5666
+```
 
 ---
 
 ## 📚 文档导航
 
-### 设计文档
-
-完整的设计文档位于 [`design/`](design/) 目录，推荐阅读顺序：
-
-1. [设计文档总览](design/README.md) - 设计文档导航和推荐阅读顺序
-2. [系统概览](design/00-core-planning/01-alkaid-system-overview.md) - 项目整体介绍
-3. [技术选型确认](design/00-core-planning/02-TECHNOLOGY-SELECTION-CONFIRMATION.md) - 技术栈选型说明
-4. [架构设计](design/01-architecture-design/02-architecture-design.md) - 整体架构设计
-5. [多租户设计](design/01-architecture-design/04-multi-tenant-design.md) - 多租户架构设计
-6. [应用插件系统](design/01-architecture-design/06-application-plugin-system-design.md) - 应用和插件架构
-7. [低代码框架](design/09-lowcode-framework/) - 低代码能力设计
+> ⚠️ **README 描述的是设计目标，不代表当前实现进度**；实际情况以源码与测试为准。
 
 ### 技术规范文档
 
@@ -248,12 +259,14 @@ php think swoole:server start
 - [API 规范](docs/technical-specs/api/) - RESTful API 设计规范
 - [安全指南](docs/technical-specs/security/) - 安全最佳实践
 - [代码风格](docs/technical-specs/code-style/) - 编码规范和最佳实践
+- [部署与环境验证](docs/technical-specs/deployment/) - 部署流程与环境变量校验
 
-### 开发者指南
+### 开发者与使用者文档
 
-- [应用开发指南](design/08-developer-guides/) - 如何开发应用
-- [插件开发指南](design/08-developer-guides/) - 如何开发插件
-- [低代码工具使用](design/09-lowcode-framework/45-lowcode-cli-integration.md) - CLI 工具使用指南
+- [开发者指南](docs/developer-guides/) - 代码评审清单、语言包贡献、PHP 现代特性
+- [用户手册](docs/user-guide/) - 系统管理、权限监控
+- [测试说明](docs/testing/) - 测试隔离与性能测试
+- [参与贡献（CONTRIBUTING）](CONTRIBUTING.md) - 环境、测试、代码风格、提交与 PR 约定
 
 ---
 
@@ -270,18 +283,6 @@ AlkaidSYS-tp/
 ├── database/              # 数据库文件
 │   ├── migrations/        # 数据库迁移文件
 │   └── seeds/            # 数据填充文件
-├── design/                # 设计文档（30+ 份设计文档）
-│   ├── 00-core-planning/  # 核心规划
-│   ├── 01-architecture-design/ # 架构设计
-│   ├── 02-app-plugin-ecosystem/ # 应用插件生态
-│   ├── 03-data-layer/     # 数据层设计
-│   ├── 04-security-performance/ # 安全与性能
-│   ├── 05-deployment-testing/ # 部署与测试
-│   ├── 06-frontend-design/ # 前端设计
-│   ├── 07-integration-ops/ # 集成与运维
-│   ├── 08-developer-guides/ # 开发者指南
-│   ├── 09-lowcode-framework/ # 低代码框架
-│   └── 10-batch-summaries/ # 批次总结
 ├── docs/                  # 技术规范文档
 │   └── technical-specs/   # 技术规范
 │       ├── api/          # API 规范
@@ -303,33 +304,34 @@ AlkaidSYS-tp/
 
 ### 创建新应用
 
-```bash
-# 使用 CLI 工具创建应用
-php think make:app shop
-
-# 创建集成低代码的应用
-php think make:app oa --with-lowcode
-```
+`php think list` 的 `make:` 分组只有 controller / model / service 等代码生成器，**没有应用脚手架命令**。
+应用以清单文件声明：复制模板目录 `addons/apps/_template`（含 `manifest.json`、`config/menu.php`、
+`sql/install.sql` / `sql/uninstall.sql`），改 `manifest.json` 里的 `key` / `name` 即可起步
+（装载逻辑扫描 `addons/apps/*/manifest.json`，见 `infrastructure/Application/ApplicationManager.php`）。
 
 ### 开发插件
 
+插件相关命令只有 `list` / `scan` / `enable` / `disable`（见 `config/console.php`），没有创建或安装插件的命令。
+插件以 `addons/plugins/<key>/plugin.json` 为清单（约定见 [`addons/plugins/README.md`](addons/plugins/README.md)），
+把插件目录放进去后用下列命令管理：
+
 ```bash
-# 创建插件
-php think make:plugin payment-wechat
+# 扫描插件目录，把清单写入插件包表（需先完成数据库迁移）
+php think plugin:scan
 
-# 安装插件
-php think plugin:install payment-wechat
+# 查看已加载的插件（当前仓库未随附插件，输出 No plugins loaded）
+php think plugin:list
 
-# 启用插件
-php think plugin:enable payment-wechat
+# 启用 / 禁用，{key} 取自 plugin.json 的 plugin_key
+php think plugin:enable {key}
+php think plugin:disable {key}
 ```
 
 ### 使用低代码工具
 
-```bash
-# 安装低代码插件
-php think lowcode:install
+低代码能力内置在框架里，不需要额外安装插件。`php think list` 的 `lowcode:` 分组提供：
 
+```bash
 # 创建数据模型
 php think lowcode:create-model Product \
   --fields="name:string,price:decimal,stock:integer"
@@ -343,7 +345,7 @@ php think lowcode:create-form product_form \
 php think lowcode:generate crud Product
 ```
 
-详细的开发指南请参考：[开发者指南](design/08-developer-guides/)
+详细的开发指南请参考：[开发者指南](docs/developer-guides/)
 
 ---
 
@@ -397,36 +399,16 @@ php think lowcode:generate crud Product
 
 ## 🤝 贡献指南
 
-我们欢迎各种形式的贡献！
+我们欢迎各种形式的贡献！改代码前请先读 **[CONTRIBUTING.md](CONTRIBUTING.md)** —— 环境准备、测试命令、代码风格、提交信息与 PR 要求都写在那里，本文不再重复。
 
-### 如何贡献
-
-1. Fork 本仓库
-2. 创建您的特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交您的更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 打开一个 Pull Request
-
-### 代码规范
-
-- **PHP 代码** - 遵循 PSR-12 编码规范
-- **TypeScript 代码** - 遵循 ESLint 配置
-- **提交信息** - 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
-- **注释** - 使用中英文双语注释
-
- 详细的代码规范请参考：[代码风格指南](docs/technical-specs/code-style/)。
-
- PHP 代码格式化工具与使用说明：
-
- - 统一使用项目根目录的 `.php-cs-fixer.php` 作为 PHP-CS-Fixer 配置；
- - 本地与 CI 中推荐使用 `php-cs-fixer fix --dry-run --diff` 做只读检查；
- - 具体命令与 Docker 执行方式请参考本地开发文档：`README.local.md` 中的“代码格式化”章节。
+- **提交信息** - 遵循 [Conventional Commits](https://www.conventionalcommits.org/)：`<type>(<scope>): <subject>`，需带 scope，header 不超过 72 字符。
+- **代码风格** - PHP 遵循 PSR-12（配置见 `.php-cs-fixer.php`），前端遵循 ESLint（`cd frontend && pnpm lint`）。
 
 ---
 
 ## 📄 许可证
 
-本项目采用 [MIT 许可证](LICENSE)。
+本项目采用 [MIT 许可证](LICENSE.txt)。
 
 ---
 

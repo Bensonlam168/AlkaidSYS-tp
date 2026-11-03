@@ -224,4 +224,73 @@ class CasbinCacheTest extends ThinkPHPTestCase
         $this->assertEquals(1, $stats['misses']);
     }
 
+    /**
+     * 测试「清缓存不误伤非权限键」（R1 回归防护）
+     * Test that clearing Casbin caches never touches non-permission keys (R1)
+     *
+     * 历史实现 `clearCache()` / `clearUserCache()` 都是 `Cache::clear()`：
+     * Redis 驱动下等价于 `FLUSHDB`，会把 `session:*` 会话与 `rl:*` 限流计数一起清掉；
+     * 为了保住 `casbin_last_reload` 还得「先备份再恢复」。
+     *
+     * 现在两者都改成了白名单前缀清除（`casbin:check:` + `casbin:policy:`），
+     * 因此：会话/限流键结构上就不可能被删，`casbin_last_reload` 也不需要备份恢复了。
+     */
+    public function testClearCachesKeepNonPermissionKeys(): void
+    {
+        $sessionKey = 'session:casbin-r1-sid';
+        $rateLimitKey = 'rl:dev:user:casbin-r1:token_bucket';
+        $reloadKey = 'casbin_last_reload';
+
+        // 造旁观者键 | Prepare bystander keys
+        // 预热两个用户的检查缓存（9002 不存在于策略中，结果 false 但同样会写缓存）
+        // Warm check caches for two users
+        // 注意顺序：check() 可能触发 shouldReload() → reloadPolicy() 从而重写 casbin_last_reload，
+        // 所以旁观者键必须在预热之后才写入，否则会被覆盖
+        $this->assertTrue($this->service->check(9001, 1, 'cache_test', 'view'));
+        $this->service->check(9002, 1, 'cache_test', 'view');
+
+        // 造旁观者键（全部用字符串值：File 驱动会把标量落盘成数字字符串/普通字符串）
+        Cache::set($sessionKey, 'session-data', 300);
+        Cache::set($rateLimitKey, 'bucket-5', 300);
+        Cache::set($reloadKey, '1234567890', 300);
+
+        // 只清目标用户 | Clear only user 9001
+        $this->service->clearUserCache(9001, 1);
+
+        $this->assertNull(
+            Cache::get('casbin:check:9001:1:cache_test:view'),
+            '目标用户的检查缓存必须被清除'
+        );
+        $this->assertNotNull(
+            Cache::get('casbin:check:9002:1:cache_test:view'),
+            '其它用户的检查缓存不能被误删'
+        );
+        $this->assertSame('session-data', Cache::get($sessionKey), 'R1：会话键必须完好');
+        $this->assertSame('bucket-5', Cache::get($rateLimitKey), 'R1：限流键必须完好');
+        $this->assertSame(
+            '1234567890',
+            Cache::get($reloadKey),
+            'casbin_last_reload 不在白名单前缀内，必须存活'
+        );
+
+        // 全量清除检查缓存 | Clear all check caches
+        $this->service->clearCache();
+
+        $this->assertNull(
+            Cache::get('casbin:check:9002:1:cache_test:view'),
+            'clearCache() 应清掉全部 casbin 检查缓存'
+        );
+        $this->assertSame('session-data', Cache::get($sessionKey), 'R1：clearCache() 不能清会话');
+        $this->assertSame('bucket-5', Cache::get($rateLimitKey), 'R1：clearCache() 不能清限流计数');
+        $this->assertSame(
+            '1234567890',
+            Cache::get($reloadKey),
+            'clearCache() 不应再需要「备份/恢复 casbin_last_reload」'
+        );
+
+        // 清理旁观者键，避免污染后续用例的重载判断
+        Cache::delete($sessionKey);
+        Cache::delete($rateLimitKey);
+        Cache::delete($reloadKey);
+    }
 }

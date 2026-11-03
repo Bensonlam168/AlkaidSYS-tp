@@ -30,6 +30,52 @@ class MigrationDiffCommandTest extends ThinkPHPTestCase
         $this->command = new MigrationDiffCommand();
     }
 
+    public function testBuildSummaryCountsChanges(): void
+    {
+        $ref = new \ReflectionClass($this->command);
+        $method = $ref->getMethod('buildSummary');
+        $method->setAccessible(true);
+
+        $diffs = [
+            [
+                'collection' => 'Product',
+                'changes' => [
+                    ['type' => 'add_column', 'table' => 'lc_product', 'message' => '新增列'],
+                    ['type' => 'modify_index', 'table' => 'lc_product', 'message' => '索引调整'],
+                ],
+            ],
+            [
+                'collection' => 'Order',
+                'changes' => [],
+            ],
+        ];
+
+        $summary = $method->invoke($this->command, $diffs);
+
+        $this->assertSame(1, $summary['drift_collections']);
+        $this->assertSame(1, $summary['changes']['add_column']);
+        $this->assertSame(1, $summary['changes']['modify_index']);
+    }
+
+    public function testRenderSqlForChangeAddsAlterStatement(): void
+    {
+        $ref = new \ReflectionClass($this->command);
+        $method = $ref->getMethod('renderSqlForChange');
+        $method->setAccessible(true);
+
+        $sql = $method->invoke($this->command, [
+            'type' => 'add_column',
+            'table' => 'lc_demo',
+            'column' => 'title',
+            'field_type' => 'varchar(255)',
+            'message' => '测试新增列',
+        ]);
+
+        $this->assertStringContainsString('ALTER TABLE `lc_demo` ADD COLUMN', $sql);
+        $this->assertStringContainsString('`title`', $sql);
+        $this->assertStringContainsString('-- 测试新增列', $sql);
+    }
+
     /**
      * Test command configuration | 测试命令配置
      *

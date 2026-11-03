@@ -43,6 +43,18 @@ class Role
     {
         return $this->slug;
     }
+
+    /**
+     * 获取角色所属租户 ID
+     * Get the tenant ID this role belongs to
+     *
+     * 仓储的更新/删除必须用它拼 `where('tenant_id', ...)`：
+     * 缺了它就只能按 id 定位，等于允许跨租户改写他人角色。
+     */
+    public function getTenantId(): int
+    {
+        return $this->tenantId;
+    }
     public function isSystem(): bool
     {
         return $this->isSystem;

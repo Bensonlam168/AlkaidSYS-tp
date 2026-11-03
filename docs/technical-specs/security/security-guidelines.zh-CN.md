@@ -35,6 +35,112 @@
 - **重放检测**：使用已撤销/黑名单 Token 将触发 `code = 2007` 错误并记录审计日志
 - **黑名单 TTL**：与 Refresh Token 生命周期一致（默认 7 天）
 
+### 2.5 会话失效闭环（ER-04）
+
+> 实现状态：**已实现**。实现位置：`app\middleware\Auth`、`app\controller\AuthController::login()/refresh()`、
+> `Infrastructure\Auth\PrincipalStateChecker`、`Infrastructure\Tenant\Service\TenantUsability`。
+> 回归测试：`tests/Feature/Auth/SessionInvalidationTest.php`（13 条，覆盖停用/锁定/删除/改租户/租户停用/租户过期/续期/登录/恢复）。
+
+#### 2.5.1 缺口
+
+JWT 只能证明「这张令牌在**签发时**是真的」，不能证明「令牌持有者**现在**仍然有效」。改造前：
+
+- `app\middleware\Auth` 只做三件事：验签/过期/`type=access`、把 `user_id`/`tenant_id`/`site_id` 写进 Request、放行，
+  **从不回查用户与租户的当前状态**；
+- `AuthController::refresh()` 只校验 Refresh Token 自身（签名 + 白名单），**按旧声明继续签发**；
+- 于是「用户被置 `inactive`/`locked`」「租户被置 `inactive`/`suspended`」「租户 `expires_at` 已过期」之后，
+  **已签发的** Access Token 在 2 小时内、Refresh Token 在 7 天内仍然完全可用。
+
+#### 2.5.2 判据（三条链路共用同一实现）
+
+| 链路 | 校验项 | 位置 |
+| --- | --- | --- |
+| 每个受保护请求 | 用户仍存在于令牌声明的租户内 + `status = active` + 租户可用 | `app\middleware\Auth` → `PrincipalStateChecker::check()` |
+| `POST /v1/auth/refresh` | 同上（续期前必须先验主体） | `AuthController::refresh()` |
+| `POST /v1/auth/login` | 租户可用（用户状态原已由 `User::isActive()` 拦住） | `AuthController::login()` → `PrincipalStateChecker::checkTenant()` |
+
+- 「租户可用」= 存在 + `status = active` + `expires_at` 未过期（空值视为不限期），
+  判据集中在 `Infrastructure\Tenant\Service\TenantUsability`，`TenantIdentify` 也已改为委托同一实现。
+- 用户被删除、或被改到其它租户，一律按「**该用户在令牌声明的租户内已不存在**」处理（`user_not_found`）：
+  跨租户的「这个 id 到底存不存在」查询不参与放行判断（与 `docs/technical-specs/multi-tenant/tenant-parameter-contract.md` 口径一致）。
+- 上下文（`user_id`/`tenant_id`/`site_id`）在状态校验**之前**写入 Request：
+  请求即使被拒，访问日志/审计日志仍能记录发起主体。
+
+#### 2.5.3 拒绝语义
+
+- HTTP **401** + 业务码 **2001**（`ErrorCode::UNAUTHORIZED`）。**不用 403**：
+  会话失效属于认证层，前端应「清本地会话 → 重新登录」，而不是「权限不足」。
+- 对外 message 统一为 `error.session_invalid`（「当前登录会话已失效，请重新登录」），
+  **不区分**具体原因。可区分的原因（`user_not_found` / `user_inactive` / `user_locked` /
+  `tenant_not_found` / `tenant_unusable` / `tenant_expired`）只写日志（含 `trace_id`）。
+  取舍：区分原因便于排障，但会让持有合法签名令牌的一方能判断「该账号是否存在」「该租户是否被停用/欠费」，
+  属于账号与运营状态泄露；而客户端对这几种情况的处置完全相同，排障需求由「日志 reason + 响应 trace_id」满足。
+- refresh 拒绝时**同时作废**该 Refresh Token（白名单移除 + `jti` 入黑名单），重放将得到 `2007`。
+- 主体状态校验自身失败（如数据库不可用）返回 **500**，不返回 401：
+  把一次数据库故障说成「会话失效」会让全站被登出并掩盖真实故障；500 同样是 fail-closed（不放行）。
+- 登录阶段租户不可用返回 **403 + 2002**，与 `TenantIdentify` 的既有口径一致（此时尚无会话可失效）。
+
+#### 2.5.4 性能与缓存结论：**不缓存**
+
+每个已认证请求新增 **2 次按主键的查询**，用户不可用时短路、不再查租户。实测（本机 Docker 环境）：
+
+- **查询计数**（MySQL general log，单次 `GET /v1/auth/me`，共 6 条业务语句，其中前 2 条为本次新增）：
+
+  | # | 语句 | 来源 |
+  | --- | --- | --- |
+  | 1 | `SELECT * FROM users WHERE id = ? AND tenant_id = ? LIMIT 1` | **新增**：主体状态校验 |
+  | 2 | `SELECT * FROM tenants WHERE id = ? LIMIT 1` | **新增**：租户可用性校验 |
+  | 3 | `SELECT * FROM users WHERE id = ? AND tenant_id = ? LIMIT 1` | 原有：`AuthController::me()` |
+  | 4 | `SELECT tenant_id FROM users WHERE id = ? LIMIT 1` | 原有：`PermissionService::getTenantId()` |
+  | 5 | `SELECT role_id FROM user_roles WHERE user_id = ?` | 原有：`getRoleIds()` |
+  | 6 | `SELECT tenant_id FROM users WHERE id = ? LIMIT 1` | 原有：权限查询内的租户解析 |
+
+- **索引与执行计划**：`EXPLAIN` 显示两条新查询均为 `type=const`、`key=PRIMARY`、`rows=1`、`filtered=100.00`；
+  `EXPLAIN ANALYZE` 的 `actual time` 分别约 `0.0015ms`（users）与 `0.0012ms`（tenants），
+  即 MySQL 侧开销可忽略，成本主要是「一次 TCP 往返」。
+- **单次往返开销**（容器内 PDO，500 次均值）：`SELECT 1` 纯往返 ~1.40ms，
+  `users` 主键查 ~2.21ms、`tenants` 主键查 ~2.41ms → **两条新增查询的边际成本约 1.6–2.0ms/请求**。
+- **端到端 A/B**（临时切回改造前 `Auth.php` 对照，各 80 次经 nginx 的 `upstream_time`）：
+  改造前 p50 `77.0ms` / min `36.0ms`，改造后 p50 `58.0ms` / min `36.0ms`，改造后复测 p50 `43.0ms` / min `34.0ms`
+  —— **同一份代码两次测量可差 15ms 以上，约 2ms 的增量被本机噪声吞没**（Swoole 常驻进程 + 其它容器负载）。
+  结论：以「+2 次主键查、约 +1.6–2.0ms/请求」为准，端到端差异在当前环境不可分辨。
+
+**刻意不做任何缓存**（含 `static`）：
+
+- `alkaid-backend` 是 Swoole 常驻进程，`static` 属性跨请求存活，缓存住 `active`
+  等于「停用用户在 worker 重启前一直可用」——用一个进程内缓存把安全校验变成安全假象；
+- 共享缓存（Redis）虽不跨进程，但必须 TTL + **全部写路径**显式失效才成立：
+  用户/租户状态可经 `UserController::updateStatus`、`TenantController::update|toggleStatus`、
+  甚至直接改库的运营动作变更，任何一处漏失效都会把「停用延迟」无限放大；
+- 因此选择「停用即生效（延迟 **0**，无 TTL）」的正确性，用两次主键查询换。
+- 若将来确需缓存，硬性要求：① TTL 写进本文件与该处注释（建议 ≤ 10s）；
+  ② 在用户/租户状态写路径**显式失效**；③ 明确「最坏停用延迟 ≤ TTL」；④ 不得用 `static`。
+- 同类判据已有先例：`app\middleware\SiteIdentify` 同样选择「不缓存，每次主键查」。
+- 若确实需要把两次查询压成一次，可在仓储层加一条
+  `SELECT u.status, t.status, t.expires_at FROM users u JOIN tenants t ON t.id = u.tenant_id WHERE u.id = ? AND u.tenant_id = ?`
+  的联表查询（本次**未做**：会引入「用户仓储依赖租户表」的耦合，收益仅 ~1ms）。
+
+#### 2.5.5 逐 token 撤销 vs 会话版本号（评估，未实施）
+
+- **路线 A（当前实现）**：逐请求状态校验。优点：停用/锁定/删除/改租户/租户停用/过期**立即**生效，
+  无需改 schema、无需吊销传播；缺点：每请求 2 次主键查询，且「正常态」也要查。
+- **路线 B**：`users.token_epoch`（或 `password_changed_at`）写进 JWT claim，变更时递增，校验侧比对。
+  优点：可「一键撤销某用户所有令牌」且查询可减为 1 次（users 行同时承载 epoch 与 status）；
+  缺点：需要迁移 + 改签发/校验两侧 + 所有「改密码/改状态/强制下线」路径都要递增 epoch，
+  漏一处即是「撤销不生效」；且**仍然要读 users 行**才能比对 epoch，省不下那次查询。
+- **推荐**：保持路线 A。语义上真正需要「撤销全部会话」时应做的是「吊销 + 强制重新登录」，
+  那正是本节的 401 闭环；路线 B 的边际收益（一次 `users` 查询）与引入的 schema/契约改动不成比例。
+  若后续出现「同一用户多端强制下线」的强需求，再按 ADR 流程评估路线 B，且必须与当前闭环并存。
+
+#### 2.5.6 未覆盖范围（明确不做/待裁决）
+
+- **未挂 `Auth` 中间件的路由不受本节保护**（例如 `POST /v1/auth/login|register|refresh`、
+  `GET /v1/workflow/triggers/webhook/:key` 等 webhook）。这些入口必须自行做主体校验，
+  其中登录/刷新已由本节的 `PrincipalStateChecker` 覆盖。
+- 站点维度（`X-Site-ID` 的归属与状态）由 `SiteIdentify` 负责，不在本节范围。
+- `AUTH_SKIP_MIDDLEWARE`（仅 `APP_ENV=dev` 生效）会整段跳过本中间件，
+  等于跳过本节全部校验；**严禁在生产类环境配置该变量**（`JwtService` 的密钥强度检查不覆盖它）。
+
 ## 3. 授权（Authorization）
 
 ### 3.1 RBAC 模型
@@ -89,10 +195,311 @@
 - 权限使用租户范围前缀：`tenant:{tenantId}:{resource}`
 - 在授权层禁止跨租户访问
 
+### 3.3 权限监控端点鉴权（`/v1/admin/permission-monitor`）
+
+该组端点会暴露权限子系统内部状态（L1/L2 缓存命中率、TTL、P95 延迟、任意用户的权限集），
+且包含两条**写**操作（清空指定用户 / 全部权限缓存）。因此**整组必须挂 Auth + Permission，不允许匿名访问**。
+
+| 方法 | 路径 | 所需权限 | 说明 |
+| --- | --- | --- | --- |
+| GET | `/v1/admin/permission-monitor/cache-stats` | `permission.read` | 缓存统计（含命中率 / TTL） |
+| GET | `/v1/admin/permission-monitor/performance` | `permission.read` | 性能指标（P95 / 命中率目标） |
+| GET | `/v1/admin/permission-monitor/health` | `permission.read` | 健康检查（内部状态，非探活入口） |
+| GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | `permission.read` | 目标用户必须属于当前租户，否则 404 |
+| GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | `permission.read` | 同上；`:permission` 允许 `resource:action` |
+| DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | `permission.write` | 同上；清缓存是对权限子系统的写操作 |
+| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | 只清权限缓存（白名单前缀），**不再** `Cache::clear()`，见 3.4 |
+
+约束与结论：
+
+- **`health` 不单独开口子**：它返回的是内部缓存/延迟状态，不是「进程是否存活」。
+  进程级探活应使用不返回业务数据的独立端点；把本端点匿名化会把刚修掉的未鉴权读取重新打开。
+- **跨租户一律 404（不是 403）**：`PermissionService` 的按用户查询是「以被查用户自己的 `tenant_id` 为准」，
+  不含请求租户维度，因此控制器必须先校验「目标用户属于当前请求租户」再委托。
+  用 404 而非 403 是为了不泄露「该 userId 存在但属于别家」。
+- **路由中间件参数格式**：`route/**` 中的中间件声明使用内部 slug 形式（`permission.read`），
+  因为 `scripts/check-permission-codes.php` 明确禁止在路由层使用 `resource:action`（含 `:`）；
+  两种形式在中间件内部会被归一化，语义等价。
+
+### 3.4 权限缓存失效策略（R1 / ER-06）
+
+> 实现任务：R1（`clearAllCache` 误清整库）、ER-06（撤权未接缓存失效）
+
+#### 3.4.1 键空间与 TTL
+
+| 键（逻辑名，落 Redis 时驱动会再加 `alkaid:` 前缀） | TTL | 生产者 |
+| --- | --- | --- |
+| `l1:permission:tenant:{t}:user:{u}:permissions` | 60s | `PermissionCacheService` |
+| `l2:permission:tenant:{t}:user:{u}:permissions` | 300s | `PermissionCacheService` |
+| `permission:tenant:{t}:user:{u}:check:{md5(code)}` | 30s | `PermissionCacheService::hasPermission()` |
+| `casbin:check:{u}:{t}:{resource}:{action}` | 300s（`CASBIN_CACHE_TTL`） | `CasbinService::check()` |
+| `casbin:policy:full` | 300s（`policy_cache_enabled` 默认关闭） | `DatabaseAdapter` |
+
+实测落库形态（phpredis `SCAN` 取样）：`alkaid:l1:permission:tenant:9:user:9:permissions`、
+`alkaid:session:verify-r1-abc123`、`alkaid:rl:dev:user:verify-r1:token_bucket`。
+
+#### 3.4.2 前缀白名单（安全边界）
+
+清除操作**只允许**命中下列前缀族，其它前缀（含空串）一律抛异常拒绝执行：
+
+`l1:permission:` / `l2:permission:` / `permission:` / `casbin:check:` / `casbin:policy:`
+
+这条边界是结构性的：所有权限相关键都含 `permission:` 段或 `casbin:` 段，
+而 `session:`（会话）、`rl:`（限流）、`lowcode:`（低代码）、`casbin_last_reload`
+都不含 —— 因此「清权限缓存」在**定义上**不可能误删会话与限流计数。
+
+**禁止**再用 `Cache::clear()` 清权限缓存：ThinkPHP 的 Redis 驱动把它实现为 `flushDB()`，
+清的是整个库（会话与缓存同库）；File 驱动则是 `rmdir(缓存目录)`。
+同理禁止用 `KEYS pattern`（O(N) 且阻塞单线程 Redis），只允许 `SCAN` + 批量 `DEL`。
+
+#### 3.4.3 驱动适配
+
+| 驱动 | 策略 | 说明 |
+| --- | --- | --- |
+| Redis（phpredis） | `SCAN` 游标迭代 + 分批 `DEL`（500/批） | 生产路径。按前缀首段分组，同组共用一轮 `SCAN` |
+| File | 键索引精确删除 | File 驱动把键名 `md5()` 后落盘（`runtime/cache/ab/cdef….php`），**无法反推**，因此写入时登记「写过哪些键」，清除时按索引逐键删 |
+| 其它（Predis / Memory / 自定义） | 同上（索引） | **绝不**退化为 `Cache::clear()`；索引为空时只记 warning 并返回 0 |
+
+#### 3.4.4 失效时机与覆盖范围
+
+失效一律发生在**写操作提交之后**（提交前清缓存会让并发请求把未提交的旧数据重新填满）：
+
+| 变更 | 失效对象 | 钩子位置 |
+| --- | --- | --- |
+| 角色权限变更（`syncPermissions`） | 该角色下**所有用户** | `RoleRepository::syncPermissions()` |
+| 角色删除 | 该角色的成员 | `RoleRepository::delete()`（删除前先取成员） |
+| 用户角色变更（`setRoles`） | 该用户 | `UserController::setRoles()` |
+| 用户状态变更（`updateStatus` / `update`） | 该用户 | `UserController::updateStatus()/update()` |
+| 用户删除 | 该用户 | `UserController::delete()` |
+| 权限定义变更/删除 | 全部权限缓存 | `PermissionRepository::save()/delete()` |
+| 管理端「清全部权限缓存」 | 全部权限缓存 | `PermissionCacheService::clearAllCache()` |
+
+影响用户数超过 100 时自动升级为「整族清除」：一次 `SCAN` 胜过上千次逐用户拼键。
+
+#### 3.4.5 失败处理
+
+缓存失效是**尽力而为**：`PermissionCacheInvalidator` 全部方法内部 `catch (Throwable)`，
+失败只记 `warning` 并返回 `success=false`，**不向上抛**、不回滚业务写入。
+清缓存失败让一次成功的撤权回滚是本末倒置 —— 最坏后果是旧权限多活一个 TTL。
+
+#### 3.4.6 已知降级（File 驱动，仅开发/测试）
+
+键索引有上限（5 万条）与 TTL（1 小时）。超限时丢弃最旧记录并记 warning，
+被丢弃的键只能等 TTL 自然过期。生产环境强制 Redis（`config/cache.php` 对
+`production/prod/stage/staging` 强制 `redis`），不受此限制。
+
+### 3.5 授予边界（Grant Ceiling，ER-05）
+
+#### 3.5.1 缺口
+
+`role.write` / `user.write` 只回答「你能不能改角色/用户」，**不回答「你能改出多大的权限」**。
+历史实现里四条写路径都直接落库：
+
+| 路径 | 动作 | 缺口 |
+| --- | --- | --- |
+| `RoleController::setPermissions` | `PUT /v1/admin/roles/:id/permissions` | 可授任意权限 |
+| `RoleController::save` | `POST /v1/admin/roles`（带 `permissions`） | 可授任意权限 |
+| `RoleController::update` | `PUT /v1/admin/roles/:id`（带 `permissions`） | 可授任意权限 |
+| `UserController::setRoles` | `PUT /v1/admin/users/:id/roles` | 可分配任意角色 |
+| `UserController::save` | `POST /v1/admin/users`（带 `role_ids`） | 可分配任意角色 |
+
+攻击链（**条件性提权**）：只有 `role.write` 的租户管理员 →
+
+```
+PUT /v1/admin/roles/{自己持有的角色}/permissions  {"permissions": ["tenant.write 的 ID"]}
+```
+
+→ 自己立刻持有 `tenant.write`。不需要任何别的漏洞。
+
+#### 3.5.2 判定规则
+
+- **权限集路径**（前三条）：请求的 permission ID 集合 ⊆ 操作者当前持有的权限集合；
+- **角色分配路径**（后两条）：目标角色集合的**权限并集** ⊆ 操作者当前持有的权限集合
+  （角色比权限更粗：一个角色会带来它名下全部权限，逐角色判会漏掉并集越界）；
+- 跨租户角色一律视为**不存在**（不区分「不存在」与「别人的角色」，避免泄露存在性）。
+
+比对口径是**权限码 `resource:action`**，不是权限 ID：
+
+- 操作者侧取 `PermissionService::getUserPermissions()` —— 与鉴权中间件**同一份数据源**
+  （含 `DB_ONLY` / `CASBIN_ONLY` / `DUAL_MODE` 三种模式与多级缓存）。若改成比 ID，
+  就会引入第二个真相源，在 Casbin 模式下与中间件的判断分叉；
+- 请求侧把 permission ID 经 `permissions` 表折算成 `resource:action`
+  （该表是**全局目录**，无 `tenant_id`；开发库 45 行 / 测试库 52 行中
+  `resource + action` 无空值、无重复组合，映射良定义）；
+- 折算不出权限码的权限行（`resource`/`action` 为空）→ 任何人都不"持有"它 → 拒绝（fail-closed）。
+
+#### 3.5.3 拒绝语义
+
+- **HTTP 403 + 业务码 2002**，与 `app\middleware\Permission` 的「权限不足」同码；
+- message 用 `error.grant_ceiling_exceeded`：**可操作但不回显缺哪些权限**
+  （否则可被逐条试探出操作者的权限边界）；
+- 完整差集（权限 ID + 权限码）只写 `Log::warning`，供取证；
+- **先校验后落库**：`save` / `update` / `setRoles` / `save(用户)` 的判定都在写库**之前**，
+  因此被拒绝时不会有"半成品角色 / 已建但无角色的账号 / 旧权限已被删"的部分执行
+  （`role_permissions` 的外键报错会把 `syncPermissions` 的 delete+insert 撕成两半）。
+
+#### 3.5.4 不引入「超管绕过」
+
+没有任何硬编码的用户 ID / 角色 slug / `is_system` 判定。平台/系统管理员之所以不受限，
+是因为他们**天然持有全部权限**（seeded admin 角色挂满 52 条），子集校验自然通过。
+这样就不存在"写死一个 id 就免检"的后门。
+
+#### 3.5.5 操作者身份只来自 JWT
+
+授予边界要拿「操作者是谁」去查权限集，所以这个值**只能**来自 Auth 中间件
+从 JWT 解出并写入 `Request` 上下文的值。
+
+`UserController::getCurrentUserId()` 历史实现**优先读 `X-User-Id` 请求头**，等于让客户端
+自己声明"我是谁"：伪造该头即可冒充 seeded admin，授予边界形同虚设，
+「禁止删除/禁用自己」也一并失效。该分支已移除，只保留服务端可信来源
+（`Request::userId()` 与框架注入的 `request->user`）。
+
+#### 3.5.6 明确防不住的（设计上的允许）
+
+- 操作者把**自己已有**的权限授予自己可影响的角色：他没有获得任何新能力；
+- 操作者**回收**权限不受限（回收是减权）；
+- 操作者改**自己所属角色**的权限集：受同一条子集校验约束，无法借此提权，
+  但可以自我降权（self-lockout）。**不做**「禁止修改自己所属角色」的硬拦截：
+  那会让「唯一的租户管理员主动交出 `role.write`」这类合法减权流程断掉，
+  且没有绕行手段时只能靠"超管绕过"，与本节的 3.5.4 冲突。自我降权属于可审计的
+  运维操作，交由日志与流程治理。
+
+#### 3.5.7 路由遮蔽：加了校验 ≠ 校验生效
+
+`config/route.php` 的 `route_complete_match = false` 让规则变成**前缀匹配**，于是
+`PUT /v1/admin/roles/:id`（`update`）注册在 `:id/permissions` 之前，会先吃掉
+`PUT /v1/admin/roles/5/permissions`：
+
+```
+请求   PUT /v1/admin/roles/5/permissions
+命中   RoleController@update        ← 前缀匹配 v1/admin/roles/5
+结果   200 + {"message":"role.updated"}（不是 404，而是静默走错动作）
+```
+
+后果：`setPermissions()` / `setRoles()` 是**永远进不去的死代码**，任何加在它们里面的
+校验都不会执行；而提权实际发生在可达的 `update()` 上（它同样 `syncPermissions`）。
+因此本次给四条规则都补了 `->completeMatch()`：
+
+- `PUT /v1/admin/roles/:id`、`PUT /v1/admin/roles/:id/permissions`
+- `PUT /v1/admin/users/:id`、`PUT /v1/admin/users/:id/roles`
+
+修复后响应 message 可区分动作：`role.permissions_updated` / `角色设置成功`（对应端点）
+vs `role.updated` / `用户更新成功`（父级 `update`）。
+回归用例：`tests/Feature/Route/AdminRouteReachabilityTest.php` 用框架自己的
+`Route::check()` 逐条重放 `v1/admin/**` 的样例 URL，断言「命中的目标 == 注册的目标」。
+
+**同类型的其它遮蔽**：ER-05 当时只修了本次范围内的四条 `v1/admin/**` 规则，另外 7 条
+（workflow / lowcode）登记在案、由后续包修复，见 §3.7。
+
+### 3.6 权限定义（权限码）不可写（ER-07）
+
+> 实现状态：✅ 已实现 —— `app/controller/admin/PermissionController.php`，
+> 回归用例 `tests/Feature/Admin/PermissionCodeImmutabilityTest.php`。
+
+#### 3.6.1 「改写权限定义」= 等价提权
+
+鉴权认的是 `permission.resource + ':' + permission.action`（见 §3.5.2 的 `resource:action`），
+而 `permissions` 是**全局目录**（该表没有 `tenant_id`）。历史实现里
+`PUT /v1/admin/permissions/:id` 直接把请求里的 `slug` / `resource` / `action` 落库：
+
+```
+① 攻击者持有 permission.write，且自己的角色挂着 role.write 对应的那一行（id=N）
+② PUT /v1/admin/permissions/N  {"resource":"tenant","action":"write"}
+③ role_permissions 一行都没变
+④ 从下一个请求起，他持有 tenant:write          ← 等价提权（且影响所有租户）
+```
+
+注意 ② 甚至**不需要**碰 `role_permissions`，也不需要 `role.write`：`permission.write`
+本身就足以把任意一行"改造"成任意能力的码。
+
+#### 3.6.2 修复：码不可变
+
+- `update()` **只接受** `name` 与 `description`；
+- 请求带 `slug` / `resource` / `action` 且与当前值**不同** → **HTTP 422**，
+  message = `permission.code_immutable`（「权限码不可修改，如需变更请走迁移」），
+  并给出字段级 `data.errors`；**一个字段都不落库**；
+- 请求带这些字段但与当前值**相同** → 忽略并正常更新（幂等友好）：前端编辑抽屉会把
+  整个对象回传，"原样回传"若也报错，等于把「只改描述」这个合法操作连带封死；
+- 比较用"规范化后的字符串"：`null` 与 `''` 等价、去首尾空白，避免把"前端清空输入框"
+  误判成"改码"（反之，把 `role` 清空成 `''` 仍然是一次改写 → 仍然 422）；
+- 顺带修掉一个静默数据丢失：历史实现请求没带 `description` 时会构造一个 description 为
+  `null` 的实体整行覆盖，于是"只改名字"会**清空原有描述**。现在缺省字段一律沿用原值。
+
+`Permission::fromArray(['resource'=>..,'action'=>..])` 的用法**保留**：实体没有
+`resource`/`action` 的 setter，`fromArray()` 是唯一赋值入口，创建路径与
+`PermissionRepository::hydrate()`（每次读库都要把 `resource`/`action` 灌回实体）都依赖它；
+变的只是"更新时不再用请求值去调它"。
+
+#### 3.6.3 新建（`POST /v1/admin/permissions`）是否也要约束：是
+
+结论：**要**，且与 §3.5 的授予边界**同源**（`PermissionService::getUserPermissions()`
+返回的 `resource:action`，也就是鉴权中间件当场用的那一份），越界 → **403 / 2002**
+（`permission.code_not_owned`）。
+
+理由（为什么这不是"多余的一条"）：
+
+1. 「新建」虽不是"改写"，但 `permissions` 是**全局目录**：谁能写它，谁就能往**所有租户**
+   的授权界面（`GET /v1/admin/permissions/grouped` 直接喂给"给角色授权"的勾选框）里塞行；
+   行上的 `name` / `description` 由创建者自由填写，可以伪装成任意能力。
+2. 这一条**不牺牲任何真实能力**：§3.5 的子集校验要求"操作者自己持有该码"才能把它授予
+   任何角色，而**新建的码任何人都还不持有** —— 也就是说，不论有没有本约束，
+   `permission.write` 持有者新建出来的"新码"都**无法被授予**、带不来任何新能力，
+   只会成为目录噪音。真要新增一枚码，正确路径是迁移/种子（本仓库 12 条系统权限就是这么来的，
+   与 3.6.2 的文案「如需变更请走迁移」一致）。
+3. 折算不出权限码的行（`resource`/`action` 皆空，且 slug 里没有点）→ 谁都不可能"持有"它，
+   属于纯脏数据 → 422（`permission.code_required`）直接拒绝，而不是落库后再也删不掉
+   （`delete()` 只在"没人持有"时才允许删，这类行虽然删得掉，但会先污染一轮界面）。
+4. 不含任何硬编码超管绕过：seeded `admin` 角色挂满全部权限行，对它来说这条校验
+   **恒为真**（它本来就持有这些码），无需特判。
+
+**副作用（已知且接受）**：前端 `frontend/apps/web-antd/src/views/system/permission/modules/form.vue`
+的"新建权限"抽屉从此只能"再建一行自己已持有的码"，新建不可达的码会拿到 403。
+这是一条**产品面**取舍：该抽屉创建出来的行在 §3.5 之后本就不可授予（谁都拿不到），
+把它改成显式拒绝只是把"看不见的失效"变成"看得见的拒绝"。
+**未做**（不在本包范围，需要产品/前端确认）：把该抽屉的 `slug` / `resource` / `action`
+在编辑态置灰（当前它们仍可编辑，改动会被后端 422 拒绝并提示"走迁移"）。
+
+### 3.7 workflow / lowcode 的 7 条路由遮蔽：已修（ER-07）
+
+ER-05 登记的 7 条（原表见本文件历史版本）已在本包修复，做法与 §3.5.7 一致：
+**子路由与其父级 `:id` / `:name` 都补 `->completeMatch()`**（只给子路由加不够：
+尾斜杠或多余段匹配不上子路由时会退化回父级前缀匹配）。
+
+| 被遮蔽的路由 | 修复前实际命中 | 修复后命中（实测） |
+| --- | --- | --- |
+| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | `FieldController@delete` |
+| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | `RelationshipController@delete` |
+| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | `WorkflowInstanceController@history` |
+| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | `WorkflowInstanceController@getVariables` |
+| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | `WorkflowTaskController@getForm` |
+| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | `WorkflowTriggerController@logs` |
+| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | `WorkflowTriggerController@webhook` |
+
+回归用例：`tests/Feature/Route/WorkflowLowcodeRouteReachabilityTest.php`（两层：用
+`Route::check()` 逐条重放 + 走真实 HTTP 用"响应形状/副作用"判定命中的动作），
+另有一条"带参数的规则必须声明 `completeMatch()`"的约定用例，防未来新增路由再踩。
+
+**修复后暴露的两个真缺陷（与遮蔽无关，是"端点从来没跑通过"）**：
+
+1. `FieldController` 的构造函数没有接收 `App`、也没调 `parent::__construct($app)`，
+   于是 `$this->request` 为 `null` → `POST/DELETE .../fields` 必然 500；
+2. `FieldController` / `RelationshipController` 的动作形参叫 `$collectionName` / `$fieldName`，
+   而路由变量是 `:name` / `:field` —— ThinkPHP 按**参数名**绑定路由变量，
+   直接抛 `InvalidArgumentException: method param miss:collectionName`（500）。
+   已按"路由是契约、形参是实现细节"的原则改形参名（`$name` / `$field` / `$relationship`），
+   URL 与 `docs/technical-specs/api/route-reference.md` 均不变。
+
+**Webhook 鉴权现状（核实结论）**：`GET|POST /v1/workflow/triggers/webhook/:key` 是少见的
+**故意不挂 Auth / Permission 中间件**的端点（外部回调不可能带 JWT），鉴权靠
+① 路径里的 `webhook_key`（32 位十六进制、创建触发器时随机生成）；
+② 触发器 `config.secret` 存在时校验 `X-Webhook-Signature`（HMAC-SHA256，`hash_equals`）；
+③ 可选 `config.allowed_ips` / `config.http_methods` 白名单（默认只允许 `POST`）。
+它唯一依赖的全局中间件是 `TenantIdentify`：请求不带 `X-Tenant-ID` 时回落
+`DEFAULT_TENANT_ID`，**该环境变量未配置时本端点会直接失败** —— 这是部署要求，不是代码缺陷。
+
 ## 4. 数据安全
 
-### 4.1 加密
-- **传输加密**：强制使用 HTTPS（TLS 1.2+ 最低，推荐 TLS 1.3）
+### 4.1 加密- **传输加密**：强制使用 HTTPS（TLS 1.2+ 最低，推荐 TLS 1.3）
 - **存储加密**：
   - 密码：使用 `bcrypt` 或 `Argon2` 加密
   - 敏感数据（PII）：静态数据使用 AES-256 加密
@@ -126,6 +533,105 @@
     - `X-RateLimit-Remaining`：当前窗口剩余请求数。
     - `X-RateLimit-Reset`：当前限流窗口的重置时间戳。
   - 具体的令牌桶配置与迁移方案应记录在设计文档与部署手册中；当 Phase 2 算法在生产环境生效时，本节必须同步更新以反映实际行为。
+
+#### 5.1.1 限流标识与可信代理（ER-09）
+
+限流效果取决于「标识怎么算」。本节的规则由 `app/middleware/RateLimit.php` 实现，
+配置项在 `config/ratelimit.php`（`trusted_proxies`）与 `.env.example`（`TRUSTED_PROXIES`）。
+
+**（1）`X-Forwarded-For` 默认不信任**
+
+`X-Forwarded-For`（下称 XFF）是**客户端可任意伪造**的请求头：可以写多个值，也可以整段瞎写。
+历史实现无条件取 XFF **最左值**，带来两个后果：
+
+- 攻击者每次换一个伪造 IP 就换一个限流桶 → 按 IP 的限流被完全绕过；
+- 反向「陷害」：伪造受害者的 IP，把它打进限流窗口。
+
+因此默认姿态是**完全不信任 XFF**（`TRUSTED_PROXIES` 留空），限流标识直接取
+TCP 对端地址（`REMOTE_ADDR`）。这个默认值只牺牲「按真实客户端分流」，
+代价是「经反向代理后所有客户端共用一个 ip 桶」—— 因此应**先配好 `TRUSTED_PROXIES`，再开启 ip 维度限流**。
+
+**（2）解析算法（从右往左）**
+
+| 步骤 | 条件 | 结论 |
+|------|------|------|
+| 1 | TCP 对端**不在**可信列表 | 整条 XFF 忽略，返回对端地址 |
+| 2 | 对端可信，但无 XFF / XFF 非法（乱码、空段、带端口、超长、段数过多） | 返回对端地址 |
+| 3 | 对端可信且 XFF 合法 | **从右往左**扫描，跳过可信代理，返回第一个不可信地址 |
+| 4 | XFF 全链都是可信代理 | 返回对端地址（没有更左侧的「客户端」可用） |
+
+为什么必须从右往左：nginx 的 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`
+语义是 `$http_x_forwarded_for, $remote_addr` —— **在最右侧追加**。所以最右侧那一段永远由
+离后端最近的可信代理写入（不可伪造），越往左越接近客户端、越不可信。
+「从右往左第一个不在可信列表里的地址」才是真正连上第一跳代理的那台机器；
+取最左值等于取客户端自己写的那一段。
+
+非法 XFF **整条丢弃**而不是「跳过非法段继续往左取」：否则攻击者只要在伪造值右侧塞一段乱码，
+就能把解析结果推到更左边的可控值。
+
+**（3）配置：`TRUSTED_PROXIES`**
+
+- 值 = 逗号分隔的 IP / CIDR 列表，IPv4 与 IPv6 都支持，例如 `10.0.0.0/8,2001:db8::/32`；
+- 单个 IP 与 CIDR 都精确匹配到二进制层（`10.0.0.0/8` 包含 `10.255.255.255`，不含 `11.0.0.1`）；
+- 非法条目**忽略并记 warning**，不会让其余条目一起失效（「被跳过」= 不可信，仍然安全）；
+- 本仓库 docker compose 场景：先执行 `docker network inspect alkaidsys-tp_default`，
+  取 `alkaid-nginx` 容器的 IPv4Address（当前实测 `172.18.0.6`）填入。
+  **不要**图省事填整个网段 `172.18.0.0/16`：backend 的 9501 端口发布到了宿主机，
+  直连该端口的请求对端是 docker 网关 `172.18.0.1`，信任整段会让这条绕过 nginx 的路径重新可伪造。
+- 容器重建后 IP 可能变化，行为会退化为「不信任 XFF」（安全方向），需重新取值。
+
+**（4）IPv6 与 `::ffff:1.2.3.4`**
+
+- 所有地址先归一化再比较：IPv6 统一小写零压缩（`2001:DB8::1` 与 `2001:db8::1` 是同一个桶）；
+- `::ffff:1.2.3.4`（IPv4-mapped IPv6）折叠成 `1.2.3.4`：同一台机器可能以两种形态出现，
+  不折叠会让它同时占两个桶、拿到双倍配额，也会让「可信列表里写 v4、连接走 v4-mapped」时信任失效；
+- 带端口（`1.2.3.4:80`）、带方括号（`[::1]`）、带 zone id（`fe80::1%eth0`）一律视为非法 → 回退对端地址。
+
+**（5）`X-Real-IP` 是否采信：否**
+
+结论是**不采信**，只用 XFF。理由：
+
+- nginx 同时下发 `X-Real-IP` 与 XFF，XFF 已经能通过「从右往左」得到正确结果，
+  `X-Real-IP` 不提供额外信息；
+- 同时信任两个头会引入「两值冲突时以谁为准」的歧义，而歧义在安全判定里就是漏洞；
+- backend 的 9501 端口发布到宿主机，客户端可绕过 nginx 直接伪造 `X-Real-IP`，
+  只有在「对端可信」时才采信才安全 —— 既然结论同样是「先判定对端」，就不必再引入第二个变量。
+
+**（6）`user` scope 的边界：本位置不可用**
+
+`RateLimit` 是**全局**中间件，`Auth` 是**路由级**中间件，执行到限流时 `$request->userId()` 必然为空。
+历史实现把这种「取不到」写成空串，于是所有请求（含未登录）挤进同一个 `user` 桶 ——
+这不是「按用户限流」，而是一条伪装成用户维度的**全局配额**：
+任何客户端先打满，其他用户与未登录请求就一起 429（`/v1/auth/login` 尤其致命）。
+
+现状（方案 A，已实施）：
+
+- `scopes.user.enabled` 默认 `false`（配置诚实反映「本维度不生效」）；
+- 即使有人把它改成 `true`，`resolveIdentifier('user')` 也会在拿不到 `userId` 时
+  **返回 null 并告警、跳过该维度**，绝不创建共享桶；
+- 因此 `/v1/auth/login` 的 `user` 规则已从配置中移除，登录接口的实际保护是同一段里的 `ip` 规则。
+
+未实施方案（方案 B，需要单独立项）：
+
+- **B1**：新增一个**路由级**限流中间件，挂在 `Auth` 之后，复用 `app/middleware/RateLimit.php`
+  的实现与 `config/ratelimit.php` 的规则。代价：需要重新梳理路由级中间件顺序与白名单语义，
+  且全局 `RateLimit` 与路由级实例会**重复计数**（要做去重或只保留其一）。
+- **B2**：在全局限流里从 JWT 解析 subject —— 但这是**重新实现鉴权**（签名校验、过期、会话版本、
+  撤销列表都要覆盖），且与 `Auth` 的判定可能出现分歧（限流认为已认证、Auth 认为未认证）。
+  代价与风险都最高，**不建议**。
+
+按当前结论，`user` 维度的正确替代是：登录尝试按「IP + 登录名」在业务层计数（未实现），
+其余接口以 `ip` / `tenant` / `route` 维度为主。
+
+**（7）已知遗留（不在 ER-09 范围内）**
+
+- `app/middleware/AccessLog.php` 仍取 XFF 最左值写访问日志的 `client_ip`。
+  它只影响日志真实性（可被伪造以污染审计），不参与任何限流/鉴权判定，
+  但**排障时不要把它当作可信来源**；
+- `tenant` 维度在完全拿不到租户上下文时会退化为「空串桶」（所有无租户请求共用）。
+  这是既有设计取舍（见 `App\Request::tenantIdOrNull()` 注释），
+  与 `user` 维度的区别在于：`TenantIdentify` 是全局中间件，正常链路上能拿到租户，
+  只有绕过中间件的调用才会退化。
 
 ### 5.2 API 签名验证（高安全级别 - 可选）
 - 用于需要增强安全性的关键/第三方 API

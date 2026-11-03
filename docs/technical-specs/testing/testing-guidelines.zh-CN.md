@@ -26,6 +26,41 @@
 - 测试用例 **应当** 通过事务回滚或截断工具在用例之间重置数据库状态。
 - 引入破坏性变更的迁移 **必须** 在测试中覆盖变更前后关键数据形态。
 
+### 4.1 测试库初始化：只跑 `migrate:run` 不够（R50）
+
+冷启动是**两步**。`migrate:run` 只建表结构与 19 条系统权限
+（`tenant.*`、`role.*`、`user.*`、`dept.*`、`menu.*`、`casbin.manage`），
+**刻意不建**任何角色、用户与业务权限。而测试硬编码了 `userId: 1, tenantId: 1, siteId: 0`
+（`tests/Helpers/AuthHelper::generateTestToken`），于是「只有表结构」的库会让所有
+「admin 访问受保护接口」的用例以**缺种子数据**的形式失败，看起来像业务代码坏了。
+
+```bash
+# 1) 建表（同时创建 alkaid_sys_test）
+docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think migrate:run'
+
+# 2) 种子：角色 1/2、33 条业务权限（显式 id 1001..1033，
+#    含 route/workflow.php 依赖的 10 条 workflow_*）、角色授权、
+#    默认站点，以及 id=1 的系统用户
+docker exec -it alkaid-backend sh -lc 'PHP_ENV_NAME=test php think seed:run -s TestPlatformSeed'
+```
+
+职责划分（不要把数据塞回迁移链）：**表结构归迁移、种子数据归 seeder**。
+`TestPlatformSeed` 是测试专用 seeder，继承 `CorePlatformSeed`，唯一差别是
+`id = 1` 的系统用户使用**随机且不可用**的口令哈希 —— 测试通过 JWT 认证，不需要任何口令，
+因此它**不需要** `ADMIN_INIT_PASSWORD`（`CorePlatformSeed` 对真实环境的 fail-closed 口令策略保持不变）。
+
+两步都是幂等的：重复执行不产生新行、不覆盖已有数据。
+
+**历史遗留的本地测试库**：显式权限 id 是有意义的。若 `permissions` 里已存在由旧 seeder
+创建的业务权限（id 落在 99xxxx，继承自 AUTO_INCREMENT），若干单元测试会按自己的清理口径
+（`DELETE FROM permissions WHERE id >= 7000` / `>= 8000` / `>= 9000`）在**同一轮**运行中
+把这些行删掉。请先重建一次测试库，让种子落在保留 id 段：
+
+```bash
+docker exec alkaid-mysql mysql -uroot -proot -e 'DROP DATABASE IF EXISTS alkaid_sys_test; CREATE DATABASE alkaid_sys_test CHARACTER SET utf8mb4;'
+# 然后重新执行上面的 1) 与 2)
+```
+
 ## 5. 安全与权限测试
 
 - 所有受保护接口 **必须** 至少包含以下场景的测试：
@@ -45,6 +80,34 @@
 
 项目提供统一的测试入口命令，通过 ThinkPHP CLI 执行：
 
+### 测试套件：`phpunit.xml` 里登记的 5 个
+
+`php think test --testsuite=<名字>` 只认 `phpunit.xml` 的 `<testsuites>` 里**登记过**的套件名 ——
+名字写错不会报「套件不存在」，只会安静地跑 0 个用例（见下方「一条都没跑必须是红的」）。
+
+| 套件 | 取样目录 | 它跑什么 |
+| --- | --- | --- |
+| `Unit` | `tests/Unit` | 单元用例：不碰 DB / Redis / HTTP，验证单个类或函数的行为（Domain、Infrastructure、Schema、低代码表单验证器等） |
+| `Feature` | `tests/Feature` | 特性 / API 用例：走完整 HTTP 请求链路，覆盖认证、授权、错误码、限流与多租户隔离 |
+| `Integration` | `tests/Integration` | 集成用例：真实连 MySQL / Redis，验证跨层协作 —— `BaseModel` 全局作用域与租户过滤、Casbin 策略缓存与权限清理、事件监控、插件钩子、workflow 表与外键、低代码 CLI |
+| `E2E` | `tests/E2E` | 端到端用例：跨模块的关键用户路径（目前是 `MultiTenantIsolationTest`：一个租户建的低代码集合，另一个租户必须看不见） |
+| `Legacy` | `tests/Legacy` | **守卫型套件**：不验证业务行为，而是静态扫描全仓源码的「守门员」（禁止引用已删除的 Legacy 低代码栈、禁止未评审的 `withoutTenantScope()` 跨租户后门） |
+
+`tests/Benchmark/` 与 `phpunit.performance.xml` 里的套件**不在**上表内 —— 基准与性能预算只在性能配置下运行，见 §7.1。
+
+**`Legacy` 是守卫型套件，不是「历史遗留用例」**：两个守卫各自递归读取 `app/`、`domain/`、
+`infrastructure/`、`tests/`、`plugins/` 下的全部 PHP 文件（数千个，实测单个守卫约 8 秒），
+整组约 16–20 秒。这份成本是刻意的 —— 守卫的价值来自「把全仓扫一遍」，抽稀扫描范围等于自废武功。
+
+**「一条都没跑」必须是红的**：`phpunit.xml` 开了 `failOnEmptyTestSuite="true"`。PHPUnit 的默认行为是
+0 个用例也算通过（打印一句 `No tests executed!` 后 exit 0），这会产生最糟的一类假绿 ——
+报告里写着「已纳入 CI」，实际一个字节都没检查。开启后，下列退化全部变成 exit 1：
+套件名写错、`--filter` 匹配不到任何用例、取样目录被挪走、用例文件被删空。
+
+> **真实教训**：`tests/Legacy` 曾长期不在任何 `testsuite` 里，而 CI 用
+> `--filter=LegacyCollectionUsageGuardTest` 按类名调它 —— 匹配不到任何用例却一路绿灯，两个守卫完全空转。
+> 现在 CI 改为 `--testsuite=Legacy` 整组跑；新增守卫只要放进 `tests/Legacy` 就自动生效，不必再改工作流。
+
 ### 运行测试
 
 ```bash
@@ -56,6 +119,9 @@ docker exec -it alkaid-backend php think test --testsuite=Unit
 
 # 仅运行功能测试
 docker exec -it alkaid-backend php think test --testsuite=Feature
+
+# 仅运行守卫型套件（tests/Legacy 里的静态扫描守卫）
+docker exec -it alkaid-backend php think test --testsuite=Legacy
 
 # 运行性能测试（需要 phpunit.performance.xml）
 docker exec -it alkaid-backend php think test -c phpunit.performance.xml
@@ -80,7 +146,7 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 
 | 选项 | 简写 | 描述 |
 |------|------|------|
-| `--testsuite` | `-s` | 测试套件名称 (Unit/Feature/Performance) |
+| `--testsuite` | `-s` | 测试套件名称（Unit / Feature / Integration / E2E / Legacy，见上文「测试套件」） |
 | `--filter` | `-f` | 按方法/类名过滤测试 |
 | `--coverage-html` | | 生成 HTML 覆盖率报告 |
 | `--coverage-text` | | 输出文本覆盖率报告 |
@@ -98,6 +164,113 @@ docker exec -it alkaid-backend php think test --passthru="--group=auth"
 - 默认配置文件为项目根目录的 `phpunit.xml`。
 - 性能测试使用 `phpunit.performance.xml` 配置。
 - 退出码 0 表示所有测试通过；非零表示存在失败。
+
+### 7.1 性能预算断言不进功能套件（`performance` 组）
+
+**约定**：断言「这台机器此刻多快」的用例，**不允许**留在功能回归套件里。
+
+- **墙钟阈值类断言**（耗时 / 吞吐 / QPS / 命中率 / 超时）**必须**打 `#[Group('performance')]`，
+  且阈值**必须**可由环境变量覆盖、默认值给足余量。
+- **功能断言**（响应字段是否存在、`code`/`message`、是否放行或拒绝、类型契约）**必须**留在普通用例里，
+  一条都不许挪走或删掉。字段**存在性**属于功能契约（留在功能用例），字段的**具体耗时**不是。
+- **禁止**为了让抖动消失而删除功能断言、收紧其它阈值或跳过用例。
+
+**为什么**：功能回归的结论必须是「行为对不对」，不能是「当时机器有多快」。实测随机顺序全量跑时，
+`CasbinControllerTest::testReloadPolicySuccess` 里的 `assertLessThan(1000, execution_time_ms)`
+在近 3000 条断言的压力下出现过 1029ms / 1114ms，于是功能完全正常的用例变红、整轮结论作废。
+同类问题还有令牌桶用例：`rate = 1.0` 时「耗尽即拒绝」实际等价于「5 次 Redis 调用必须在 1 秒内跑完」。
+
+**默认套件如何排除**：`phpunit.xml` 中声明了组排除，因此 `php think test` 与 CI **永远不会**执行该组：
+
+```xml
+<groups>
+    <exclude>
+        <group>performance</group>
+    </exclude>
+</groups>
+```
+
+`tests/Benchmark/`（`PermissionServiceBenchmarkTest` 等基准）**不在任何默认套件里**，
+不要把它加进 `phpunit.xml` 的 `testsuites` —— 基准只在性能配置下运行。
+
+**怎么跑这一组**（均在 `alkaid-backend` 容器内，注意容器内的工作目录是 `/var/www/html`）：
+
+```bash
+# 只跑 performance 组
+docker exec alkaid-backend ./vendor/bin/phpunit --group performance
+
+# 跑完整性能套件 = tests/Benchmark + tests/Performance + 功能文件里的 performance 用例
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.performance.xml
+
+# 只想跑基准目录
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.performance.xml --testsuite=Benchmark
+```
+
+`phpunit.performance.xml` 用 `<groups><include><group>performance</group></include></groups>`
+挑选用例：打了 `#[Group('performance')]` 的用例自动入选；整份目录都属于性能套件的，用
+`<directory groups="performance">` 打标签。这份配置的 `bootstrap` **必须**是 `vendor/autoload.php`
+（历史版本写的是 `vendor/topthink/framework/src/helper.php`，缺 autoloader 会让所有用例 Class not found）。
+
+**怎么调阈值**：阈值一律从环境变量读、代码里只写默认值；变量为空或非法时**回落默认值**
+（不是「关掉预算」）。现有阈值：
+
+| 用例 | 环境变量 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `CasbinControllerTest::testReloadPolicyExecutionTimeWithinBudget` | `CASBIN_RELOAD_BUDGET_MS` | 3000 | 手动刷新 Casbin 策略的耗时预算（毫秒） |
+
+```bash
+# 在慢机器上放宽 / 在发布验证时收紧
+docker exec alkaid-backend env CASBIN_RELOAD_BUDGET_MS=1500 ./vendor/bin/phpunit --group performance
+```
+
+**新写测试时，什么情况该打 `performance` 组**（按下表顺序判断，能确定性化就不要进组）：
+
+| 情况 | 处置 |
+| --- | --- |
+| 判据是墙钟时间 / 吞吐，且无法改写成确定性断言（P95 延迟、QPS、命中率、大循环总耗时） | 打 `#[Group('performance')]`，阈值走环境变量 + 宽松默认值 |
+| 想把默认值定成「刚好卡住现状」（实测 900ms 就写 1000ms） | **不允许**：预算要留数倍余量，否则等于把负载波动当回归 |
+| 判据是行为（是否放行、字段是否存在、`code` 是否为 0），只是实现里涉及时间 | **不许**打组，改成确定性写法：缩小 `rate` 让「补 1 个令牌」远超用例耗时，或把「等待」换成**有界轮询** |
+| 判断不了 | 先按确定性写；确实做不到才进组，并在用例注释里写清「为什么它只能是概率性验证」 |
+
+参考实现：`CasbinControllerTest` 把预算断言拆成独立用例（阈值可配），
+`RateLimitServiceTest` 把 4 个时间敏感用例改成「`DENY_RATE = 0.01` 的确定性拒绝」
++ 「有界轮询的确定性补充」，因此它们**仍然留在 Unit 套件**里，不需要打组。
+
+### 7.2 任务变体配置（`phpunit.t048.xml` / `phpunit.t050.xml`）与根级安全属性
+
+T-048 / T-050 的「覆盖率 ≥80%」是**按取样目录**验收的，因此根层有两份任务变体配置：
+
+| 配置 | 取样范围 | 用途 |
+| --- | --- | --- |
+| `phpunit.t048.xml` | `tests/Unit/Domain/Lowcode`、`tests/Unit/Schema`、`tests/Unit/Infrastructure/Lowcode`、`tests/Integration/Lowcode` | ORM / 低代码覆盖率 |
+| `phpunit.t050.xml` | `tests/Unit/Lowcode/FormDesigner` | 表单验证器覆盖率 |
+
+改这两份配置前先读下面三条约定：
+
+1. **变体是「任务子集」，不是「基线的裁剪版」**。它们只声明 T-048 / T-050 相关目录，
+   **不含** `Legacy` 套件：两个守卫要递归扫全仓数千个 PHP 文件（约 8 秒/个），对覆盖率数字零贡献；
+   而且它们在基线 `phpunit.xml` 的 `Legacy` 套件里已经跑到了（CI 单独一步 + 本地 `php think test`）。
+   把 `Legacy` 加进变体属于纯重复，**不要**当成「漏了」去补全。
+2. **根级安全属性必须与基线逐项一致**：`failOnRisky` / `failOnWarning` /
+   `failOnEmptyTestSuite` / `beStrictAboutOutputDuringTests`。其中缺 `failOnEmptyTestSuite`
+   的后果最隐蔽：取样目录被挪走、改名或用例被删空时，PHPUnit 只打印 `No tests executed!`
+   就以 0 退出，覆盖率报告照常输出，而样本其实是 0 个用例。
+3. 上面两条由 **`php scripts/check-phpunit-config.php --strict` 的「检查 G」**守着
+   （对应 CI 的 `PHPUnit Config Consistency`）：
+   - 三件套（`failOnRisky` / `failOnWarning` / `failOnEmptyTestSuite`）在基线里必须为 `true`，
+     变体的每个安全属性必须与基线一致（非法字面量如 `"1"` / `"yes"` 单独报错，PHPUnit 会静默回落默认值）；
+   - 基线必须声明 `Legacy` 套件，其取样路径必须在盘上、目录里至少有一个 `*Test.php`；
+   - 变体声明的每个 `directory` / `file` 必须存在且还能收集到用例 —— 这是
+     `failOnEmptyTestSuite` 的**静态**版（运行期判定只在「真的跑了一次」时才生效）。
+   确需例外时走脚本里的 `EXEMPT_CONFIGS`（必须写 `reason` 与 `review_by` 到期日），
+   **不要**为了让检查变绿去改基线或删断言。
+
+```bash
+# 变体配置自检（均在 alkaid-backend 容器内）
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.t048.xml
+docker exec alkaid-backend ./vendor/bin/phpunit -c phpunit.t050.xml
+docker exec alkaid-backend php scripts/check-phpunit-config.php --strict
+```
 
 ## 8. CI 集成与覆盖率 (T-059)
 

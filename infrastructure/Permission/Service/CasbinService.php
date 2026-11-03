@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Infrastructure\Permission\Service;
 
 use Casbin\Enforcer;
+use Infrastructure\Permission\Cache\PermissionCachePurger;
 use Infrastructure\Permission\Casbin\DatabaseAdapter;
 use think\facade\Cache;
 use think\facade\Config;
 use think\facade\Log;
-use think\facade\Request;
 
 /**
  * Casbin 授权服务
@@ -73,6 +73,12 @@ class CasbinService
     protected ?string $lastCacheDegradationReason = null;
 
     /**
+     * 权限缓存前缀清除器（懒加载）
+     * Permission cache prefix purger (lazy)
+     */
+    protected ?PermissionCachePurger $purger = null;
+
+    /**
      * 构造函数
      * Constructor
      *
@@ -129,7 +135,7 @@ class CasbinService
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 检查缓存是否启用
@@ -174,7 +180,11 @@ class CasbinService
                     // 缓存未命中
                     // Cache miss
                     $this->cacheMisses++;
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
+                    // 【为什么捕 \Throwable】（R4）缓存读失败 → 降级直接调 Enforcer，
+                    // 属纯旁路：缓存坏了不该让「这次鉴权能不能做」跟着坏。
+                    // \TypeError 等 \Error 不继承 \Exception，只捕 \Exception 会让缓存侧类型错误
+                    // 穿透成 HTTP 500（R3 的实测放大路径）。
                     // Redis 故障，记录降级事件
                     // Redis failure, record degradation event
                     $this->recordCacheDegradation($e);
@@ -221,7 +231,16 @@ class CasbinService
                 try {
                     $cacheTtl = Config::get('casbin.cache_ttl', 300);
                     Cache::set($cacheKey, $result, $cacheTtl);
-                } catch (\Exception $e) {
+                    // 登记键：不可枚举驱动（File 等）清理时依赖该索引
+                    $this->purger()->trackKey($cacheKey);
+                } catch (\Throwable $e) {
+                    // 【为什么捕 \Throwable】（R4，本次缺陷的直接放大器）
+                    //   本 try 块里除了 `Cache::set()` 还有 `$this->purger()->trackKey($cacheKey)`。
+                    //   `trackKey` 一旦抛 \TypeError（参数类型/驱动返回值不符），在 PHP 里
+                    //   \TypeError **不继承** \Exception，旧写法 `catch (\Exception)` 抓不到，
+                    //   于是「缓存写失败本应只记 warning」被升级成 HTTP 500 —— 这正是 R3 实测到的
+                    //   现象。缓存写入是纯旁路：结果已经由 Enforcer 算出来了，写不进缓存
+                    //   最坏只是下一次仍走 Enforcer，绝不能影响本次返回值。
                     // 缓存写入失败，记录降级事件但不影响结果返回
                     // Cache write failed, record degradation but don't affect result
                     $this->recordCacheDegradation($e);
@@ -267,7 +286,11 @@ class CasbinService
             }
 
             return $result;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）本 catch **不吞异常**：记完日志就 `throw $e` 原样上抛，
+            // 对调用方可见的结果完全不变（\Error 本来就穿透旧写法）。
+            // 改成 \Throwable 只是让 \TypeError / \Error 也留下带 trace_id 的结构化日志，
+            // 否则这类「代码写错了」的错误在日志里完全没有痕迹，只剩框架的 500。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -313,7 +336,7 @@ class CasbinService
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 检查是否需要重新加载策略
@@ -348,7 +371,9 @@ class CasbinService
             ]);
 
             return $formattedPermissions;
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）同 check()：本 catch 只做「记日志 + 原样上抛」，
+            // 不改变任何对外可见结果；扩到 \Throwable 是为了让 \Error 也进结构化日志。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -390,33 +415,23 @@ class CasbinService
 
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
             // 重新加载策略
             // Reload policy
+            //
+            // 【try 里只放核心调用】（#2 同类收窄）
+            //   收窄前这个 try 同时包住「核心 loadPolicy()」与「旁路 Cache::set()」，
+            //   于是缓存写失败（Redis 抖动 / \TypeError）会被记成「Casbin policy reload failed」
+            //   并**原样上抛** —— 而此刻策略其实已经装好了。方向与 #2 相反，根因相同：
+            //   核心与旁路共用了一个 try，谁失败都会冒充另一个。
+            //   现在核心失败 → 记日志 + 原样上抛（不变）；旁路失败 → 只记 warning（不留假故障）。
             $this->enforcer->loadPolicy();
-
-            // 更新缓存时间戳
-            // Update cache timestamp
-            Cache::set('casbin_last_reload', time());
-
-            // 清除权限检查缓存
-            // Clear permission check cache
-            $this->clearCache();
-
-            // 计算执行时间
-            // Calculate execution time
-            $executionTime = (microtime(true) - $startTime) * 1000; // ms
-
-            // 记录策略刷新结果
-            // Log policy reload result
-            Log::info('Casbin policy reloaded', [
-                'trace_id' => $traceId,
-                'execution_time_ms' => round($executionTime, 2),
-                'timestamp' => time(),
-            ]);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】（R4）本 catch 只做「记日志 + 原样上抛」，不改变结果。
+            // 注意：`loadPolicy()` 失败必须上抛 —— 策略没装好就继续鉴权会得到「全是拒绝」的
+            // 静默错答。这里扩到 \Throwable 只为补齐 \Error 的日志，不是为了让失败变得可忽略。
             // 计算执行时间
             // Calculate execution time
             $executionTime = (microtime(true) - $startTime) * 1000; // ms
@@ -437,6 +452,38 @@ class CasbinService
             // Throw exception
             throw $e;
         }
+
+        try {
+            // 更新缓存时间戳
+            // Update cache timestamp
+            //
+            // 旁路：写不进时间戳最坏是「下一次检查再 reload 一遍」（多一次 loadPolicy），
+            // 绝不能让「策略已成功重载」变成异常 —— 那会把一次缓存抖动升级成 HTTP 500，
+            // 且此时 loadPolicy() 早已完成，上抛的异常与真实结果完全不符。
+            Cache::set('casbin_last_reload', time());
+        } catch (\Throwable $e) {
+            Log::warning('Casbin reload timestamp write failed (policy already reloaded)', [
+                'trace_id' => $traceId,
+                'error_type' => get_class($e),
+                'error_message' => $e->getMessage(),
+            ]);
+        }
+
+        // 清除权限检查缓存（clearCache() 内部已自带 try/catch，失败只记 warning）
+        // Clear permission check cache (clearCache() swallows its own failures)
+        $this->clearCache();
+
+        // 计算执行时间
+        // Calculate execution time
+        $executionTime = (microtime(true) - $startTime) * 1000; // ms
+
+        // 记录策略刷新结果
+        // Log policy reload result
+        Log::info('Casbin policy reloaded', [
+            'trace_id' => $traceId,
+            'execution_time_ms' => round($executionTime, 2),
+            'timestamp' => time(),
+        ]);
     }
 
     /**
@@ -511,22 +558,63 @@ class CasbinService
      * 根据配置的刷新间隔时间判断是否需要重新加载策略。
      * Determine if need to reload policy based on configured reload interval.
      *
+     * 【为什么这里必须有 try/catch（R6：缓存故障 × 鉴权路径）】
+     *   本方法在**每次鉴权**的路径上被调用（{@see self::check()} 与
+     *   {@see self::getUserPermissions()} 各一次）。`Cache::get()` 在 Redis 不可用、
+     *   连接池已释放等情况下会抛异常（`think\cache\Exception` 或驱动自身的 `\Throwable`，
+     *   例如 `\TypeError`）。旧写法没有任何兜底，于是「读一次缓存失败」= **每一次鉴权 500**。
+     *   缓存是旁路：它的失败不该决定「这次请求还能不能鉴权」。
+     *
+     * 【读失败为什么返回 true，而不是 false】（选项 A：保守优先）
+     *   `false` 的语义是「按内存里已有的策略继续判」。但缓存读失败时我们**无法知道**
+     *   内存里的那份策略是否已经过期 —— 这时返回 false 就是「策略在故障期永远不刷新」：
+     *   DB 里改了授权却不生效，而且没有任何错误提示（错得最安静）。
+     *   返回 true 只是「多刷一次」：{@see self::reloadPolicy()} 对 `loadPolicy()` 失败
+     *   有日志且**原样上抛**，不会把「策略没装好」伪装成成功，因此保守重载不会引入
+     *   「静默全拒绝」的风险。代价是缓存故障期间每次鉴权都会触发一次全量策略重载
+     *   （DB 上的一次性查询），这是故障期可接受的降级成本，且日志里能直接看到。
+     *
+     * 【为什么先判 `reload_ttl = 0`，再去读缓存】
+     *   `reload_ttl = 0` 是运维**显式关闭**自动刷新。若先读缓存，故障期会被
+     *   「读失败 → true」把这个配置推翻，等于在故障期把「关闭」改成「每个请求都重载」——
+     *   与运维意图完全相反。关闭语义不应依赖缓存是否可用，故把该判断提到读取之前。
+     *
      * @return bool 是否需要重新加载 | Whether need to reload
      */
     protected function shouldReload(): bool
     {
-        // 获取上次加载时间
-        // Get last reload time
-        $lastReload = Cache::get('casbin_last_reload', 0);
-
         // 获取刷新间隔时间（秒）
         // Get reload interval (seconds)
-        $reloadTtl = Config::get('casbin.reload_ttl', 300);
+        // 注意 (int) 强转：env() 读出来的是字符串（'0' / '300'），旧写法用 `=== 0` 严格比较，
+        // 配置成 '0' 时会**判不出关闭**，静默退化成「每次都按 0 秒窗口重载」。
+        $reloadTtl = (int) Config::get('casbin.reload_ttl', 300);
 
-        // 如果设置为 0，表示不自动刷新
-        // If set to 0, means no auto reload
+        // 如果设置为 0，表示不自动刷新（显式关闭，不依赖缓存可用性）
+        // If set to 0, means no auto reload (explicitly disabled, independent of cache health)
         if ($reloadTtl === 0) {
             return false;
+        }
+
+        try {
+            // 获取上次加载时间
+            // Get last reload time
+            // (int) 强转同样是兜底：File 驱动返回的是字符串时间戳，异常驱动也可能返回
+            // 空数组等非数字值 —— 旧写法 `time() - []` 会直接抛 \TypeError。
+            $lastReload = (int) Cache::get('casbin_last_reload', 0);
+        } catch (\Throwable $e) {
+            // 【为什么捕 \Throwable】\Error（含 \TypeError）不继承 \Exception，只捕 \Exception 会漏接。
+            // 【为什么是 warning】这是旁路降级，不是业务失败：本次鉴权可以继续（改为重载策略）。
+            // 上下文里带 reason = 'cache_read_failed'，便于与其它 Casbin 故障日志区分。
+            Log::warning('Casbin reload decision: cache read failed (fallback: reload)', [
+                'reason' => 'cache_read_failed',
+                'error_type' => get_class($e),
+                'error_message' => $e->getMessage(),
+                'reload_ttl' => $reloadTtl,
+            ]);
+
+            // 读不到「上次重载时间」= 无法证明内存策略是新的 → 保守重载
+            // Unknown last-reload time means we cannot prove the in-memory policy is fresh
+            return true;
         }
 
         // 判断是否超过刷新间隔
@@ -553,8 +641,13 @@ class CasbinService
      * 清除所有权限检查缓存
      * Clear all permission check cache
      *
-     * 清除所有以 casbin:check: 开头的缓存。
-     * Clear all cache with prefix casbin:check:.
+     * 清除所有以 `casbin:check:` 开头的缓存（以及 `casbin:policy:` 全量策略缓存）。
+     * Clear all cache with prefix `casbin:check:` (plus `casbin:policy:` full policy cache).
+     *
+     * **R1 修复**：此前这里是 `Cache::clear()` —— Redis 驱动下等于 `FLUSHDB`，
+     * 会连 `session:*` 会话与限流计数一起清空。现在按白名单前缀清除：
+     * Redis 用 `SCAN` + 批量 `DEL`，其它驱动用键索引精确删除，绝不退化为清全库。
+     * 同时不再需要「先备份 `casbin_last_reload` 再恢复」——那个键压根不在清除范围内。
      *
      * @return void
      */
@@ -562,47 +655,42 @@ class CasbinService
     {
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
-            // 保存重要的缓存值
-            // Save important cache values
-            $lastReload = Cache::get('casbin_last_reload');
-
-            // ThinkPHP Cache 不支持按前缀删除，需要手动实现
-            // ThinkPHP Cache does not support delete by prefix, need manual implementation
-            // 这里我们使用 clear() 清除所有缓存（生产环境应使用 Redis 的 SCAN + DEL）
-            // Here we use clear() to clear all cache (production should use Redis SCAN + DEL)
-            Cache::clear();
-
-            // 恢复重要的缓存值
-            // Restore important cache values
-            if ($lastReload !== null) {
-                Cache::set('casbin_last_reload', $lastReload);
-            }
+            $report = $this->purger()->purge([
+                PermissionCachePurger::PREFIX_CASBIN_CHECK,
+                PermissionCachePurger::PREFIX_CASBIN_POLICY,
+            ]);
 
             // 重置缓存统计
             // Reset cache statistics
             $this->cacheHits = 0;
             $this->cacheMisses = 0;
 
-            Log::info('Casbin cache cleared', [
+            Log::info('Casbin cache cleared (prefix-scoped)', [
                 'trace_id' => $traceId,
+                'driver' => $report['driver'] ?? null,
+                'strategy' => $report['strategy'] ?? null,
+                'deleted' => $report['deleted'] ?? 0,
             ]);
-        } catch (\Exception $e) {
-            Log::error('Casbin cache clear failed', [
+        } catch (\Throwable $e) {
+            // 缓存清除失败不应让「策略已成功重载」这件事变成异常：
+            // 只记 warning，让 reloadPolicy() 正常返回（最坏情况是缓存多活一个 TTL）
+            Log::warning('Casbin cache clear failed', [
                 'trace_id' => $traceId,
                 'error_type' => get_class($e),
                 'error_message' => $e->getMessage(),
             ]);
-
-            throw $e;
         }
     }
 
     /**
      * 清除特定用户的权限检查缓存
      * Clear permission check cache for specific user
+     *
+     * 只清 `casbin:check:{userId}:{tenantId}:` 前缀下的键，其它用户/其它租户的缓存不受影响。
+     * Only purge keys under `casbin:check:{userId}:{tenantId}:`.
      *
      * @param int $userId 用户 ID | User ID
      * @param int $tenantId 租户 ID | Tenant ID
@@ -612,46 +700,48 @@ class CasbinService
     {
         // 获取 trace_id
         // Get trace_id
-        $traceId = Request::header('X-Trace-Id') ?: uniqid('casbin_', true);
+        $traceId = request()->header('X-Trace-Id') ?: uniqid('casbin_', true);
 
         try {
-            // 保存重要的缓存值
-            // Save important cache values
-            $lastReload = Cache::get('casbin_last_reload');
-
-            // ThinkPHP Cache 不支持按前缀删除
-            // 这里我们只能清除所有缓存
-            // ThinkPHP Cache does not support delete by prefix
-            // Here we can only clear all cache
-            Cache::clear();
-
-            // 恢复重要的缓存值
-            // Restore important cache values
-            if ($lastReload !== null) {
-                Cache::set('casbin_last_reload', $lastReload);
-            }
+            $report = $this->purger()->purge([
+                sprintf('%s%d:%d:', PermissionCachePurger::PREFIX_CASBIN_CHECK, $userId, $tenantId),
+            ]);
 
             // 重置缓存统计
             // Reset cache statistics
             $this->cacheHits = 0;
             $this->cacheMisses = 0;
 
-            Log::info('Casbin user cache cleared', [
+            Log::info('Casbin user cache cleared (prefix-scoped)', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
+                'strategy' => $report['strategy'] ?? null,
+                'deleted' => $report['deleted'] ?? 0,
             ]);
-        } catch (\Exception $e) {
-            Log::error('Casbin user cache clear failed', [
+        } catch (\Throwable $e) {
+            Log::warning('Casbin user cache clear failed', [
                 'trace_id' => $traceId,
                 'user_id' => $userId,
                 'tenant_id' => $tenantId,
                 'error_type' => get_class($e),
                 'error_message' => $e->getMessage(),
             ]);
-
-            throw $e;
         }
+    }
+
+    /**
+     * 取权限缓存前缀清除器（懒加载）
+     *
+     * @return PermissionCachePurger
+     */
+    protected function purger(): PermissionCachePurger
+    {
+        if ($this->purger === null) {
+            $this->purger = new PermissionCachePurger();
+        }
+
+        return $this->purger;
     }
 
     /**
@@ -677,10 +767,18 @@ class CasbinService
      * 记录缓存降级事件
      * Record cache degradation event
      *
-     * @param \Exception $e 异常对象 | Exception object
+     * 【参数类型必须是 \Throwable，不能是 \Exception】（R4）
+     *   调用点 {@see self::check()} 的两个 catch 已放宽到 `\Throwable`（否则 \TypeError 会穿透成 500）。
+     *   若这里仍声明 `\Exception`，把 \TypeError 传进来时 PHP 会在**实参检查**阶段再抛一个
+     *   \TypeError —— 而那一行位于 catch 块内部、try 之外，没有任何 catch 能接住它，
+     *   于是「降级」又会变成 500，等于白改。参数类型跟着放宽是这次修复的必要组成部分。
+     *
+     * 本方法只用到 getMessage()，\Throwable 与 \Exception 的可用面完全一致。
+     *
+     * @param \Throwable $e 异常或错误对象 | Throwable object (Exception or Error)
      * @return void
      */
-    protected function recordCacheDegradation(\Exception $e): void
+    protected function recordCacheDegradation(\Throwable $e): void
     {
         $this->cacheDegradationCount++;
         $this->lastCacheDegradationTime = time();

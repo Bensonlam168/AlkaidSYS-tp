@@ -39,28 +39,40 @@ class FormValidatorManager
      * @param string|null $cacheKey Cache key | 缓存key
      * @return Validate ThinkPHP Validate instance | ThinkPHP验证器实例
      */
-    public function getValidator(array $schema, ?string $cacheKey = null): Validate
+    public function getValidator(array $schema, ?string $cacheKey = null, array $context = []): Validate
     {
+        $cachePayload = null;
         // Try cache if key provided | 如果提供了key则尝试缓存
         if ($cacheKey !== null) {
-            $fullCacheKey = $this->cachePrefix . $cacheKey;
-            $cached = Cache::get($fullCacheKey);
+            $fullCacheKey = $this->cachePrefix . $this->buildCacheKey($cacheKey, $context);
+            $cachePayload = Cache::get($fullCacheKey);
 
-            if ($cached !== null && $cached !== false && $cached instanceof Validate) {
-                return $cached;
+            if (is_array($cachePayload) && isset($cachePayload['rules'], $cachePayload['messages'])) {
+                return $this->generator->buildFromDefinition($cachePayload['rules'], $cachePayload['messages'], $context);
             }
         }
 
         // Generate validator | 生成验证器
-        $validator = $this->generator->generate($schema);
+        $validator = $this->generator->generate($schema, $context);
 
-        // Cache if key provided | 如果提供了key则缓存
+        // Cache rule/message snapshot if key provided | 如果提供了key则缓存 rule/message 快照
         if ($cacheKey !== null) {
-            $fullCacheKey = $this->cachePrefix . $cacheKey;
-            Cache::set($fullCacheKey, $validator, $this->cacheTtl);
+            $fullCacheKey = $this->cachePrefix . $this->buildCacheKey($cacheKey, $context);
+            Cache::set($fullCacheKey, $this->extractDefinition($validator), $this->cacheTtl);
         }
 
         return $validator;
+    }
+
+    /**
+     * Export validator definition (rules/messages) for frontend alignment.
+     * 导出验证器定义（规则/消息），用于前后端一致校验。
+     */
+    public function getDefinition(array $schema, array $context = [], ?string $cacheKey = null): array
+    {
+        $validator = $this->getValidator($schema, $cacheKey, $context);
+
+        return $this->extractDefinition($validator);
     }
 
     /**
@@ -83,9 +95,9 @@ class FormValidatorManager
      * @param string|null $cacheKey Cache key | 缓存key
      * @return bool|string True if valid, error message if invalid | 验证成功返回true，失败返回错误消息
      */
-    public function validate(array $data, array $schema, ?string $cacheKey = null): bool|string
+    public function validate(array $data, array $schema, ?string $cacheKey = null, array $context = []): bool|string
     {
-        $validator = $this->getValidator($schema, $cacheKey);
+        $validator = $this->getValidator($schema, $cacheKey, $context);
 
         if (!$validator->check($data)) {
             return $validator->getError();
@@ -128,5 +140,36 @@ class FormValidatorManager
         $property->setAccessible(true);
 
         return $property->getValue($validator);
+    }
+
+    /**
+     * Build tenant/site-aware cache key | 构建租户/站点隔离的缓存键
+     */
+    protected function buildCacheKey(string $cacheKey, array $context = []): string
+    {
+        $tenant = $context['tenant_id'] ?? 0;
+        $site = $context['site_id'] ?? 0;
+        return "{$cacheKey}:t{$tenant}:s{$site}";
+    }
+
+    /**
+     * 从验证器提取 rule/message 以用于缓存（避免序列化闭包）
+     */
+    protected function extractDefinition(Validate $validator): array
+    {
+        $ref = new \ReflectionClass($validator);
+
+        $ruleProp = $ref->getProperty('rule');
+        $ruleProp->setAccessible(true);
+        $rules = $ruleProp->getValue($validator);
+
+        $msgProp = $ref->getProperty('message');
+        $msgProp->setAccessible(true);
+        $messages = $msgProp->getValue($validator);
+
+        return [
+            'rules' => $rules,
+            'messages' => $messages,
+        ];
     }
 }

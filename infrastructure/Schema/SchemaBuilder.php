@@ -34,6 +34,17 @@ class SchemaBuilder implements SchemaBuilderInterface
 
         $this->assertCanRunDDL('create_table', $tableName);
 
+        // 幂等保护：表已存在直接跳过，保持接口语义为成功
+        if ($this->hasTable($tableName)) {
+            Log::info('[SCHEMA_DDL_SKIPPED] Table already exists, skip create_table', [
+                'env'       => $env,
+                'operation' => 'create_table',
+                'table'     => $tableName,
+                'trace_id'  => $traceId,
+            ]);
+            return true;
+        }
+
         // Use raw SQL for runtime table creation | 使用原始SQL进行运行时表创建
 
         // Note: ThinkPHP's schema builder is usually used in migrations.
@@ -54,26 +65,7 @@ class SchemaBuilder implements SchemaBuilderInterface
         $pk = '';
 
         foreach ($columns as $name => $def) {
-            $type = strtoupper($def['type']);
-            $length = isset($def['length']) ? "({$def['length']})" : '';
-            $nullable = isset($def['nullable']) && $def['nullable'] ? 'NULL' : 'NOT NULL';
-            if (isset($def['default'])) {
-                if (in_array(strtoupper($def['default']), ['CURRENT_TIMESTAMP', 'NULL'])) {
-                    $default = "DEFAULT {$def['default']}";
-                } else {
-                    $default = "DEFAULT '{$def['default']}'";
-                }
-            } else {
-                $default = '';
-            }
-            $autoInc = isset($def['auto_increment']) && $def['auto_increment'] ? 'AUTO_INCREMENT' : '';
-            $colComment = isset($def['comment']) ? "COMMENT '{$def['comment']}'" : '';
-
-            if (isset($def['primary']) && $def['primary']) {
-                $pk = $name;
-            }
-
-            $defs[] = "`{$name}` {$type}{$length} {$nullable} {$default} {$autoInc} {$colComment}";
+            $defs[] = $this->buildColumnDefinition($name, $def, $pk);
         }
 
         if ($pk) {
@@ -169,13 +161,20 @@ class SchemaBuilder implements SchemaBuilderInterface
             'column' => $columnName,
         ]);
 
-        $type = strtoupper($def['type']);
-        $length = isset($def['length']) ? "({$def['length']})" : '';
-        $nullable = isset($def['nullable']) && $def['nullable'] ? 'NULL' : 'NOT NULL';
-        $default = isset($def['default']) ? "DEFAULT '{$def['default']}'" : '';
-        $colComment = isset($def['comment']) ? "COMMENT '{$def['comment']}'" : '';
+        // 幂等保护：列已存在直接跳过
+        if ($this->hasColumn($tableName, $columnName)) {
+            Log::info('[SCHEMA_DDL_SKIPPED] Column already exists, skip add_column', [
+                'env'       => $env,
+                'operation' => 'add_column',
+                'table'     => $tableName,
+                'column'    => $columnName,
+                'trace_id'  => $traceId,
+            ]);
+            return true;
+        }
 
-        $sql = "ALTER TABLE `{$tableName}` ADD COLUMN `{$columnName}` {$type}{$length} {$nullable} {$default} {$colComment}";
+        $columnDef = $this->buildColumnDefinition($columnName, $def);
+        $sql = "ALTER TABLE `{$tableName}` ADD COLUMN {$columnDef}";
 
         try {
             Db::execute($sql);
@@ -215,6 +214,18 @@ class SchemaBuilder implements SchemaBuilderInterface
             'column' => $columnName,
         ]);
 
+        // 幂等保护：列不存在直接跳过
+        if (!$this->hasColumn($tableName, $columnName)) {
+            Log::info('[SCHEMA_DDL_SKIPPED] Column not exists, skip drop_column', [
+                'env'       => $env,
+                'operation' => 'drop_column',
+                'table'     => $tableName,
+                'column'    => $columnName,
+                'trace_id'  => $traceId,
+            ]);
+            return true;
+        }
+
         try {
             Db::execute("ALTER TABLE `{$tableName}` DROP COLUMN `{$columnName}`");
 
@@ -248,6 +259,49 @@ class SchemaBuilder implements SchemaBuilderInterface
     {
         $result = Db::query("SHOW COLUMNS FROM `{$tableName}` LIKE '{$columnName}'");
         return !empty($result);
+    }
+
+    /**
+     * 构造列定义 SQL 片段（包含默认值/自增/注释/主键标记）
+     */
+    protected function buildColumnDefinition(string $name, array $def, string &$primary = null): string
+    {
+        $type = strtoupper($def['type']);
+
+        // 若 type 已自带长度/UNSIGNED，则不再重复追加
+        $hasLengthInType = str_contains($type, '(');
+        $length = (!$hasLengthInType && isset($def['length'])) ? "({$def['length']})" : '';
+
+        $nullable = isset($def['nullable']) && $def['nullable'] ? 'NULL' : 'NOT NULL';
+
+        $default = '';
+        if (array_key_exists('default', $def)) {
+            $rawDefault = $def['default'];
+            if (is_array($rawDefault) || is_object($rawDefault)) {
+                $encoded = json_encode($rawDefault, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                $rawDefault = $encoded ?? null;
+            }
+            if (is_string($rawDefault) && in_array(strtoupper($rawDefault), ['CURRENT_TIMESTAMP', 'NULL'], true)) {
+                $default = "DEFAULT {$rawDefault}";
+            } elseif ($rawDefault === null) {
+                $default = 'DEFAULT NULL';
+            } elseif (is_numeric($rawDefault)) {
+                $default = "DEFAULT {$rawDefault}";
+            } else {
+                $default = "DEFAULT '" . addslashes((string) $rawDefault) . "'";
+            }
+        }
+
+        $autoInc = isset($def['auto_increment']) && $def['auto_increment'] ? 'AUTO_INCREMENT' : '';
+        $colComment = isset($def['comment']) ? "COMMENT '" . addslashes((string) $def['comment']) . "'" : '';
+        $unsigned = (isset($def['unsigned']) && $def['unsigned'] && stripos($type, 'UNSIGNED') === false) ? 'UNSIGNED' : '';
+        $onUpdate = (isset($def['on_update']) && is_string($def['on_update'])) ? "ON UPDATE {$def['on_update']}" : '';
+
+        if (isset($def['primary']) && $def['primary']) {
+            $primary = $name;
+        }
+
+        return "`{$name}` {$type}{$length} {$unsigned} {$nullable} {$default} {$autoInc} {$onUpdate} {$colComment}";
     }
 
     /**

@@ -204,6 +204,75 @@ class FormSchemaManagerTest extends ThinkPHPTestCase
     }
 
     /**
+     * 缺陷 B：读路径缺失租户时必须显式失败，而不是退化成「不按租户过滤」
+     *
+     * 旧实现是 `$this->repository->findById($formId, $data['tenant_id'] ?? null)`：
+     * `?? null` 把「payload 里没有 tenant_id」变成了「不加 tenant_id 条件」，
+     * 于是读回来的是**任意租户**的行。现在 create() 先走 requireTenantId()，缺失即抛异常。
+     */
+    public function testCreateWithoutTenantIdFailsClosedInsteadOfLeakingCrossTenantData(): void
+    {
+        // 先给租户 1 建一条表单：如果旧实现退化成「不过滤」，读到/返回的就是这一行
+        $seeded = $this->manager->create($this->getSampleFormData());
+        $this->assertSame($this->testTenantId, (int) $seeded['tenant_id']);
+
+        $payload = $this->getSampleFormData();
+        unset($payload['tenant_id']);
+        $payload['name'] = 'no_tenant_form';
+
+        try {
+            $this->manager->create($payload);
+            $this->fail('缺失 tenant_id 时必须抛异常，不允许继续写库/读库');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('tenant_id', $e->getMessage());
+        }
+
+        // 拿不到租户就什么都不该写进去
+        $this->assertSame(
+            0,
+            Db::name('lowcode_forms')->where('name', 'no_tenant_form')->count(),
+            '缺失租户的创建请求不得落库'
+        );
+    }
+
+    /**
+     * 缺陷 B：读路径的租户解析器不接受「缺失」，仓储层的 findById 也不接受 null
+     *
+     * 这两点合起来保证「缺 tenant_id」不可能再退化成一发不过滤的查询。
+     */
+    public function testReadPathRejectsMissingTenantInsteadOfUnscopedLookup(): void
+    {
+        $created = $this->manager->create($this->getSampleFormData());
+
+        // 1) 读路径解析器：缺键 / 为 0 / 非数字 一律抛异常（而不是返回 null 去「不过滤」）
+        $resolver = new \ReflectionMethod(FormSchemaManager::class, 'requireTenantId');
+        $resolver->setAccessible(true);
+
+        foreach ([['name' => 'product_form'], ['tenant_id' => null], ['tenant_id' => 0], ['tenant_id' => 'abc']] as $payload) {
+            try {
+                $resolver->invoke($this->manager, $payload);
+                $this->fail('缺失或非法的 tenant_id 必须抛异常：' . json_encode($payload));
+            } catch (\InvalidArgumentException $e) {
+                $this->assertStringContainsString('tenant_id', $e->getMessage());
+            }
+        }
+
+        // 2) 合法租户下读路径正常
+        $found = $this->manager->getById((int) $created['id'], $this->testTenantId);
+        $this->assertNotNull($found);
+        $this->assertSame('product_form', $found['name']);
+
+        // 3) 仓储层第二道防线：findById 的租户参数必填且不可为 null
+        $parameters = (new \ReflectionMethod(FormSchemaRepository::class, 'findById'))->getParameters();
+        $this->assertSame('tenantId', $parameters[1]->getName());
+        $this->assertFalse($parameters[1]->isOptional(), 'findById() 的 tenantId 不能有默认值');
+        $this->assertFalse($parameters[1]->allowsNull(), 'findById() 的 tenantId 不允许为 null');
+
+        // 4) 换个租户按同一个 ID 读，读不到（不返回他租户数据）
+        $this->assertNull($this->manager->getById((int) $created['id'], $this->testTenantId + 1));
+    }
+
+    /**
      * Test tenant isolation | 测试租户隔离
      */
     public function testTenantIsolation(): void

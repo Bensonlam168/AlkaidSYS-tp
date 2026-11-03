@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Infrastructure\Lowcode\FormDesigner\Repository;
 
-use think\facade\Db;
+use Infrastructure\Tenant\TenantAwareDb;
 
 /**
  * Form Schema Repository | 表单Schema仓储
@@ -19,6 +19,12 @@ use think\facade\Db;
 class FormSchemaRepository
 {
     protected string $table = 'lowcode_forms';
+    protected TenantAwareDb $tenantDb;
+
+    public function __construct(?TenantAwareDb $tenantDb = null)
+    {
+        $this->tenantDb = $tenantDb ?? new TenantAwareDb();
+    }
 
     /**
      * Save form schema | 保存表单Schema
@@ -33,35 +39,45 @@ class FormSchemaRepository
             $data['schema'] = json_encode($data['schema']);
         }
 
+        // 强制要求租户上下文，避免无租户写入
+        // Enforce tenant context to avoid tenant-less writes
+        if (!isset($data['tenant_id'])) {
+            throw new \InvalidArgumentException('tenant_id is required for form schema persistence');
+        }
+        $tenantId = (int) $data['tenant_id'];
+        $siteId = isset($data['site_id']) ? (int) $data['site_id'] : null;
+
         if (isset($data['id']) && $data['id']) {
             // Update existing | 更新已存在的
-            Db::name($this->table)
-                ->where('id', $data['id'])
-                ->update($data);
+            $query = $this->tenantDb->name($this->table, $tenantId, $siteId);
+
+            $query->where('id', $data['id'])->where('tenant_id', $tenantId)->update($data);
             return (int)$data['id'];
         } else {
             // Insert new | 插入新的
             unset($data['id']);
-            return (int)Db::name($this->table)->insertGetId($data);
+            return (int)$this->tenantDb->name($this->table, $tenantId, $siteId)->insertGetId($data);
         }
     }
 
     /**
      * Find by ID | 按ID查找
      *
+     * NOTE(租户必填，缺陷 B 的第二道防线): 修复前调用方 `FormSchemaManager::create()`
+     * 传的是 `$data['tenant_id'] ?? null`，而本方法拿到 null 时**不过滤** tenant_id，
+     * 于是「payload 里缺 tenant_id」直接退化成跨租户读。现在租户是必填的，
+     * 缺失会在参数绑定阶段就 TypeError，不可能再走到「不过滤」的分支。
+     *
      * @param int $id Form ID | 表单ID
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return array|null
      */
-    public function findById(int $id, ?int $tenantId = null): ?array
+    public function findById(int $id, int $tenantId): ?array
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
-
-        $data = $query->find();
+        $data = $this->tenantDb
+            ->name($this->table, $tenantId)
+            ->where('id', $id)
+            ->find();
 
         if (!$data) {
             return null;
@@ -80,9 +96,9 @@ class FormSchemaRepository
      */
     public function findByName(string $name, int $tenantId, ?int $siteId = null): ?array
     {
-        $query = Db::name($this->table)
-            ->where('name', $name)
-            ->where('tenant_id', $tenantId);
+        $query = $this->tenantDb
+            ->name($this->table, $tenantId, $siteId)
+            ->where('name', $name);
 
         if ($siteId !== null) {
             $query->where('site_id', $siteId);
@@ -106,9 +122,9 @@ class FormSchemaRepository
      */
     public function findByCollectionName(string $collectionName, int $tenantId): array
     {
-        $list = Db::name($this->table)
+        $list = $this->tenantDb
+            ->name($this->table, $tenantId)
             ->where('collection_name', $collectionName)
-            ->where('tenant_id', $tenantId)
             ->select()
             ->toArray();
 
@@ -126,7 +142,7 @@ class FormSchemaRepository
      */
     public function list(int $tenantId, array $filters = [], int $page = 1, int $pageSize = 20): array
     {
-        $query = Db::name($this->table)->where('tenant_id', $tenantId);
+        $query = $this->tenantDb->name($this->table, $tenantId);
 
         // Apply filters | 应用筛选
         if (isset($filters['name'])) {
@@ -168,22 +184,15 @@ class FormSchemaRepository
      * Delete form | 删除表单
      *
      * @param int $id Form ID | 表单ID
-     * @param int|null $tenantId Tenant ID | 租户ID
+     * @param int $tenantId Tenant ID | 租户ID
      * @return bool
      */
-    public function delete(int $id, ?int $tenantId = null): bool
+    public function delete(int $id, int $tenantId): bool
     {
-        $query = Db::name($this->table)->where('id', $id);
-
-        if ($tenantId !== null) {
-            $query->where('tenant_id', $tenantId);
-        }
-
-        $result = (bool)$query->delete();
-        if (!$result) {
-            // echo "Delete failed for ID $id (Tenant: $tenantId)\n";
-        }
-        return $result;
+        return (bool)$this->tenantDb
+            ->name($this->table, $tenantId)
+            ->where('id', $id)
+            ->delete();
     }
 
     /**

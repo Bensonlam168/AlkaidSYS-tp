@@ -48,12 +48,14 @@ This document defines mandatory database design and data access rules for the Al
   - A documented rollback or remediation plan.
   - Test coverage that exercises the expected data shapes.
 - Application code, migrations, and design documents **MUST** stay in sync; any intentional divergence **MUST** be recorded in `docs/report/*` and, if work is pending, in the Backlog.
+- Data migrations (inserting rows that are expected to exist long-term, e.g. permissions / menus) **MUST** be verifiable as "intent ↔ actual rows": `scripts/check-migration-data.php` extracts `'slug' => 'resource.action'` payloads and `menus` payloads from the migration sources and compares them against `permissions.slug` / `menus.name`, reporting each miss with the migration file, line and key. New migrations are therefore covered automatically — no second hand-written expectation list. Only migrations recorded as **applied** in the ledger are compared.
+- The data consistency check **MUST** be run against a real (existing) database locally; CI only runs it on a freshly migrated database and cannot detect drift in a long-lived database: `docker exec alkaid-backend php scripts/check-migration-data.php --strict`.
 
 ## 7. Legacy vs Low-code Data Model
 
 - `Domain\Lowcode` and `Infrastructure\Lowcode` are the **single source of truth** for low-code collection/field definitions.
 - New features **MUST NOT** introduce new dependencies on legacy collection APIs such as:
-  - `Domain\Model\Collection`
+- `Domain\Lowcode\Collection\Model\Collection`（Legacy 版本已移除）
   - `Infrastructure\Collection\CollectionManager`
   - `Infrastructure\Field\FieldTypeRegistry`
 - Legacy tables and columns marked as deprecated **MUST** only be used for backward compatibility glue code and MUST NOT receive new behaviour.
@@ -69,4 +71,3 @@ This document defines mandatory database design and data access rules for the Al
   - All business-critical tables SHOULD have complete forward/backward migrations and seed data where appropriate.
   - Legacy tables that are fully shadowed by low-code implementations SHOULD be retired according to the T1 domain cleanup execution report and the project's major-version deprecation policy.
   - Schema evolution and data migrations SHOULD be exercised in automated tests as part of the standard CI pipeline.
-

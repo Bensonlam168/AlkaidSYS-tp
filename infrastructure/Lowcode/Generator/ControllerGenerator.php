@@ -117,8 +117,16 @@ class {$className} extends ApiController
         }
 
         // Apply sorting | 应用排序
+        // 限制排序字段与排序方向，防止字段名/排序注入
+        \$allowedSortFields = array_merge(['id', 'created_at', 'updated_at'], [{$fillable}]);
         \$sortBy = \$request->get('sort_by', 'id');
-        \$sortOrder = \$request->get('sort_order', 'desc');
+        if (!in_array(\$sortBy, \$allowedSortFields, true)) {
+            \$sortBy = 'id';
+        }
+        \$sortOrder = strtolower((string) \$request->get('sort_order', 'desc'));
+        if (!in_array(\$sortOrder, ['asc', 'desc'], true)) {
+            \$sortOrder = 'desc';
+        }
         \$query->order(\$sortBy, \$sortOrder);
 
         \$total = \$query->count();

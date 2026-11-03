@@ -31,11 +31,20 @@ return [
     'user_not_found' => '用户不存在',
     'user_disabled' => '用户已被禁用',
     'login_failed' => '登录失败',
+    // ER-04：会话失效闭环的统一对外文案
+    // 刻意**不区分**具体原因（用户不存在/被停用/被锁定/租户停用/租户过期），避免泄露账号与运营状态；
+    // 可区分的原因只写日志。客户端对这一组情况的处理完全一致：清本地会话 → 重新登录。
+    'session_invalid' => '当前登录会话已失效，请重新登录',
+    // 租户不可用（登录阶段拒绝用；与 TenantIdentify 的 403 口径一致）
+    'tenant_unavailable' => '当前租户不可用',
 
     // Authorization errors | 授权错误
     'forbidden' => '禁止访问',
     'permission_denied' => '权限不足',
     'access_denied' => '访问被拒绝',
+    // ER-05 授予边界：越界授权（把自己没有的权限授予角色 / 把比自己更强的角色分配给用户）
+    // 文案保持"可操作但不可探测"：说明"你做错了什么"，但**不列出**具体缺哪些权限
+    'grant_ceiling_exceeded' => '权限不足：不能授予超出你自身权限范围的权限',
 
     // Resource errors | 资源错误
     'resource_not_found' => '资源不存在',

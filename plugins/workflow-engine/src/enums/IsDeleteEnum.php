@@ -1,0 +1,34 @@
+<?php
+
+/**
+ *+------------------
+ * ingenious
+ *+------------------
+ * Copyright (c) https://gitcode.com/motion-code  All rights reserved.
+ *+------------------
+ * Author: Mr. April (405784684@qq.com)
+ *+------------------
+ * Software Registration Number: 2024SR0694589
+ * Official Website: https://madong.tech
+ */
+
+namespace Alkaid\Workflow\Engine\enums;
+
+use Alkaid\Workflow\Engine\interface\IEnum;
+use Alkaid\Workflow\Engine\libs\traits\EnumTrait;
+
+enum IsDeleteEnum: int implements IEnum
+{
+    use EnumTrait;
+
+    case NO = 0;
+    case YES = 1;
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::NO => '正常',
+            self::YES => '删除',
+        };
+    }
+}

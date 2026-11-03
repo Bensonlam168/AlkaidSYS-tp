@@ -35,6 +35,32 @@ This document outlines the security architecture and guidelines for AlkaidSYS. I
 - **Replay Detection**: Using revoked/blacklisted token triggers `code = 2007` error and audit log
 - **Blacklist TTL**: Matches Refresh Token lifetime (7 days default)
 
+### 2.5 Session Invalidation Closure (ER-04)
+
+> Status: **Implemented**. See the Chinese version of this document (§2.5) for the full rationale,
+> measurements and trade-offs; this section is the normative summary.
+
+A JWT only proves that the token was genuine **when it was issued**; it does not prove that the subject is still valid.
+
+- **Where**: `app\middleware\Auth` (every protected request), `AuthController::refresh()` (renewal) and
+  `AuthController::login()` (session start), all delegating to `Infrastructure\Auth\PrincipalStateChecker`.
+  Tenant usability criteria live in exactly one place: `Infrastructure\Tenant\Service\TenantUsability`
+  (existence + `status = active` + `expires_at` not in the past).
+- **Checks**: user still exists inside the tenant declared by the token, `users.status = active`,
+  and the tenant is usable. Refresh additionally revokes the presented refresh token when the subject is unusable.
+- **Rejection**: HTTP **401** + business code **2001** with a single external message (`error.session_invalid`).
+  The machine-readable reason (`user_not_found` / `user_inactive` / `user_locked` / `tenant_not_found` /
+  `tenant_unusable` / `tenant_expired`) is **logged only** — distinguishing it in the response would leak
+  account existence and tenant operational state, while the client action is identical for all cases.
+  A failure of the check itself (e.g. database unavailable) returns **500**, never a fabricated 401.
+- **Performance**: +2 primary-key lookups per authenticated request (`EXPLAIN`: `type=const`, `rows=1`),
+  roughly +1.6–2.0 ms per request in the local Docker environment; end-to-end difference is below measurement noise.
+- **Caching**: deliberately **none** (not even `static`), because `alkaid-backend` is a long-lived Swoole process
+  and caching `active` re-introduces "disabled but still usable". Any future cache MUST have a short TTL
+  documented here, explicit invalidation on every user/tenant status write path, and a stated worst-case delay.
+- **Not covered**: routes that do not mount the `Auth` middleware, and the dev-only `AUTH_SKIP_MIDDLEWARE`
+  switch (must never be enabled in production-like environments).
+
 ## 3. Authorization (AuthZ)
 
 ### 3.1 RBAC Model
@@ -62,6 +88,11 @@ The authorization model is defined in two phases. Both phases share the same ext
   - Internal slug and external code differ only by separator, and are always derived from the same `resource` / `action` pair:
     - Internal: `slug = resource . '.' . action` (e.g., `forms.view`)
     - External: `code = resource . ':' . action` (e.g., `forms:view`)
+  - A slug MUST contain exactly one `.` — the `resource` segment and the `action` segment each form a single token.
+    Multi-word resources are joined with underscores inside the resource segment, never with a second dot:
+    - Correct: `workflow_definition.read` (`resource = workflow_definition`, `action = read`)
+    - Incorrect: `workflow.definition.read` (three segments; rejected by `scripts/check-permission-codes.php`)
+    - Same convention as the existing `form_data.view` / `form_data.write` resources.
   - New code MUST NOT introduce additional permission code formats (such as `AC_xxx`) unless explicitly required by a future design decision.
 
 #### Permission middleware parameter format
@@ -88,6 +119,320 @@ Internally, the middleware normalizes both formats to the external `resource:act
 - All data access must be scoped by `tenant_id`.
 - Permission codes for multi-tenant scenarios are prefixed with tenant scope, for example: `tenant:{tenantId}:{resource}:{action}` (e.g., `tenant:1001:forms:view`).
 - Cross-tenant access is prohibited at authorization layer.
+
+### 3.3 Permission Monitor Endpoint Authorization (`/v1/admin/permission-monitor`)
+
+This route group exposes internal state of the permission subsystem (L1/L2 cache hit rates, TTL,
+P95 latency, and any user's permission set) and contains two **write** operations (clear a user's
+cache / clear all permission caches). The whole group therefore **MUST** carry `Auth` + `Permission`;
+anonymous access is not allowed.
+
+| Method | Path | Required permission | Notes |
+| --- | --- | --- | --- |
+| GET | `/v1/admin/permission-monitor/cache-stats` | `permission.read` | Cache statistics (hit rate / TTL) |
+| GET | `/v1/admin/permission-monitor/performance` | `permission.read` | Performance metrics (P95 / hit-rate targets) |
+| GET | `/v1/admin/permission-monitor/health` | `permission.read` | Internal health detail, not a liveness probe |
+| GET | `/v1/admin/permission-monitor/user/<userId>/permissions` | `permission.read` | Target user must belong to the current tenant, otherwise 404 |
+| GET | `/v1/admin/permission-monitor/user/<userId>/check/<permission>` | `permission.read` | Same rule; `:permission` accepts `resource:action` |
+| DELETE | `/v1/admin/permission-monitor/cache/user/<userId>` | `permission.write` | Same rule; clearing cache is a write on the permission subsystem |
+| DELETE | `/v1/admin/permission-monitor/cache` | `permission.write` | Permission caches only (whitelisted prefixes); **no longer** `Cache::clear()`, see 3.4 |
+
+Rules and decisions:
+
+- **`health` gets no exemption**: it returns internal cache/latency state, not "is the process alive".
+  Process liveness must use a separate endpoint that returns no business data; making this endpoint
+  anonymous would re-open the unauthenticated read that was just closed.
+- **Cross-tenant access is always 404 (never 403)**: the per-user queries inside `PermissionService`
+  derive the tenant from the target user row and carry no request-tenant dimension, so the controller
+  must verify "target user belongs to the current request tenant" before delegating. Returning 404
+  instead of 403 avoids leaking "this userId exists but belongs to someone else".
+- **Route middleware parameter format**: declarations under `route/**` use the internal slug form
+  (`permission.read`) because `scripts/check-permission-codes.php` forbids `resource:action` (which
+  contains `:`) at the route layer. Both forms are normalized inside the middleware and are equivalent.
+
+### 3.4 Permission Cache Invalidation Policy (R1 / ER-06)
+
+> Implementation tasks: R1 (`clearAllCache` used to flush the whole Redis DB), ER-06 (no cache
+> invalidation after an authority change).
+
+#### 3.4.1 Key space and TTL
+
+| Key (logical; the driver prepends `alkaid:` when stored in Redis) | TTL | Producer |
+| --- | --- | --- |
+| `l1:permission:tenant:{t}:user:{u}:permissions` | 60s | `PermissionCacheService` |
+| `l2:permission:tenant:{t}:user:{u}:permissions` | 300s | `PermissionCacheService` |
+| `permission:tenant:{t}:user:{u}:check:{md5(code)}` | 30s | `PermissionCacheService::hasPermission()` |
+| `casbin:check:{u}:{t}:{resource}:{action}` | 300s (`CASBIN_CACHE_TTL`) | `CasbinService::check()` |
+| `casbin:policy:full` | 300s (`policy_cache_enabled`, off by default) | `DatabaseAdapter` |
+
+Real stored form (sampled with phpredis `SCAN`): `alkaid:l1:permission:tenant:9:user:9:permissions`,
+`alkaid:session:verify-r1-abc123`, `alkaid:rl:dev:user:verify-r1:token_bucket`.
+
+#### 3.4.2 Prefix whitelist (the safety boundary)
+
+Purges may **only** hit these prefix families; any other prefix (including the empty string) is
+rejected with an exception:
+
+`l1:permission:` / `l2:permission:` / `permission:` / `casbin:check:` / `casbin:policy:`
+
+The boundary is structural: every permission-related key contains a `permission:` or `casbin:`
+segment, while `session:` (sessions), `rl:` (rate limiting), `lowcode:` and `casbin_last_reload`
+do not. Purging permission caches therefore **cannot** delete sessions or rate-limit counters.
+
+**Never** use `Cache::clear()` for permission caches: ThinkPHP's Redis driver implements it as
+`flushDB()` (the whole DB, and sessions live in the same DB); the File driver implements it as
+`rmdir(cache directory)`. Likewise `KEYS pattern` is forbidden (O(N) and blocking on a
+single-threaded Redis); only `SCAN` + batched `DEL` is allowed.
+
+#### 3.4.3 Driver adaptation
+
+| Driver | Strategy | Notes |
+| --- | --- | --- |
+| Redis (phpredis) | `SCAN` cursor iteration + batched `DEL` (500 per call) | Production path. Prefixes are grouped by their first segment so one `SCAN` pass serves a group |
+| File | Exact deletion through a key index | The File driver stores `md5(key)` on disk (`runtime/cache/ab/cdef….php`), which cannot be reversed; keys written by the permission services are therefore recorded and deleted one by one |
+| Others (Predis / Memory / custom) | Same as File (index) | **Never** degrades to `Cache::clear()`; an empty index only logs a warning and returns 0 |
+
+#### 3.4.4 When invalidation happens and what it covers
+
+Invalidation always runs **after** the write commits (clearing earlier lets concurrent requests
+re-populate the cache from uncommitted data):
+
+| Change | Invalidated | Hook |
+| --- | --- | --- |
+| Role permissions (`syncPermissions`) | **All users** holding the role | `RoleRepository::syncPermissions()` |
+| Role deletion | Members of the role | `RoleRepository::delete()` (members collected first) |
+| User roles (`setRoles`) | That user | `UserController::setRoles()` |
+| User status (`updateStatus` / `update`) | That user | `UserController::updateStatus()/update()` |
+| User deletion | That user | `UserController::delete()` |
+| Permission definition change/deletion | All permission caches | `PermissionRepository::save()/delete()` |
+| Admin "clear all permission caches" | All permission caches | `PermissionCacheService::clearAllCache()` |
+
+Above 100 affected users the invalidation escalates to a whole-family purge: one `SCAN` beats
+assembling thousands of per-user keys.
+
+#### 3.4.5 Failure handling
+
+Cache invalidation is **best effort**: every `PermissionCacheInvalidator` method wraps its work in
+`catch (Throwable)`, logs a `warning` and returns `success=false`. It never re-throws and never
+rolls back the business write — failing a successful revocation because a cache delete failed is
+backwards; the worst case is that stale permissions live for one more TTL.
+
+#### 3.4.6 Known degradation (File driver, development/testing only)
+
+The key index is capped (50k entries) with a 1-hour TTL. When the cap is exceeded the oldest
+entries are dropped with a warning; those keys can only expire via TTL. Production forces Redis
+(`config/cache.php` forces `redis` for `production/prod/stage/staging`), so this does not apply there.
+
+### 3.5 Grant Ceiling (ER-05)
+
+#### 3.5.1 The gap
+
+`role.write` / `user.write` only answer "may you edit roles/users"; they do not answer
+"how much authority may you hand out". Every permission-set write path used to write straight
+through:
+
+| Path | Action | Gap |
+| --- | --- | --- |
+| `RoleController::setPermissions` | `PUT /v1/admin/roles/:id/permissions` | any permission |
+| `RoleController::save` | `POST /v1/admin/roles` (with `permissions`) | any permission |
+| `RoleController::update` | `PUT /v1/admin/roles/:id` (with `permissions`) | any permission |
+| `UserController::setRoles` | `PUT /v1/admin/users/:id/roles` | any role |
+| `UserController::save` | `POST /v1/admin/users` (with `role_ids`) | any role |
+
+Attack chain (**conditional privilege escalation**): a tenant admin holding only `role.write`
+calls `PUT /v1/admin/roles/{a role he already holds}/permissions` with the ID of `tenant.write`
+and instantly holds `tenant.write`. No other hole is needed.
+
+#### 3.5.2 Rule
+
+- Permission-set paths (first three): requested permission IDs ⊆ the operator's current permission set;
+- Role-assignment paths (last two): the **union** of the target roles' permissions ⊆ the operator's
+  current permission set (a role is coarser than a permission, so per-role checks miss union escapes);
+- Roles from another tenant are treated as **non-existent** (never distinguishing "missing" from
+  "someone else's", to avoid leaking existence).
+
+Comparison is done on **permission codes `resource:action`**, not on permission IDs:
+
+- Operator side: `PermissionService::getUserPermissions()` — the *same* source the authorization
+  middleware uses (all three modes `DB_ONLY` / `CASBIN_ONLY` / `DUAL_MODE`, including multi-level cache).
+  Comparing raw IDs would create a second source of truth that diverges from the middleware;
+- Request side: permission IDs are mapped through the `permissions` table (a **global catalog** with no
+  `tenant_id`; `resource + action` has no blanks and no duplicates), so the mapping is well defined;
+- Rows that cannot be mapped (empty `resource`/`action`) can never be "held" by anyone → denied
+  (fail-closed).
+
+#### 3.5.3 Rejection semantics
+
+- **HTTP 403 + business code 2002**, the same code the `app\middleware\Permission` middleware uses;
+- Message is `error.grant_ceiling_exceeded`: actionable, but it **never lists the missing permissions**
+  (that would let callers probe the operator's boundary one permission at a time);
+- The full diff (permission IDs + codes) goes to `Log::warning` only;
+- **Check before write**: all guards run before any insert/update, so a rejection cannot leave a
+  half-created role, an account created without roles, or a role whose old permissions were already
+  deleted (the `role_permissions` foreign key would otherwise tear `syncPermissions`'s
+  delete+insert in half).
+
+#### 3.5.4 No hard-coded "super admin bypass"
+
+There is no hard-coded user ID, role slug or `is_system` check. Platform/system administrators are
+unrestricted simply because they **already hold every permission** (the seeded admin role carries all
+52 rows), so the subset check passes naturally. That avoids a "hard-code this id and skip the check"
+back door.
+
+#### 3.5.5 Operator identity comes from the JWT only
+
+The ceiling has to look up "who is the operator", so that value may only come from the Auth middleware
+(JWT payload written into the `Request` context). `UserController::getCurrentUserId()` used to read the
+`X-User-Id` request header first — which let a client declare its own identity, defeating both the
+ceiling and the "cannot delete/disable yourself" guards. That branch has been removed; only trusted
+server-side sources remain (`Request::userId()` and the framework-injected `request->user`).
+
+#### 3.5.6 Explicitly out of scope (allowed by design)
+
+- An operator granting permissions he already holds to roles he can influence — he gains nothing;
+- **Revoking** is unrestricted (it only reduces authority);
+- An operator editing the permission set of a role he himself holds: still bounded by the same subset
+  check, so it cannot be used to escalate, but it does allow self-lockout. We deliberately do **not**
+  hard-block "modify my own role": that would break legitimate de-provisioning (a sole tenant admin
+  handing back `role.write`) and the only escape hatch would be a super-admin bypass, contradicting
+  3.5.4. Self-demotion is an auditable operational action and is left to logging and process.
+
+#### 3.5.7 Route shadowing: "added a check" is not "the check runs"
+
+`config/route.php` sets `route_complete_match = false`, which makes rules **prefix matches**.
+Because `PUT /v1/admin/roles/:id` (`update`) is registered before `:id/permissions`, it swallows
+`PUT /v1/admin/roles/5/permissions`:
+
+```
+request   PUT /v1/admin/roles/5/permissions
+matched   RoleController@update        <- prefix match on v1/admin/roles/5
+result    200 + {"message":"role.updated"}   (not a 404: it silently runs the wrong action)
+```
+
+Consequence: `setPermissions()` / `setRoles()` were **dead code**, so no check placed inside them
+could ever run, while the actual escalation happened through the reachable `update()`
+(which also calls `syncPermissions`). All four rules now carry `->completeMatch()`:
+
+- `PUT /v1/admin/roles/:id`, `PUT /v1/admin/roles/:id/permissions`
+- `PUT /v1/admin/users/:id`, `PUT /v1/admin/users/:id/roles`
+
+The response message distinguishes the action: `role.permissions_updated` / `角色设置成功`
+(the dedicated endpoints) vs `role.updated` / `用户更新成功` (the parent `update`).
+Regression guard: `tests/Feature/Route/AdminRouteReachabilityTest.php` replays a sample URL for
+every `v1/admin/**` rule through the framework's own `Route::check()` and asserts that the matched
+target equals the registered target.
+
+**Other shadowing of the same kind**: ER-05 only fixed the four `v1/admin/**` rules inside its own
+scope; the remaining 7 (workflow / lowcode) were registered and are fixed by a follow-up package,
+see §3.7.
+
+### 3.6 Permission definitions (permission codes) are immutable (ER-07)
+
+> Status: ✅ implemented — `app/controller/admin/PermissionController.php`;
+> regression: `tests/Feature/Admin/PermissionCodeImmutabilityTest.php`.
+
+#### 3.6.1 "Rewriting a permission definition" = equivalent privilege escalation
+
+Authorization keys on `permission.resource + ':' + permission.action` (see §3.5.2), and
+`permissions` is a **global catalog** (the table has no `tenant_id`). The historical
+`PUT /v1/admin/permissions/:id` wrote the request's `slug` / `resource` / `action` straight to the DB:
+
+```
+1. the attacker holds permission.write and owns a role bound to the row of role.write (id=N)
+2. PUT /v1/admin/permissions/N  {"resource":"tenant","action":"write"}
+3. not a single row in role_permissions changes
+4. from the next request on, the attacker holds tenant:write   <- escalation, affecting every tenant
+```
+
+Step 2 does not even need `role.write`: `permission.write` alone is enough to turn any row into
+any capability code.
+
+#### 3.6.2 Fix: the code is immutable
+
+- `update()` accepts **only** `name` and `description`;
+- `slug` / `resource` / `action` present **and different** from the stored value → **HTTP 422**
+  with message `permission.code_immutable` ("Permission code is immutable; change it through a
+  migration") plus field-level `data.errors`; **nothing is written**;
+- the same fields with the **same** values → ignored, the update proceeds (idempotent-friendly:
+  the admin UI posts the whole object back, so rejecting identical values would also block the
+  legitimate "change only the description" flow);
+- comparison uses normalized strings (`null` equals `''`, trimmed), so "the user cleared the input"
+  is not mistaken for a rewrite (clearing `role` to `''` *is* a rewrite → still 422);
+- incidentally fixes a silent data loss: the old code built a new entity with `description = null`
+  whenever the request omitted it, wiping the existing description; omitted fields now keep the
+  stored value.
+
+`Permission::fromArray(['resource'=>..,'action'=>..])` is **kept**: the entity has no
+`resource`/`action` setters, so `fromArray()` is the only assignment path, used by the create path
+and by `PermissionRepository::hydrate()` on every read; only "update no longer passes request
+values into it" changed.
+
+#### 3.6.3 Does `POST /v1/admin/permissions` need a constraint too? Yes
+
+Conclusion: **yes**, using the same source as the §3.5 grant ceiling
+(`PermissionService::getUserPermissions()`, i.e. exactly what the authorization middleware uses);
+out of scope → **403 / 2002** (`permission.code_not_owned`).
+
+Rationale:
+
+1. Creating is not "rewriting", but `permissions` is a **global catalog**: whoever can write it can
+   inject rows into **every tenant's** grant UI (`GET /v1/admin/permissions/grouped` feeds the
+   "assign permissions to role" checkboxes), with `name` / `description` chosen freely.
+2. It costs no real capability: §3.5 requires the operator to **already hold** a code before it can
+   be granted to any role, and a **newly created code is held by nobody** — so even without this
+   constraint the new row can never be granted and confers nothing, it is pure catalog noise.
+   Genuine new codes go through migrations/seeds (the 12 system permissions were added that way,
+   consistent with the "change it through a migration" message).
+3. Rows whose code cannot be derived (empty `resource`/`action` and no dot in the slug) are
+   rejected with 422 (`permission.code_required`) instead of becoming undeletable noise.
+4. No hard-coded super-admin bypass: the seeded `admin` role holds every permission row, so the
+   check is trivially true for it.
+
+**Accepted side effect**: the frontend "create permission" drawer
+(`frontend/apps/web-antd/src/views/system/permission/modules/form.vue`) can now only re-create codes
+the operator already holds; creating an unreachable code returns 403. This is a product trade-off:
+such rows were already un-grantable after §3.5, so the change turns an invisible failure into an
+explicit rejection. **Not done** (needs frontend/product sign-off): greying out `slug` /
+`resource` / `action` in the edit drawer (they are still editable and will be rejected with 422).
+
+### 3.7 The 7 shadowed workflow / lowcode routes: fixed (ER-07)
+
+Same remedy as §3.5.7: **both the child route and its parent `:id` / `:name` get
+`->completeMatch()`** (adding it to the child alone is not enough: a trailing slash or extra
+segment falls back to the parent prefix match).
+
+| Shadowed route | Matched before | Matched after (measured) |
+| --- | --- | --- |
+| `DELETE /v1/lowcode/collections/:name/fields/:field` | `CollectionController@delete` | `FieldController@delete` |
+| `DELETE /v1/lowcode/collections/:name/relationships/:relationship` | `CollectionController@delete` | `RelationshipController@delete` |
+| `GET /v1/workflow/instances/:id/history` | `WorkflowInstanceController@read` | `WorkflowInstanceController@history` |
+| `GET /v1/workflow/instances/:id/variables` | `WorkflowInstanceController@read` | `WorkflowInstanceController@getVariables` |
+| `GET /v1/workflow/tasks/:id/form` | `WorkflowTaskController@read` | `WorkflowTaskController@getForm` |
+| `GET /v1/workflow/triggers/:id/logs` | `WorkflowTriggerController@read` | `WorkflowTriggerController@logs` |
+| `GET /v1/workflow/triggers/webhook/:key` | `WorkflowTriggerController@read` | `WorkflowTriggerController@webhook` |
+
+Regression guard: `tests/Feature/Route/WorkflowLowcodeRouteReachabilityTest.php` (two layers: replay
+through `Route::check()` and real HTTP judged by response shape / side effects), plus a contract test
+asserting every parameterised rule declares `completeMatch()`.
+
+**Two real defects exposed by the fix** (unrelated to shadowing — these endpoints never worked):
+
+1. `FieldController`'s constructor neither accepted `App` nor called `parent::__construct($app)`, so
+   `$this->request` was `null` → `POST/DELETE .../fields` always returned 500;
+2. `FieldController` / `RelationshipController` used `$collectionName` / `$fieldName` parameters while
+   the route variables are `:name` / `:field` — ThinkPHP binds route variables **by parameter name**
+   and threw `InvalidArgumentException: method param miss:collectionName` (500). Parameters were
+   renamed (`$name` / `$field` / `$relationship`) because the route is the contract; URLs and
+   `docs/technical-specs/api/route-reference.md` are unchanged.
+
+**Webhook auth status (verified)**: `GET|POST /v1/workflow/triggers/webhook/:key` is one of the few
+endpoints that **deliberately has no Auth / Permission middleware** (external callbacks cannot carry
+a JWT). Auth relies on ① the `webhook_key` in the path (32 hex chars, random per trigger);
+② `config.secret`, when set, verified via `X-Webhook-Signature` (HMAC-SHA256, `hash_equals`);
+③ optional `config.allowed_ips` / `config.http_methods` allowlists (default: `POST` only).
+Its only global-middleware dependency is `TenantIdentify`, which falls back to
+`DEFAULT_TENANT_ID` when no `X-Tenant-ID` header is present — **if that variable is unset the
+endpoint fails**, which is a deployment requirement rather than a code defect.
 
 ## 4. Data Security
 
@@ -126,6 +471,108 @@ Rate limiting is defined in two phases. Both phases share the same error respons
     - `X-RateLimit-Remaining`: Remaining requests in the current window.
     - `X-RateLimit-Reset`: Time when the current window resets.
   - Details of the concrete token bucket configuration and migration plan SHOULD be kept in design documents and deployment playbooks, and this section MUST be updated once the Phase 2 algorithm is active in production.
+
+#### 5.1.1 Rate-limit identifiers and trusted proxies (ER-09)
+
+Rate limiting is only as good as the identifier it buckets on. The rules below are implemented in
+`app/middleware/RateLimit.php`; the switch lives in `config/ratelimit.php` (`trusted_proxies`)
+and `.env.example` (`TRUSTED_PROXIES`).
+
+**(1) `X-Forwarded-For` is untrusted by default**
+
+`X-Forwarded-For` (XFF) is fully client-controlled: a client may send several values or pure garbage.
+The previous implementation always took the **left-most** value, which means:
+
+- an attacker rotates one forged IP per request and every request lands in a fresh bucket → IP limiting is bypassed entirely;
+- or the attacker forges a victim's IP and pushes that IP into the throttle window.
+
+The default is therefore **no trust at all** (`TRUSTED_PROXIES` empty): the identifier is the TCP peer
+address (`REMOTE_ADDR`). This default only costs "per real client separation" — behind a reverse proxy
+every client shares one ip bucket — so configure `TRUSTED_PROXIES` **before** enabling the ip scope.
+
+**(2) Resolution algorithm (right to left)**
+
+| Step | Condition | Result |
+|------|-----------|--------|
+| 1 | TCP peer is **not** in the trusted list | Ignore the whole XFF header, return the peer address |
+| 2 | Peer trusted, but XFF missing / invalid (garbage, empty segment, port suffix, too long, too many entries) | Return the peer address |
+| 3 | Peer trusted and XFF valid | Scan **right to left**, skip trusted proxies, return the first untrusted address |
+| 4 | Every hop in XFF is a trusted proxy | Return the peer address (no client-side hop is available) |
+
+Why right to left: nginx's `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for` means
+`$http_x_forwarded_for, $remote_addr` — it **appends on the right**. The right-most entry is therefore always
+written by the trusted proxy closest to the backend (not forgeable); the further left, the closer to the client
+and the less trustworthy. "The first non-trusted address scanning from the right" is the machine that actually
+connected to the first proxy. Taking the left-most value means taking the client's own claim.
+
+Invalid XFF is dropped **as a whole** rather than "skip the bad entry and keep scanning left": otherwise an
+attacker only has to append garbage after a forged value to push the resolution result further left.
+
+**(3) Configuration: `TRUSTED_PROXIES`**
+
+- Comma-separated IP / CIDR list; IPv4 and IPv6 both supported, e.g. `10.0.0.0/8,2001:db8::/32`.
+- Single IPs and CIDRs are compared at the binary level (`10.0.0.0/8` contains `10.255.255.255`, not `11.0.0.1`).
+- Invalid entries are **ignored with a warning**; the other entries keep working. Skipping is still safe because
+  "not in the list" simply means "not trusted".
+- This repository's docker compose setup: run `docker network inspect alkaidsys-tp_default` and read the
+  `alkaid-nginx` container's IPv4Address (currently `172.18.0.6`). Do **not** just trust the whole
+  `172.18.0.0/16` subnet: the backend publishes port 9501 to the host, so direct connections to it appear
+  as the docker gateway `172.18.0.1`, and trusting the subnet makes that nginx-bypassing path forgeable again.
+- Container IPs can change on recreation; behaviour then degrades to "XFF not trusted" (the safe direction).
+
+**(4) IPv6 and `::ffff:1.2.3.4`**
+
+- Addresses are normalised before comparison: IPv6 is lower-cased and zero-compressed
+  (`2001:DB8::1` and `2001:db8::1` share one bucket).
+- `::ffff:1.2.3.4` (IPv4-mapped IPv6) is folded into `1.2.3.4`: the same host may appear in both forms, and
+  without folding it would hold two buckets (double quota) and would silently defeat a v4-only trusted entry.
+- Port suffixes (`1.2.3.4:80`), brackets (`[::1]`) and zone ids (`fe80::1%eth0`) are treated as invalid →
+  fall back to the peer address.
+
+**(5) Is `X-Real-IP` trusted? No**
+
+Only XFF is used, for three reasons:
+
+- nginx sends both, and right-to-left XFF already yields the correct answer; `X-Real-IP` adds no information.
+- Trusting two headers introduces the ambiguity of "which one wins on conflict", and ambiguity in a security
+  decision is a vulnerability.
+- The backend publishes port 9501 to the host, so a client can bypass nginx and forge `X-Real-IP`; honouring it
+  would again require "peer is trusted" first — the same gate as XFF, so the extra variable buys nothing.
+
+**(6) The `user` scope boundary: unusable at this position**
+
+`RateLimit` is a **global** middleware while `Auth` is **route-level**, so `$request->userId()` is always empty
+when the limiter runs. The previous implementation turned "no user" into an empty string, collapsing every
+request (including anonymous ones) into one shared `user` bucket — not per-user limiting but a **global quota
+wearing a user-scope label**: whoever fills it first locks everybody else out (`/v1/auth/login` is the worst case).
+
+Current state (option A, implemented):
+
+- `scopes.user.enabled` defaults to `false` (the config now honestly says "this scope is inactive");
+- even if it is switched to `true`, `resolveIdentifier('user')` returns null with a warning and the scope is
+  **skipped** — a shared bucket can no longer be created;
+- the `user` rule under `/v1/auth/login` was therefore removed; the real protection there is the `ip` rule.
+
+Not implemented (option B, needs its own task):
+
+- **B1**: add a **route-level** rate limiter mounted after `Auth`, reusing the implementation and rules of
+  `app/middleware/RateLimit.php`. Cost: re-working route middleware ordering and whitelist semantics, plus
+  de-duplicating against the global limiter (otherwise every request is counted twice).
+- **B2**: parse the JWT subject inside the global limiter — that is **re-implementing authentication**
+  (signature, expiry, session version, revocation list) and can disagree with `Auth`
+  (limiter says authenticated, `Auth` says unauthenticated). Highest cost and risk; **not recommended**.
+
+The right substitute for the `user` dimension today is per-login-name counting at the business layer
+(not implemented), with `ip` / `tenant` / `route` as the primary scopes.
+
+**(7) Known leftovers (out of ER-09 scope)**
+
+- `app/middleware/AccessLog.php` still writes the left-most XFF value into `client_ip`. That only affects log
+  truthfulness (forgeable audit data); it takes part in no rate-limit or authz decision — but do not treat it
+  as a trustworthy source when debugging.
+- The `tenant` scope degrades to a shared empty-string bucket when no tenant context exists at all. That is a
+  deliberate pre-existing trade-off (see `App\Request::tenantIdOrNull()`), and it differs from the `user` case:
+  `TenantIdentify` is a global middleware, so normal traffic does have a tenant.
 
 ### 5.2 API Signatures (High Security - Optional)
 - For critical/third-party APIs requiring enhanced security

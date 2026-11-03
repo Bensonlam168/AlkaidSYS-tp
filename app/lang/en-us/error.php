@@ -31,11 +31,21 @@ return [
     'user_not_found' => 'User not found',
     'user_disabled' => 'User has been disabled',
     'login_failed' => 'Login failed',
+    // ER-04: single external message for an unusable session subject.
+    // Deliberately does not distinguish user-missing / user-disabled / tenant-suspended / tenant-expired
+    // (that would leak account existence and tenant operational state); the reason is logged only.
+    'session_invalid' => 'Your session is no longer valid, please sign in again',
+    // Tenant is not usable (login-time rejection; same 403 semantics as TenantIdentify)
+    'tenant_unavailable' => 'The current tenant is not available',
 
     // Authorization errors | 授权错误
     'forbidden' => 'Forbidden',
     'permission_denied' => 'Permission Denied',
     'access_denied' => 'Access Denied',
+    // ER-05 grant ceiling: out-of-scope grant (granting permissions you do not hold,
+    // or assigning roles stronger than yourself). Actionable but non-probing:
+    // it never lists the specific permissions the operator is missing.
+    'grant_ceiling_exceeded' => 'Permission denied: you cannot grant permissions beyond your own scope',
 
     // Resource errors | 资源错误
     'resource_not_found' => 'Resource Not Found',

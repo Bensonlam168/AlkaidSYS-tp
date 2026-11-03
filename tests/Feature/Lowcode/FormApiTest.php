@@ -4,9 +4,15 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Lowcode;
 
+use Infrastructure\Lowcode\Collection\Repository\CollectionRepository;
+use Infrastructure\Lowcode\Collection\Repository\FieldRepository;
+use Infrastructure\Lowcode\Collection\Repository\RelationshipRepository;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
+use Infrastructure\Schema\SchemaBuilder;
 use Tests\ThinkPHPTestCase;
 use Tests\Helpers\AuthHelper;
+use ReflectionProperty;
+use think\db\PDOConnection;
 use think\facade\Db;
 
 /**
@@ -23,10 +29,9 @@ class FormApiTest extends ThinkPHPTestCase
     {
         parent::setUp();
 
-        // Clean up before tests
+        // Clean up before tests | 用例开始前清理集合（表 + 元数据 + 两级缓存）
         Db::execute('TRUNCATE TABLE lowcode_forms');
-        Db::execute('DROP TABLE IF EXISTS lc_test_api_data');
-        Db::execute('DELETE FROM lowcode_collections WHERE name = "test_api_data"');
+        $this->purgeCollection('test_api_data', 'lc_test_api_data');
 
         // Ensure app\Request is bound to think\Request (critical for Auth middleware)
         // 确保 app\Request 绑定到 think\Request（对 Auth 中间件至关重要）
@@ -77,11 +82,122 @@ class FormApiTest extends ThinkPHPTestCase
 
     protected function tearDown(): void
     {
-        // Clean up after tests
+        // Clean up after tests | 用例结束后清理集合（表 + 元数据 + 两级缓存）
         Db::execute('TRUNCATE TABLE lowcode_forms');
-        Db::execute('DROP TABLE IF EXISTS lc_test_api_data');
-        Db::execute('DELETE FROM lowcode_collections WHERE name = "test_api_data"');
+        $this->purgeCollection('test_api_data', 'lc_test_api_data');
         parent::tearDown();
+    }
+
+    /**
+     * 清理测试集合：drop 物理表 + 删元数据 + 清「两级」缓存
+     *
+     * 原先只做前两件事，随机顺序下 `testFormDataApi` 会稳定 400（`fields not exists:[age]`）。
+     * 断言失败处看起来是「业务校验」，实际是两层**进程级**缓存把「上一轮的集合/表结构」带了过来：
+     *
+     *   1. **think-orm 的进程内字段缓存**（`PDOConnection::$info`，键 `{database}.{table}`）——
+     *      **本次 400 的直接原因**。`BaseQuery` 每次拼 INSERT 前都会 `getTableFields()`
+     *      校验「要写的键是不是这张表的字段」，而这张表信息表在连接对象上**只增不减、
+     *      没有任何失效入口**（`getSchemaInfo($table, true)` 是唯一的强制重读，
+     *      但表已被 drop 时它会抛异常）。于是 `DROP TABLE` + 重建为新字段集之后，旧字段列表照样被复用。
+     *      实测（MySQL general_log 佐证）：同进程先建 `lc_test_api_data`（仅 `name`）、
+     *      再重建为（`name`, `age`），提交数据时 INSERT **根本没发到数据库**，
+     *      Builder 直接抛 `fields not exists:[age]` → 控制器兜底成 `{"code":400}`。
+     *
+     *   2. **CollectionManager 的缓存**（File 驱动，键 `lowcode:collection:{tenantId}:{name}`）——
+     *      同一类缺陷：存的是**已序列化的 Collection 对象**，键里只有「租户 + 集合名」，
+     *      **不含字段集**，同名集合重建为不同字段时就会读到上一轮的对象。
+     *      本类两个测试类当前都是「先建后读」，所以它不是本次 400 的触发点
+     *      （实测：只清第 1 层、不清本层，用例仍然全绿）；但它与第 1 层是同一类问题，
+     *      任何「只读不建」的用例都会踩，所以一并清掉。
+     *
+     * 因此三件事必须成对出现：drop 表、删元数据、清缓存。以后新增「会 drop 动态表」的用例
+     * 请复用本方法，不要只写 `DROP TABLE` + `DELETE FROM lowcode_collections`。
+     *
+     * 注意：本方法只删**本测试自己建的那张表**与其缓存键，不做 `Cache::clear()`
+     * （File 驱动的 clear() 会整目录删除 `runtime/cache/test/`，会波及并行进程与 Casbin 缓存）。
+     *
+     * @param string $collectionName 集合名（lowcode_collections.name）
+     * @param string $tableName      物理表名（如 lc_test_api_data），仅允许字母/数字/下划线
+     * @param int[]  $tenantIds      需要清缓存的租户（0 = 系统模板空间；本库测试租户为 1、2）
+     */
+    protected function purgeCollection(string $collectionName, string $tableName, array $tenantIds = [0, 1, 2]): void
+    {
+        if (preg_match('/^[A-Za-z0-9_]+$/', $tableName) !== 1) {
+            throw new \InvalidArgumentException("非法的物理表名：{$tableName}");
+        }
+
+        // 1. 物理表：必须 drop，否则 create() 的 hasTable() 命中、CREATE TABLE 被跳过
+        Db::execute('DROP TABLE IF EXISTS `' . $tableName . '`');
+
+        // 2. think-orm 进程内字段缓存：表已不存在，先把它从连接对象里摘掉
+        $this->forgetOrmTableSchema($tableName);
+
+        // 3. 元数据：按 name 删（所有租户，与原先的 DELETE 语义一致）
+        Db::execute('DELETE FROM lowcode_collections WHERE name = ?', [$collectionName]);
+
+        // 4. CollectionManager 缓存：按租户逐个清
+        //    这里刻意 new 一个「真实」的 manager 而不是从容器 make()：
+        //    容器里可能残留别的测试类 bind 进去的 Mockery 替身，用它清缓存等于没清。
+        $manager = new CollectionManager(
+            new SchemaBuilder(),
+            new CollectionRepository(),
+            new FieldRepository(),
+            new RelationshipRepository()
+        );
+
+        foreach ($tenantIds as $tenantId) {
+            $manager->clearCache($collectionName, (int) $tenantId);
+        }
+    }
+
+    /**
+     * 摘掉 think-orm 对某张表的进程内结构缓存 | Forget think-orm's in-process table schema
+     *
+     * `think\db\PDOConnection::getSchemaInfo()` 先查 `$this->info['{database}.{table}']`，
+     * 命中就直接返回；框架没有提供任何「失效」API（只有 `getSchemaInfo($table, true)` 强制重读，
+     * 而那张表此刻往往已经被 drop，强制重读会抛异常）。
+     *
+     * 所以这里用反射把它从 `$info` 里删掉：下一次访问该表会重新 `SHOW FULL COLUMNS`，
+     * 拿到的就是「重建之后」的字段集。只删目标表，其余表缓存原样保留。
+     *
+     * 关于第二层缓存：`config/database.php` 的 `fields_cache` 为 `false`，
+     * 因此 `PDOConnection::$cache`（think-cache 驱动的字段缓存）在本仓库不生效；
+     * 若将来打开它，这里也需要顺带删掉 `getSchemaCacheKey()` 对应的键。
+     *
+     * @param string $tableName 物理表名
+     */
+    protected function forgetOrmTableSchema(string $tableName): void
+    {
+        $connection = Db::connect();
+
+        if (!$connection instanceof PDOConnection) {
+            return;
+        }
+
+        $property = new ReflectionProperty($connection, 'info');
+        $property->setAccessible(true);
+
+        $info = $property->getValue($connection);
+        if (!is_array($info) || $info === []) {
+            return;
+        }
+
+        $qualified = (string) $connection->getConfig('database') . '.' . $tableName;
+        $suffix = '.' . $tableName;
+
+        $kept = [];
+        foreach ($info as $schema => $tableInfo) {
+            // 键格式为 `{database}.{table}`；用后缀匹配兼容库名前缀/表前缀的差异
+            if ((string) $schema === $qualified || str_ends_with((string) $schema, $suffix)) {
+                continue;
+            }
+
+            $kept[$schema] = $tableInfo;
+        }
+
+        if (count($kept) !== count($info)) {
+            $property->setValue($connection, $kept);
+        }
     }
 
     /**

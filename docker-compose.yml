@@ -1,70 +1,200 @@
-version: '3.8'
+# =============================================================================
+# AlkaidSYS 本地 / 开发编排（ER-18 加固版）
+#
+# 生产请叠加 override：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 已移除 `version:` 字段 —— Compose v2 早已废弃它，保留只会打印
+#   "the attribute `version` is obsolete" 告警。
+#
+# 本文件相对改造前的差异（每条都给理由）：
+#   1. 全部服务加 restart: unless-stopped —— 进程崩溃/宿主重启后自动拉起；
+#      不用 `always` 是因为 `unless-stopped` 会尊重运维手动的 `docker compose stop`，
+#      不会在人做维护时又把服务拉回来。
+#   2. 关键服务加 healthcheck，并让 depends_on 用 condition: service_healthy ——
+#      原来的 `condition: service_started` 只保证「容器进程起来了」，
+#      MySQL 首次初始化要几十秒，此时 backend 连库必失败。
+#   3. 资源限制（deploy.resources.limits）—— 防止单个容器吃满宿主机。
+#   4. 数据库/中间件端口只绑 127.0.0.1（不再 0.0.0.0）—— 详见下方每处注释。
+#   5. 凭据改为 ${VAR:-dev默认} —— 开发仍开箱即用；生产 override 用 ${VAR:?...}
+#      强制显式提供，避免把口令写进仓库。
+# =============================================================================
 
 services:
-  # MySQL Service
+  # ---------------------------------------------------------------------------
+  # MySQL
+  # ---------------------------------------------------------------------------
   mysql:
     image: mysql:8.0
     container_name: alkaid-mysql
+    restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: alkaid_sys
-      MYSQL_USER: alkaid
-      MYSQL_PASSWORD: alkaid123
+      # 开发默认值与改造前完全一致（root/root），因此本地无需任何额外配置即可跑起；
+      # 生产用 docker-compose.prod.yml 覆盖成 ${MYSQL_ROOT_PASSWORD:?...} 强制要求显式注入。
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-alkaid_sys}
+      MYSQL_USER: ${MYSQL_USER:-alkaid}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-alkaid123}
     ports:
-      - "3306:3306"
+      # 只绑环回地址：改造前是 "3306:3306"，等价于监听 0.0.0.0:3306，
+      # 同局域网任何机器都能连数据库。绑 127.0.0.1 后宿主机直连方式不变
+      # （mysql -h 127.0.0.1 -P 3306 照旧可用），但外部不可达。
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
+    healthcheck:
+      # $$ 是 compose 的转义写法，容器内实际执行时才会展开为 $MYSQL_ROOT_PASSWORD
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # 首次启动要初始化数据目录，给足 40s，否则会被误判为 unhealthy
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          # 依据：MySQL 8 官方建议 innodb_buffer_pool_size 约为可用内存的 50%~70%，
+          # 本开发库规模（369 张表）在 1 GB 上限下 buffer pool 约 512 MB，足够；
+          # 1.5 CPU 覆盖本地/CI 的并发迁移与查询。生产按实际 QPS 与数据量上调。
+          cpus: "1.5"
+          memory: 1g
 
-  # Redis Service
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
   redis:
     image: redis:7.2-alpine
     container_name: alkaid-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      # 同样只绑环回地址。若宿主机 6379 已被别的项目占用，
+      # 继续用被 gitignore 的 docker-compose.override.local.yml 改成 16379，
+      # 但请把该文件的 ports 也写成 "127.0.0.1:16379:6379"（保持只绑环回）。
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
 
-  # RabbitMQ Service
+  # ---------------------------------------------------------------------------
+  # RabbitMQ
+  # ---------------------------------------------------------------------------
   rabbitmq:
     image: rabbitmq:3.12-management-alpine
     container_name: alkaid-rabbitmq
+    restart: unless-stopped
     environment:
-      RABBITMQ_DEFAULT_USER: alkaid
-      RABBITMQ_DEFAULT_PASS: alkaid123
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-alkaid}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-alkaid123}
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      # AMQP 与管理台都只绑环回。管理台 15672 尤其不能暴露到 0.0.0.0，
+      # 它默认口令较弱且能直接投放消息。
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
 
-  # PHP Backend Service
+  # ---------------------------------------------------------------------------
+  # PHP 后端（ThinkPHP 8 + Swoole，监听 8080）
+  # ---------------------------------------------------------------------------
   backend:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # 本地 bind mount 场景下，容器用户需与宿主机属主对齐才能写 runtime/。
+        # Linux 上请这样构建：DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) docker compose build
+        # macOS（Docker Desktop）的 bind mount 由虚拟化层接管属主，通常无需设置。
+        UID: ${DOCKER_UID:-1000}
+        GID: ${DOCKER_GID:-1000}
     container_name: alkaid-backend
+    restart: unless-stopped
     depends_on:
-      - mysql
-      - redis
-      - rabbitmq
+      # 由 service_started 升级为 service_healthy：确保 MySQL 真的能应答再起后端
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     ports:
-      - "9501:9501"
+      # 改造前是 "9501:9501"，但容器内根本没有进程监听 9501（实测 Connection
+      # refused），这个映射一直是无用的。Swoole 监听的是 8080，改为映射 8080，
+      # 开发者可以绕过 nginx 直连后端；生产 override 会把该端口整个清掉。
+      - "127.0.0.1:8080:8080"
     volumes:
+      # 本地开发挂载源码以支持热重载（APP_DEBUG=true 时 app/ 与 route/ 改动
+      # 约 2~5 秒自动生效）。生产 override 会用 !reset 清空本项。
       - .:/var/www/html
     environment:
+      # 注意：ThinkPHP 的 Env 会先取 $_ENV（容器环境变量），再被 .env 文件
+      # 覆盖同名键（vendor/topthink/framework/src/think/Env.php: load() -> set()）。
+      # 也就是说：只要 .env 存在且定义了某键，这里的值对它无效。
+      # .env 里没有 APP_ENV，所以 APP_ENV 以这里为准。
       APP_ENV: dev
       DB_HOST: mysql
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
+    healthcheck:
+      # 直连容器内 8080，不经 nginx；/healthz 是**liveness** 探针（不查库、不鉴权）。
+      # 它由全局中间件 HealthProbeBypass 在 SessionInit 之前短路，Redis 抖动也不会 500
+      # （否则 compose/K8s 会把「Redis 抖动」误判成「进程死了」）。
+      # 不再用 /think：那是框架演示路由，生产环境已不注册（见 route/app.php）。
+      #
+      # ⚠️ compose 没有 readiness 概念：这里的 healthcheck 只能是 liveness。
+      #    「依赖是否可用」用 /readyz（失败 → 503 + 逐项 checks）。在 K8s 下应当：
+      #      livenessProbe  → /healthz（失败才重启）
+      #      readinessProbe → /readyz  （失败只摘流量，timeoutSeconds 必须 ≥ 5s）
+      #      startupProbe   → /healthz（覆盖 Swoole 冷启动）
+      #    完整 YAML 与理由见 docs/technical-specs/deployment/image-and-orchestration-production-requirements.md §6.1.2。
+      #    手工验证 readiness：docker exec alkaid-backend curl -fsS http://127.0.0.1:8080/readyz
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Swoole 冷启动 + 连接池预热需要时间，给 60s 宽限
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          # worker_num = swoole_cpu_num()，留 2 核给 Swoole 主进程 + 若干 worker；
+          # 1 GB 覆盖 ThinkPHP + 连接池 + 框架常驻内存。
+          cpus: "2.0"
+          memory: 1g
 
-
-  # Nginx 网关服务（dev/local 验证用）
+  # ---------------------------------------------------------------------------
+  # Nginx 网关（dev/local 验证用）
+  # ---------------------------------------------------------------------------
   nginx:
     image: nginx:1.24-alpine
     container_name: alkaid-nginx
+    restart: unless-stopped
     depends_on:
-      - backend
+      # nginx 起来但后端没就绪只会持续 502，等后端 healthy 更有意义
+      backend:
+        condition: service_healthy
     ports:
+      # 网关本身就是对外入口，保留 0.0.0.0 绑定（生产请在网关/云 LB 上做 TLS 与访问控制）。
       - "80:80"
       - "443:443"
     volumes:
@@ -72,7 +202,20 @@ services:
       - .:/var/www/alkaid:ro
       # 可选：挂载本地证书目录，替换 alkaid.api.conf 中的证书路径
       # - ./deploy/nginx/certs:/etc/nginx/ssl:ro
-
+    healthcheck:
+      # 端到端探针：nginx 能把 /healthz 反代到后端并拿到 200 才算就绪。
+      # 语义上这是「网关就绪」而非「nginx 进程存活」——后端挂了这里也会 unhealthy，
+      # 这是刻意的：此时网关对外不可用。
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
 
 volumes:
   mysql-data:

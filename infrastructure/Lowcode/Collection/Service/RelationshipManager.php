@@ -42,19 +42,29 @@ class RelationshipManager
      *
      * @param string $collectionName Collection name | Collection名称
      * @param RelationshipInterface $relationship Relationship to add | 要添加的关系
+     * @param int $tenantId Tenant ID (0 = system template space) | 租户ID（0 表示系统模板空间）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
-    public function addRelationship(string $collectionName, RelationshipInterface $relationship): void
-    {
-        $collection = $this->collectionManager->get($collectionName);
+    public function addRelationship(
+        string $collectionName,
+        RelationshipInterface $relationship,
+        int $tenantId,
+        ?int $siteId = null
+    ): void {
+
+        $collection = $this->collectionManager->get($collectionName, $tenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
         }
 
-        // Verify target collection exists | 验证目标Collection存在
-        $targetCollection = $this->collectionManager->get($relationship->getTargetCollection());
+        // Verify target collection exists in same tenant | 验证同一租户下目标Collection存在
+        $targetCollection = $this->collectionManager->get(
+            $relationship->getTargetCollection(),
+            $tenantId
+        );
         if (!$targetCollection) {
             throw new \InvalidArgumentException(
                 "Target collection not found: {$relationship->getTargetCollection()}"
@@ -66,15 +76,17 @@ class RelationshipManager
 
         // Save relationship metadata | 保存关系元数据
         $collection->addRelationship($relationship->getName(), $relationship);
-        $this->relationshipRepo->save($relationship, $collection->getId());
+        $this->relationshipRepo->save($relationship, $collection->getId(), $tenantId);
 
-        // Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $tenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.relationship.added', [
             'collection' => $collection,
             'relationship' => $relationship,
+            'tenant_id' => $tenantId,
+            'site_id' => $siteId,
         ]);
     }
 
@@ -84,15 +96,20 @@ class RelationshipManager
      * @param string $collectionName Collection name | Collection名称
      * @param string $relationshipName Relationship name | 关系名称
      * @param bool $dropPivotTable Drop pivot table for belongsToMany | 是否删除belongsToMany的中间表
+     * @param int $tenantId Tenant ID (0 = system template space) | 租户ID（0 表示系统模板空间）
+     * @param int|null $siteId Site ID (optional) | 站点ID（可选）
      * @return void
      * @throws \Exception
      */
     public function removeRelationship(
         string $collectionName,
         string $relationshipName,
-        bool $dropPivotTable = true
+        bool $dropPivotTable,
+        int $tenantId,
+        ?int $siteId = null
     ): void {
-        $collection = $this->collectionManager->get($collectionName);
+
+        $collection = $this->collectionManager->get($collectionName, $tenantId);
 
         if (!$collection) {
             throw new \InvalidArgumentException("Collection not found: {$collectionName}");
@@ -113,15 +130,17 @@ class RelationshipManager
         }
 
         // Delete relationship metadata | 删除关系元数据
-        $this->relationshipRepo->delete($collection->getId(), $relationshipName);
+        $this->relationshipRepo->delete($collection->getId(), $relationshipName, $tenantId);
 
-        // Clear cache | 清除缓存
-        $this->collectionManager->clearCache($collectionName);
+        // Clear cache (tenant scoped) | 清除租户范围缓存
+        $this->collectionManager->clearCache($collectionName, $tenantId);
 
         // Trigger event | 触发事件
         Event::trigger('lowcode.relationship.removed', [
             'collection' => $collection,
             'relationship_name' => $relationshipName,
+            'tenant_id' => $tenantId,
+            'site_id' => $siteId,
         ]);
     }
 
@@ -181,6 +200,9 @@ class RelationshipManager
             return;
         }
 
+        $localKey = $relationship->getLocalKey();
+        $foreignKey = $relationship->getForeignKey();
+
         $columns = [
             'id' => [
                 'type' => 'INT',
@@ -188,12 +210,27 @@ class RelationshipManager
                 'auto_increment' => true,
                 'unsigned' => true,
             ],
-            $relationship->getLocalKey() => [
+            // 多租户隔离字段
+            'tenant_id' => [
+                'type' => 'INT',
+                'length' => 11,
+                'nullable' => false,
+                'default' => '0',
+                'comment' => 'Tenant ID',
+            ],
+            'site_id' => [
+                'type' => 'INT',
+                'length' => 11,
+                'nullable' => false,
+                'default' => '0',
+                'comment' => 'Site ID',
+            ],
+            $localKey => [
                 'type' => 'INT',
                 'unsigned' => true,
                 'comment' => "Foreign key to {$sourceCollection->getTableName()}",
             ],
-            $relationship->getForeignKey() => [
+            $foreignKey => [
                 'type' => 'INT',
                 'unsigned' => true,
                 'comment' => "Foreign key to {$targetCollection->getTableName()}",
@@ -204,10 +241,32 @@ class RelationshipManager
             ],
         ];
 
-        $this->schemaBuilder->createTable($pivotTable, $columns);
+        // Indexes for many-to-many lookups | 为多对多查询添加索引
+        $indexes = [
+            'idx_tenant_site' => [
+                'columns' => ['tenant_id', 'site_id'],
+                'unique' => false,
+            ],
+            'idx_pivot_local' => [
+                'columns' => [$localKey],
+                'unique' => false,
+            ],
+            'idx_pivot_foreign' => [
+                'columns' => [$foreignKey],
+                'unique' => false,
+            ],
+            'idx_pivot_local_foreign' => [
+                'columns' => ['tenant_id', 'site_id', $localKey, $foreignKey],
+                'unique' => false,
+            ],
+            // 避免重复绑定：同一租户/站点的 local/foreign 组合唯一
+            'uk_pivot_local_foreign_tenant' => [
+                'columns' => ['tenant_id', 'site_id', $localKey, $foreignKey],
+                'unique' => true,
+            ],
+        ];
 
-        // TODO: Add indexes for better query performance
-        // 添加索引以提高查询性能
+        $this->schemaBuilder->createTable($pivotTable, $columns, $indexes);
     }
 
     /**

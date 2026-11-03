@@ -5,9 +5,13 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses;
+use Infrastructure\Lowcode\Schema\SchemaParser;
 use think\App;
+use think\exception\HttpResponseException;
 use think\Request;
 use Infrastructure\Lowcode\FormDesigner\Service\FormSchemaManager;
+use Infrastructure\Lowcode\FormDesigner\Service\FormValidatorManager;
 use think\Response;
 
 /**
@@ -16,16 +20,46 @@ use think\Response;
  * Manages form schemas via RESTful API.
  * 通过RESTful API管理表单Schema。
  *
+ * ## 异常处理：与 Collection / Field / Relationship 三个控制器同一套（预防性接入）
+ *
+ * 本类当前的四个动作（save / update / delete / duplicate）**都不触达运行时 DDL 闸门**：
+ * `FormSchemaManager` 只写 `lowcode_forms` 元数据（`repository->save()`），
+ * 从不调用 `SchemaBuilder::createTable()/addColumn()/dropTable()/dropColumn()`，
+ * 因此今天走不到「`getMessage()` 恒为空」的 `HttpResponseException` 分支。
+ *
+ * 仍然显式接上共享 trait `app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses`，理由是
+ * **缺陷 B 的成因不是「忘了写 catch」，而是「写了一份只取 `getMessage()` 的 catch」**：
+ * 一旦将来给表单加上「按 schema 建物理表 / 加列」的能力（低代码表单与动态表本就是邻接能力），
+ * 闸门会立刻出现在这条调用链上，而下面四个 `catch (\Exception $e)` 会**静默**把它降级成
+ * 「HTTP 400 + 空 message」。这是预防性的接线，不是对现状的修饰：
+ *   - `catch (HttpResponseException $e)` → 共享 trait 的 `runtimeDdlDeniedResponse()`（403 / 5003 + 可读原因）；
+ *   - `catch (\Exception $e)` → `describeExceptionMessage()`（message 非空时**逐字节不变**，
+ *     为空时才回落到异常类名，避免「没有原因的错误」）。
+ *
+ * 本类的业务异常（`InvalidArgumentException`：name/title/schema/layout 校验、Form not found）
+ * message 均非空，因此对外响应与接入前**完全一致**；
+ * 回归由 `tests/Feature/Lowcode/FormApiBusinessExceptionTest` 逐条钉住。
+ *
  * @package app\controller\lowcode
  */
 class FormSchemaController extends ApiController
 {
-    protected FormSchemaManager $manager;
+    use RuntimeDdlDeniedResponses;
 
-    public function __construct(App $app, FormSchemaManager $manager)
-    {
+    protected FormSchemaManager $manager;
+    protected FormValidatorManager $validatorManager;
+    protected SchemaParser $schemaParser;
+
+    public function __construct(
+        App $app,
+        FormSchemaManager $manager,
+        FormValidatorManager $validatorManager,
+        SchemaParser $schemaParser
+    ) {
         parent::__construct($app);
         $this->manager = $manager;
+        $this->validatorManager = $validatorManager;
+        $this->schemaParser = $schemaParser;
     }
 
     /**
@@ -81,6 +115,30 @@ class FormSchemaController extends ApiController
             return $this->notFound('Form not found');
         }
 
+        $withValidator = filter_var((string)$request->get('with_validator', '0'), FILTER_VALIDATE_BOOLEAN);
+        $withParsed = filter_var((string)$request->get('with_parsed', '0'), FILTER_VALIDATE_BOOLEAN);
+        if ($withValidator && isset($form['schema']) && is_array($form['schema'])) {
+            $definition = $this->validatorManager->getDefinition(
+                $form['schema'],
+                [
+                    'tenant_id' => $tenantId,
+                    'site_id' => $siteId,
+                ],
+                $form['name'] ?? null
+            );
+            $form['validator'] = $definition;
+        }
+        if ($withParsed && isset($form['schema']) && is_array($form['schema'])) {
+            $form['parsed'] = $this->schemaParser->parse(
+                $form['schema'],
+                [
+                    'tenant_id' => $tenantId,
+                    'site_id' => $siteId,
+                ],
+                $form['name'] ?? null
+            );
+        }
+
         return $this->success($form);
     }
 
@@ -101,8 +159,13 @@ class FormSchemaController extends ApiController
         try {
             $form = $this->manager->create($data);
             return $this->success($form, 'Form created successfully');
+        } catch (HttpResponseException $e) {
+            // 预防性接线（详见类注释）：运行环境禁止运行时 DDL 时，SchemaBuilder 抛的
+            // HttpResponseException 自身 message 为空，不能让客户端只看到「没有原因的错误」。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            // message 非空时与改造前逐字节相同；仅在为空时回落到异常类名
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -143,8 +206,13 @@ class FormSchemaController extends ApiController
         try {
             $this->manager->update($id, $data, $tenantId);
             return $this->success(null, 'Form updated successfully');
+        } catch (HttpResponseException $e) {
+            // 预防性接线（详见类注释）：运行环境禁止运行时 DDL 时，SchemaBuilder 抛的
+            // HttpResponseException 自身 message 为空，不能让客户端只看到「没有原因的错误」。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            // message 非空时与改造前逐字节相同；仅在为空时回落到异常类名
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -170,8 +238,13 @@ class FormSchemaController extends ApiController
 
             $this->manager->delete($existing['id'], $tenantId);
             return $this->success(null, 'Form deleted successfully');
+        } catch (HttpResponseException $e) {
+            // 预防性接线（详见类注释）：运行环境禁止运行时 DDL 时，SchemaBuilder 抛的
+            // HttpResponseException 自身 message 为空，不能让客户端只看到「没有原因的错误」。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            // message 非空时与改造前逐字节相同；仅在为空时回落到异常类名
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -194,10 +267,24 @@ class FormSchemaController extends ApiController
         $siteId = $request->siteId();
 
         try {
-            $id = $this->manager->duplicate($name, $newName, $tenantId, $siteId);
-            return $this->success(['id' => $id], 'Form duplicated successfully');
+            // 原先这里直接把路由里的 `$name`（字符串）当 `$id` 传给 duplicate()，
+            // 而 duplicate() 的首参是 `int $id` —— 在 declare(strict_types=1) 下必抛 TypeError，
+            // 该端点实际上是 500。这里按 delete() 的写法先按名称+租户解析出真实 ID。
+            $existing = $this->manager->get($name, $tenantId, $siteId);
+            if (!$existing) {
+                return $this->notFound('Form not found');
+            }
+
+            $duplicated = $this->manager->duplicate((int) $existing['id'], $newName, $tenantId);
+
+            return $this->success(['id' => $duplicated['id'] ?? null], 'Form duplicated successfully');
+        } catch (HttpResponseException $e) {
+            // 预防性接线（详见类注释）：运行环境禁止运行时 DDL 时，SchemaBuilder 抛的
+            // HttpResponseException 自身 message 为空，不能让客户端只看到「没有原因的错误」。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            // message 非空时与改造前逐字节相同；仅在为空时回落到异常类名
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 }

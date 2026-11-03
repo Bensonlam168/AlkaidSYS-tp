@@ -1,0 +1,8 @@
+{
+  "key": "invalid-plugin",
+  "name": "无效插件",
+  "version": "0.0.1",
+  "category": "universal",
+  "type": "plugin",
+  "description": "用于测试 key 校验（包含非法字符 -）"
+}

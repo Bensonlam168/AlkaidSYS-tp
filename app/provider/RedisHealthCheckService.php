@@ -2,6 +2,7 @@
 
 namespace app\provider;
 
+use app\AppService;
 use think\Service;
 use think\facade\Cache;
 use think\facade\Config;
@@ -42,6 +43,12 @@ class RedisHealthCheckService extends Service
                 throw new \RuntimeException('Redis read/write check failed');
             }
         } catch (\Throwable $e) {
+            // R51：boot 期失败必须让命令行进程以非 0 退出。
+            // 框架的全局异常处理器（set_exception_handler）只渲染异常、不设置退出码，
+            // 不先标记就会「打印 RuntimeException 但 exit 0」，部署脚本误判成功（实测确认）。
+            // 注意：内层「read/write check failed」也会走到这里，标记一次即可覆盖全部失败路径。
+            AppService::markBootFailed();
+
             throw new \RuntimeException(
                 sprintf(
                     'Redis health check failed (host=%s, port=%d): %s',

@@ -345,6 +345,99 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
     }
 
     /**
+     * Test tenant/site context validation | 测试租户/站点上下文校验
+     */
+    public function testTenantContextValidation(): void
+    {
+        $schema = [
+            'type' => 'object',
+            'properties' => [
+                'tenant_id' => [
+                    'type' => 'integer',
+                    'title' => '租户',
+                ],
+                'site_id' => [
+                    'type' => 'integer',
+                    'title' => '站点',
+                ],
+                'name' => [
+                    'type' => 'string',
+                    'title' => '名称',
+                    'minLength' => 1,
+                ],
+            ],
+            'required' => ['tenant_id', 'site_id', 'name'],
+        ];
+
+        $ok = $this->manager->validate(
+            ['tenant_id' => 8, 'site_id' => 3, 'name' => 'ok'],
+            $schema,
+            'ctx',
+            ['tenant_id' => 8, 'site_id' => 3]
+        );
+        $this->assertTrue($ok);
+
+        $fail = $this->manager->validate(
+            ['tenant_id' => 9, 'site_id' => 4, 'name' => 'bad'],
+            $schema,
+            'ctx',
+            ['tenant_id' => 8, 'site_id' => 3]
+        );
+        $this->assertIsString($fail);
+        $this->assertStringContainsString('2002', $fail);
+    }
+
+    /**
+     * Test compare/pattern/custom messages | 测试跨字段比较与自定义消息
+     */
+    public function testCompareAndCustomMessages(): void
+    {
+        $schema = [
+            'type' => 'object',
+            'properties' => [
+                'start' => [
+                    'type' => 'number',
+                    'title' => '开始值',
+                ],
+                'end' => [
+                    'type' => 'number',
+                    'title' => '结束值',
+                    'x-compare' => [
+                        'op' => 'gte',
+                        'field' => 'start',
+                        'message' => '结束值必须大于等于开始值',
+                    ],
+                ],
+                'code' => [
+                    'type' => 'string',
+                    'title' => '代码',
+                    'pattern' => '^[A-Z]{3}$',
+                    'x-rules' => ['alpha'],
+                    'x-messages' => [
+                        'code.alpha' => '代码只能包含字母',
+                        'code.regex' => '代码必须是3位大写字母',
+                    ],
+                ],
+            ],
+            'required' => ['start', 'end', 'code'],
+        ];
+
+        $validator = $this->generator->generate($schema);
+        $rules = $this->getValidatorRules($validator);
+        $messages = $this->getValidatorMessages($validator);
+
+        $this->assertStringContainsString('compare:gte,start', $rules['end']);
+        $this->assertEquals('结束值必须大于等于开始值', $messages['end.compare']);
+        $this->assertStringContainsString('regex:', $rules['code']);
+        $this->assertStringContainsString('alpha', $rules['code']);
+        $this->assertEquals('代码只能包含字母', $messages['code.alpha']);
+        $this->assertEquals('代码必须是3位大写字母', $messages['code.regex']);
+
+        $this->assertFalse($validator->check(['start' => 1, 'end' => 0, 'code' => 'ABC']));
+        $this->assertFalse($validator->check(['start' => 1, 'end' => 2, 'code' => '123']));
+    }
+
+    /**
      * Test get rules method | 测试getRules方法
      */
     public function testGetRulesMethod(): void
@@ -390,5 +483,36 @@ class FormValidatorGeneratorTest extends ThinkPHPTestCase
         $this->assertIsArray($messages);
         $this->assertArrayHasKey('age.egt', $messages);
         $this->assertEquals('年龄不能小于18', $messages['age.egt']);
+    }
+    /**
+     * Test getDefinition method | 测试 getDefinition 导出规则与消息
+     */
+    public function testGetDefinitionMethod(): void
+    {
+        $schema = [
+            'type' => 'object',
+            'required' => ['tenant_id', 'name'],
+            'properties' => [
+                'tenant_id' => [
+                    'type' => 'integer',
+                    'title' => '租户',
+                    'x-tenant' => true,
+                ],
+                'name' => [
+                    'type' => 'string',
+                    'title' => '姓名',
+                    'minLength' => 2,
+                ],
+            ],
+        ];
+
+        $definition = $this->manager->getDefinition($schema, ['tenant_id' => 5], 'demo-form');
+
+        $this->assertArrayHasKey('rules', $definition);
+        $this->assertArrayHasKey('messages', $definition);
+        $this->assertSame('require|number|tenantMatch', $definition['rules']['tenant_id']);
+        $this->assertSame('require|min:2', $definition['rules']['name']);
+        $this->assertSame('租户无权访问该数据（code 2002）', $definition['messages']['tenant_id.tenantMatch']);
+        $this->assertSame('姓名长度不能少于2个字符', $definition['messages']['name.min']);
     }
 }

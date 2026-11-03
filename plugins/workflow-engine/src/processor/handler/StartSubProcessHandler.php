@@ -1,0 +1,47 @@
+<?php
+
+/**
+ *+------------------
+ * ingenious
+ *+------------------
+ * Copyright (c) https://gitcode.com/motion-code  All rights reserved.
+ *+------------------
+ * Author: Mr. April (405784684@qq.com)
+ *+------------------
+ * Software Registration Number: 2024SR0694589
+ * Official Website: https://madong.tech
+ */
+
+namespace Alkaid\Workflow\Engine\processor\handler;
+
+use Alkaid\Workflow\Engine\ex\LFlowException;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\model\SubProcessModel;
+use Alkaid\Workflow\Engine\processor\IHandler;
+
+/**
+ *
+ * 启动子流程
+ * @author Mr.April
+ * @since  1.0
+ */
+class StartSubProcessHandler implements IHandler
+{
+    private SubProcessModel $model;
+
+    public function __construct(SubProcessModel $model)
+    {
+        $this->model = $model;
+    }
+
+    public function handle(IExecution $execution): void
+    {
+        $processDefine = $execution->getEngine()->processDefineService()->getProcessDefineByVersion($this->model->getName(), $this->model->getVersion());
+        if ($processDefine == null) {
+            throw new LFlowException('子流程' . $this->model->getName() . '定义不存在');
+        }
+        $parentId       = $execution->getProcessInstanceId();
+        $parentNodeName = $this->model->getName();
+        $execution->getEngine()->startProcessInstanceById($processDefine->getData('id'), $execution->getOperator(), $execution->getArgs(), $parentId, $parentNodeName);
+    }
+}

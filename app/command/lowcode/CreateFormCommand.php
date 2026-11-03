@@ -11,6 +11,7 @@ use think\console\Input;
 use think\console\input\Argument;
 use think\console\input\Option;
 use think\console\Output;
+use think\facade\Db;
 
 /**
  * Create Lowcode Form Command | 创建低代码表单命令
@@ -38,9 +39,12 @@ class CreateFormCommand extends LowcodeCommand
             ->addOption('collection', 'c', Option::VALUE_REQUIRED, 'Collection name to base form on | 基于的Collection名称')
             ->addOption('title', 't', Option::VALUE_OPTIONAL, 'Form title | 表单标题')
             ->addOption('description', 'd', Option::VALUE_OPTIONAL, 'Form description | 表单描述')
-            ->addOption('tenant-id', null, Option::VALUE_OPTIONAL, 'Tenant ID (default: 0) | 租户ID（默认：0）', '0')
+            ->addOption('tenant-id', null, Option::VALUE_OPTIONAL, 'Tenant ID (default: 1) | 租户ID（默认：1）', '1')
             ->addOption('site-id', null, Option::VALUE_OPTIONAL, 'Site ID (default: 0) | 站点ID（默认：0）', '0')
-            ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if form exists | 如果表单存在则强制覆盖');
+            ->addOption('fields', null, Option::VALUE_OPTIONAL, 'Comma separated fields to include | 包含的字段（逗号分隔）')
+            ->addOption('force', null, Option::VALUE_NONE, 'Force overwrite if form exists | 如果表单存在则强制覆盖')
+            ->addOption('format', null, Option::VALUE_OPTIONAL, 'Output format (text|json) | 输出格式（text|json）', 'text')
+            ->addOption('audit-out', null, Option::VALUE_OPTIONAL, 'Audit JSON output file path | 审计JSON输出文件路径');
     }
 
     /**
@@ -63,6 +67,46 @@ class CreateFormCommand extends LowcodeCommand
             $tenantId = $this->getTenantId();
             $siteId = $this->getSiteId();
             $force = $input->getOption('force');
+
+            // Tenant 校验 | Tenant validation
+            // lowcode_forms.tenant_id 是「真实租户引用」：列 NOT NULL、无默认值，并有外键
+            // fk_lowcode_forms_tenant_id → tenants.id。tenant_id = 0 是「系统模板空间」，
+            // 而 tenants 表没有 id=0，本表也不承载模板行 —— 必须在这里拒绝，
+            // 否则会一路写库，最后撞外键抛 1452（对使用者是一句无法理解的 SQL 报错）。
+            if ($tenantId <= 0) {
+                $this->error(
+                    'Invalid --tenant-id: 0 是系统模板空间（tenants 表没有 id=0），'
+                    . '而 lowcode_forms.tenant_id 要求真实租户（外键 fk_lowcode_forms_tenant_id → tenants.id）。'
+                    . '请指定一个已存在的租户ID（≥ 1，默认为 1）。'
+                );
+                return 1;
+            }
+
+            // Tenant 存在性校验 | Tenant existence validation
+            // tenant_id > 0 并不代表租户真实存在：传入「不存在但为正」的 ID 时，校验会一路放行，
+            // 直到写库阶段才撞上外键 fk_lowcode_forms_tenant_id，向使用者抛出裸 SQL 1452
+            // （Cannot add or update a child row ...）。这里在任何写库动作之前先查 tenants，
+            // 命中不存在就给出可读业务错误并退出，避免把数据库约束错误直接暴露给使用者。
+            $tenantExists = Db::name('tenants')->where('id', $tenantId)->count();
+            if ((int) $tenantExists < 1) {
+                $this->error(
+                    "Invalid --tenant-id: 租户 ID {$tenantId} 不存在（tenants 表中没有该记录）。"
+                    . '请先创建该租户，或改传一个已存在的租户ID（例如默认为 1）。'
+                    . " Tenant {$tenantId} does not exist; create it first or pass an existing tenant ID."
+                );
+                return 1;
+            }
+
+            $fieldsOption = $input->getOption('fields');
+            $includedFields = null;
+            if (is_string($fieldsOption) && $fieldsOption !== '') {
+                $includedFields = array_values(
+                    array_filter(
+                        array_map('trim', explode(',', (string) $fieldsOption)),
+                        static fn (string $fieldName): bool => $fieldName !== ''
+                    )
+                );
+            }
 
             // Validate form name | 验证表单名称
             if (!$this->isValidFormName($name)) {
@@ -93,7 +137,7 @@ class CreateFormCommand extends LowcodeCommand
             }
 
             // Generate form schema | 生成表单Schema
-            $schema = $this->generateFormSchema($collection);
+            $schema = $this->generateFormSchema($collection, $includedFields);
 
             // Display summary | 显示摘要
             $this->displaySummary($name, $title, $description, $collectionName, $tenantId, $siteId, $schema);
@@ -117,18 +161,32 @@ class CreateFormCommand extends LowcodeCommand
                 'site_id' => $siteId,
             ];
 
+            $createdOrUpdatedForm = null;
+
             if ($existing) {
                 // Update existing form | 更新现有表单
                 $formManager->update($existing['id'], $formData, $tenantId);
+                $createdOrUpdatedForm = $formManager->get($name, $tenantId, $siteId);
                 $this->success("Form '{$name}' updated successfully!");
             } else {
                 // Create new form | 创建新表单
                 $formManager->create($formData);
+                $createdOrUpdatedForm = $formManager->get($name, $tenantId, $siteId);
                 $this->success("Form '{$name}' created successfully!");
             }
 
-            // Show next steps | 显示下一步操作
-            $this->showNextSteps($name, $collectionName);
+            // Structured output | 结构化输出
+            $this->writeStructuredOutput([
+                'form' => $createdOrUpdatedForm,
+                'schema' => $schema,
+                'tenant_id' => $tenantId,
+                'site_id' => $siteId,
+            ]);
+
+            // Show next steps | 显示下一步操作（仅文本模式有意义）
+            if ($this->getOutputFormat() === 'text') {
+                $this->showNextSteps($name, $collectionName);
+            }
 
             return 0;
         } catch (\Throwable $e) {
@@ -151,9 +209,10 @@ class CreateFormCommand extends LowcodeCommand
      * Generate form schema from collection | 从Collection生成表单Schema
      *
      * @param \Domain\Lowcode\Collection\Interfaces\CollectionInterface|null $collection Collection instance | Collection实例
+     * @param array<string>|null $includedFields Fields to include or null for all | 需要包含的字段名称列表，null 表示全部字段
      * @return array Form schema | 表单Schema
      */
-    protected function generateFormSchema($collection): array
+    protected function generateFormSchema($collection, ?array $includedFields = null): array
     {
         if (!$collection) {
             // Return empty schema | 返回空Schema
@@ -169,6 +228,10 @@ class CreateFormCommand extends LowcodeCommand
 
         foreach ($collection->getFields() as $field) {
             $fieldName = $field->getName();
+
+            if ($includedFields !== null && !in_array($fieldName, $includedFields, true)) {
+                continue;
+            }
             $fieldType = $field->getType();
             $fieldArray = $field->toArray();
 
@@ -236,6 +299,8 @@ class CreateFormCommand extends LowcodeCommand
             'checkbox' => 'array',
             'file' => 'string',
             'image' => 'string',
+            'cascader' => 'array',
+            'tree-select' => 'array',
         ];
 
         return $mapping[$fieldType] ?? 'string';

@@ -7,6 +7,7 @@ namespace Tests\Integration\Permission;
 use Infrastructure\Permission\Service\CasbinService;
 use Infrastructure\Permission\Service\PermissionService;
 use Tests\ThinkPHPTestCase;
+use think\facade\Cache;
 use think\facade\Config;
 use think\facade\Db;
 
@@ -24,6 +25,8 @@ class CasbinModeSwitchAndRollbackIntegrationTest extends ThinkPHPTestCase
 
     private ?string $originalCasbinMode = null;
 
+    private ?bool $originalPermissionCacheEnabled = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -32,6 +35,11 @@ class CasbinModeSwitchAndRollbackIntegrationTest extends ThinkPHPTestCase
         // Remember original configuration and restore it in tearDown
         $this->originalCasbinEnabled = Config::get('casbin.enabled');
         $this->originalCasbinMode = Config::get('casbin.mode');
+        $this->originalPermissionCacheEnabled = Config::get('permission.cache.enabled');
+
+        // 禁用权限缓存并清理全局缓存，避免命中旧策略/权限导致断言受影响
+        Config::set(['permission.cache.enabled' => false]);
+        Cache::clear();
 
         // 确保测试数据干净
         // Ensure test-specific rows are clean
@@ -43,6 +51,12 @@ class CasbinModeSwitchAndRollbackIntegrationTest extends ThinkPHPTestCase
         // 清理本测试创建的数据
         // Clean up data created by this test
         $this->cleanupPolicyRollbackTestData();
+
+        // 恢复权限缓存开关，并清理缓存避免影响其他用例
+        if ($this->originalPermissionCacheEnabled !== null) {
+            Config::set(['permission.cache.enabled' => $this->originalPermissionCacheEnabled]);
+        }
+        Cache::clear();
 
         // 恢复 Casbin 配置
         // Restore Casbin configuration
@@ -243,6 +257,9 @@ class CasbinModeSwitchAndRollbackIntegrationTest extends ThinkPHPTestCase
             ->where('permission_id', 9200)
             ->delete();
 
+        // 清除缓存，确保 DB_ONLY 路径不会命中旧的权限结果
+        Cache::clear();
+
         // ========== 变更后：DB_ONLY 路径不再看到该权限 ==========
         // ========== After change: DB_ONLY path no longer sees the permission ==========
         Config::set([
@@ -275,6 +292,9 @@ class CasbinModeSwitchAndRollbackIntegrationTest extends ThinkPHPTestCase
             'role_id' => 9200,
             'permission_id' => 9200,
         ]);
+
+        // 清除缓存，确保回滚后的权限立即生效
+        Cache::clear();
 
         // ========== 回滚后：DB_ONLY 路径重新看到该权限 ==========
         // ========== After rollback: DB_ONLY path sees the permission again ==========

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Performance\Support;
 
+use RuntimeException;
+
 /**
  * 性能报告生成器
  * Performance Reporter
@@ -18,6 +20,15 @@ namespace Tests\Performance\Support;
  * - Include current performance, historical trends, performance comparison
  * - 支持 ASCII 图表
  * - Support ASCII charts
+ *
+ * 报告目录（R-性能套件修复）：
+ * 默认写到 `runtime/performance-reports/`，**不再写进 `docs/report/`**。
+ * 原因：`docs/report/` 是版本库目录，性能套件每跑一次就会生成/覆盖
+ * `casbin-performance-benchmark-<date>.md`，于是「跑一次性能套件」
+ * 会稳定地在工作区留下未提交改动，与「测试不改仓库」的约定冲突；
+ * 而 `runtime/` 已被 `.gitignore` 忽略，产物天然不入库。
+ *
+ * 构造参数仍可覆盖目录（现有显式传目录的调用方行为不变）。
  */
 class PerformanceReporter
 {
@@ -34,6 +45,14 @@ class PerformanceReporter
     protected string $reportDir;
 
     /**
+     * 默认报告目录（相对项目根）
+     * Default report directory (relative to the project root)
+     *
+     * `runtime/` 已被 `.gitignore` 忽略，报告产物不会污染 `git status`。
+     */
+    protected const DEFAULT_REPORT_DIR = __DIR__ . '/../../../runtime/performance-reports';
+
+    /**
      * 构造函数
      * Constructor
      *
@@ -43,12 +62,15 @@ class PerformanceReporter
     public function __construct(PerformanceBenchmark $benchmark, ?string $reportDir = null)
     {
         $this->benchmark = $benchmark;
-        $this->reportDir = $reportDir ?? __DIR__ . '/../../../docs/report';
+        $this->reportDir = $reportDir ?? self::DEFAULT_REPORT_DIR;
 
-        // 确保目录存在
-        // Ensure directory exists
-        if (!is_dir($this->reportDir)) {
-            mkdir($this->reportDir, 0755, true);
+        // 确保目录存在：并发/只读文件系统等场景下 mkdir 可能失败，
+        // 失败时立刻抛出可定位的异常，而不是等到 file_put_contents 报一条含混的 warning。
+        if (!is_dir($this->reportDir) && !mkdir($this->reportDir, 0755, true) && !is_dir($this->reportDir)) {
+            throw new RuntimeException(sprintf(
+                '无法创建性能报告目录：「%s」。请检查目录权限，或用构造参数指定一个可写目录。',
+                $this->reportDir
+            ));
         }
     }
 

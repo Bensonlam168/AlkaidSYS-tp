@@ -6,6 +6,7 @@ namespace Tests\Unit\Infrastructure\Permission;
 
 use Infrastructure\Permission\Service\PermissionService;
 use Tests\ThinkPHPTestCase;
+use Tests\Traits\DatabaseTransactions;
 use think\facade\Db;
 
 // Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
@@ -19,10 +20,28 @@ if (!function_exists('env')) {
  * Tests the PermissionService class.
  * 测试 PermissionService 类。
  *
+ * ## 数据库隔离（ER-17）
+ *
+ * `testGetUserPermissionsEnforcesTenantIsolation()` 会真实写入 5 张表
+ * （`tenants` / `roles` / `permissions` / `role_permissions` / `user_roles`），
+ * 原先**没有任何清理**：实测每跑一次就永久多出 1 个租户 + 1 个角色 + 1 个权限 + 1 条角色权限关联。
+ * 其中 `tenants` 是**租户级目录表**，留下的脏租户会影响其它按租户聚合的用例。
+ *
+ * 现在挂 `DatabaseTransactions`，用例内的写入在 `#[After]` 阶段整体回滚。
+ *
+ * 为什么**可以**用事务：本类只有 INSERT，没有 DDL；`PermissionService` 用的是默认连接的
+ * `Db::table()`，与事务同一连接，因此它在事务内能读到自己刚写的数据。
+ *
+ * 注意：本类当前有 1 个 error + 6 个 failure（测试库缺种子数据：`users` 表里没有 id=1，
+ * 导致 `user_roles` 插入撞外键、权限查询为空）。**这些是既有缺陷，事务隔离不改变它们**，
+ * 也不应为了让它们变绿而放宽断言。
+ *
  * @package Tests\Unit\Infrastructure\Permission
  */
 class PermissionServiceTest extends ThinkPHPTestCase
 {
+    use DatabaseTransactions;
+
     protected PermissionService $permissionService;
 
     protected function setUp(): void

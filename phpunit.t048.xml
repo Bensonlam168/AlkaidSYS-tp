@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnEmptyTestSuite="true">
+    <!--
+      ============================================================
+      根级安全属性与基线 phpunit.xml 逐项对齐
+      ============================================================
+      failOnEmptyTestSuite="true"：本文件声明的 <testsuite> 是「T-048 覆盖率 ≥80%」的取样范围。
+      一旦下面的目录被挪走 / 改名 / 用例被删空，PHPUnit 只会打印 No tests executed! 并以 0 退出，
+      覆盖率报告照常输出，但样本是 0 个用例 —— 数字不再有任何意义，而且没有任何东西会变红。
+      打开本项后「一个用例都没跑」一律 exit 1。
+
+      其余安全属性（failOnRisky / failOnWarning / beStrictAboutOutputDuringTests）与基线一致；
+      这几项由 scripts/check-phpunit-config.php 的「根级安全属性与套件」检查守着 ——
+      变体漏一项就报错，不会再出现「基线开了、变体没开」的静默漂移。
+
+      为什么本文件**不含** Legacy 套件（不是漏了，别再顺手加上）：
+        1. 本文件的设计意图是「任务子集」：只统计 T-048 相关目录的覆盖率（见下方注释）。
+           塞进全仓扫描型守卫会改变它的语义 —— 它不再是「T-048 的取样范围」，
+           而是「T-048 的取样范围 + 两个与 T-048 无关的守卫」；
+        2. 两个守卫各要递归扫全仓数千个 PHP 文件（实测约 8 秒/个），对覆盖率数字零贡献，只增加耗时；
+        3. 它们已经在基线 phpunit.xml 的 Legacy 套件里，CI（单独一步）与本地全量（php think test）
+           都会跑到，在这里再跑一遍是纯重复。
+      若将来确实需要在变体里跑守卫，请连本段注释一起改，并在 check-phpunit-config 里补充
+      「变体可以含 Legacy」的判定，而不是把套件复制一份了事。
+    -->
+    <!--
+      T-048 专用覆盖率配置：
+      仅统计 ORM/低代码相关目录，避免被无关模块稀释，作为验收“覆盖率≥80%”的量化依据。
+    -->
+    <testsuites>
+        <testsuite name="T048">
+            <directory>tests/Unit/Domain/Lowcode</directory>
+            <directory>tests/Unit/Schema</directory>
+            <directory>tests/Unit/Infrastructure/Lowcode</directory>
+            <directory>tests/Integration/Lowcode</directory>
+        </testsuite>
+    </testsuites>
+            <php>
+        <!-- memory_limit：容器 CLI 默认 128M，而全量套件峰值已到约 136M（基线也有 124M，占 97%），
+             会让 php think test（AGENTS.md 记载的标准测试命令）在 84% 处静默 exit 255：
+             看起来像「测试失败」，实际是 OOM，极难定位。
+             提高到 256M 留余量。CI 走拆分套件（testsuite 分 Unit 与 Feature 两条命令）本就不受影响，
+             这里只保证「单进程跑全量」这条路径同样可用。 -->
+        <ini name="memory_limit" value="256M"/>
+        <!--
+            ============================================================
+            A. 连接参数（DB_*）：刻意 **不加** force
+            ============================================================
+            PHPUnit 11 只在「空缺」时才写入（PhpHandler::handleEnvVariables）：
+                if ($force || getenv($name) === false) { putenv("{$name}={$value}"); }
+                if ($force || !isset($_ENV[$name]))    { $_ENV[$name] = $value; }
+            所以下面的值是「运行环境未提供时的默认值」，而不是「强制值」——
+            连接参数必须跟随运行环境：谁跑测试，就由谁决定连哪个库。
+
+            额外一层原因（已实测）：**.env 的优先级高于容器环境变量**。
+            think\Env 构造时先把 $_ENV 拷进 $data，随后 Env::load('.env') 调 Env::set()
+            **无条件覆盖** $data；env() 先读 $data，只有缺失时才回落 $_ENV / getenv('PHP_*')。
+            也就是说 .env 里写什么，DB_* 就真的是什么，compose 注入的值会被盖掉。
+            但这条兜底不属于本文件的契约 —— 不要把连接参数的正确性寄托在 .env 恰好存在上。
+
+            反例（已实测）：容器内 $_ENV['DB_HOST']='mysql'，而本文件默认值写的是 127.0.0.1，
+            且容器内连 127.0.0.1:3306 是 "SQLSTATE[HY000] [2002] Connection refused"。
+            一旦给 DB_HOST 加 force="true"，无 .env 的干净检出 / CLI 子进程就会连到不存在的库。
+            结论：连接类参数永远不要加 force。
+        -->
+        <env name="DB_TYPE" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_NAME" value="alkaid_sys_test"/>
+        <env name="DB_USER" value="root"/>
+        <env name="DB_PASS" value="root"/>
+        <env name="DB_PORT" value="3306"/>
+
+        <!--
+            ============================================================
+            B. 测试语义固定的变量：必须加 force
+            ============================================================
+            这些值与「在哪台机器上跑」无关，只与「测试断言的前提」有关。
+            不加 force 时，shell 导出的同名变量会直接抢占它们（同上语义），
+            测试语义随环境漂移：本地通过、CI 或同事机器上随机失败。
+        -->
+
+        <!-- APP_ENV：鉴权类用例的前提是「非生产环境」。
+             不加 force 时导出 APP_ENV=production，C-5 的 JWT 强密钥校验
+             （infrastructure/Auth/JwtService.php:128、:170）会拒掉 .env 里的 dev 占位密钥，
+             JwtService 构造即抛 RuntimeException，鉴权类用例全线 500 而不是期望的 401。
+             实测（加 force 之前）：
+             docker exec -e APP_ENV=production ... -c phpunit.t048.xml tests/Feature/AuthMiddlewareTest.php
+             → Tests: 3, Assertions: 2, Errors: 1, Failures: 2（期望 OK (3 tests, 17 assertions)）。 -->
+        <env name="APP_ENV" value="dev" force="true"/>
+
+        <!-- ALKAID_TESTING：测试上下文标记，供 CLI 命令的 fail-closed 守卫识别
+             （见 app/command/base/LowcodeCommand.php::guardTestContextDatabase）。
+             必须与 phpunit.xml 保持同值同 force，否则 check-phpunit-config 的
+             「强制变量覆盖关系」检查会报不一致。 -->
+        <env name="ALKAID_TESTING" value="1" force="true"/>
+
+        <!-- DEFAULT_TENANT_ID：与 phpunit.xml 保持一致（check-phpunit-config 的
+             「强制变量覆盖关系」要求变体不得新增/缺失强制变量）。 -->
+        <env name="DEFAULT_TENANT_ID" value="1" force="true"/>
+
+        <!-- ALLOW_RUNTIME_DDL：本 testsuite 含 tests/Unit/Schema，SchemaBuilder 相关用例
+             需要在测试库里执行运行时 DDL。闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）。
+             不加 force 时，导出 ALLOW_RUNTIME_DDL=false 会让 DDL 被拒
+             （SchemaBuilder.php 抛 HttpResponseException），Schema 系列用例成批报错。 -->
+        <env name="ALLOW_RUNTIME_DDL" value="true" force="true"/>
+
+        <!-- CACHE_FILE_PREFIX：R20 的隔离前提，与 phpunit.xml 保持一致。
+             （本文件原先没有这一项，等于 R20 的保护在这套配置下完全不存在。）
+             File 驱动的 clear() 实现为 rmdir(path . prefix)
+             （vendor/topthink/framework/src/think/cache/driver/File.php:246-253）。
+             prefix 来自 config/cache.php 的 env('CACHE_FILE_PREFIX', '')（默认空串），
+             而 tests/ThinkPHPTestCase.php 刻意不覆盖 stores.file.prefix（把这条契约交给 phpunit 配置），
+             所以缺了这一项时 Cache::clear() 会退化成 rmdir('runtime/cache/') **整目录删除**。
+             实测（加 force 之前，在 runtime/cache 根层放 SENTINEL.txt 后跑 SchemaParserTest）：
+             哨兵被删除、没有生成 test/ 子目录，缓存分片直接落在 runtime/cache/{hash}/
+             —— 即会误删并行跑 phpunit.xml 的进程写入的 runtime/cache/test/，导致 Casbin 系列伪失败。
+             不加 force 时，导出任意前缀同样会让清理作用域跑偏（清的不是 test/ 子树）。
+             生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变。 -->
+        <env name="CACHE_FILE_PREFIX" value="test" force="true"/>
+
+        <!-- RATELIMIT_ENABLED：决定限流中间件是否生效（app/middleware/RateLimit.php:32）。
+             不加 force 时，运行环境导出 false 会让中间件全程 return $next($request) 直通，
+             「被限流 / 不被限流」两类断言都会变成静默空转（不报错、但也没测到东西）。
+             本 testsuite 的 Integration/Lowcode 用例同样会走完整 HTTP 中间件链，
+             因此必须与 phpunit.xml 保持同一取值。 -->
+        <env name="RATELIMIT_ENABLED" value="true" force="true"/>
+
+        <!-- RATELIMIT_SCOPE_*：限流阈值必须可预期，否则外部导出值会让限流用例随机成败 ——
+             同一份用例在阈值被外部调小的机器上会撞 429（非限流用例被误伤），
+             在阈值被调大后又让「应该被限流」的断言永远不成立。
+             这里取与 phpunit.xml 完全一致的较高阈值（1000 次 / 60 秒），
+             让「本来不测限流」的用例不受影响；真正要精确造 429 的
+             tests/Feature/RateLimitMiddlewareTest.php 会用 config() 覆盖内存配置，不依赖这几个值。 -->
+        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
+    </php>
+    <coverage includeUncoveredFiles="true"/>
+    <source>
+        <include>
+            <directory suffix=".php">domain/Lowcode/Collection</directory>
+            <directory suffix=".php">domain/Schema</directory>
+            <directory suffix=".php">infrastructure/Lowcode/Collection</directory>
+            <directory suffix=".php">infrastructure/Lowcode/Schema</directory>
+            <directory suffix=".php">infrastructure/Schema</directory>
+            <directory suffix=".php">infrastructure/Tenant</directory>
+        </include>
+    </source>
+</phpunit>

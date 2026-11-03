@@ -24,7 +24,10 @@ return [
             // 缓存保存目录
             'path'       => '',
             // 缓存前缀
-            'prefix'     => '',
+            // 默认空前缀（生产/开发行为不变）；测试环境由 phpunit.xml 注入 CACHE_FILE_PREFIX=test，
+            // 使 File 驱动的 clear() 只删除 runtime/cache/test/ 子树，而不是整个 runtime/cache 目录
+            // （R20：整目录删除会误删并行跑测试的其他进程写入的缓存，导致 Casbin 系列伪失败）
+            'prefix'     => env('CACHE_FILE_PREFIX', ''),
             // 缓存有效期 0表示永久缓存
             'expire'     => 0,
             // 缓存标签前缀

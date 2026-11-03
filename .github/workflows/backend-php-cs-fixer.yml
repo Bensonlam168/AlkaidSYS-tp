@@ -42,21 +42,184 @@ jobs:
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
           restore-keys: ${{ runner.os }}-composer-
 
-      - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole
+      # `--no-scripts` 是必须的：composer.json 的 post-autoload-dump 是
+      #   ["@php think service:discover", "@php think vendor:publish"]
+      # 也就是说 **`composer install` 会启动应用**。而安装发生在写 .env 之前，
+      # 此刻 env('APP_ENV') 回落 'production'、env('REDIS_HOST') 回落 docker-compose
+      # 的服务名 'redis'（见 config/cache.php:42 与 RedisHealthCheckService 的默认值），
+      # runner 上 'redis' 不是可解析主机名，于是 RedisHealthCheckService::boot()
+      # 直接抛异常 → post-autoload-dump 以 1 结束 → composer install 失败。
+      # 实测 CI 日志（修复前）：
+      #   Redis health check failed (host=redis, port=6379):
+      #     getaddrinfo for redis failed: Temporary failure in name resolution
+      #   Script @php think service:discover handling the post-autoload-dump event
+      #     returned with error code 1
+      #
+      # 装依赖不是启动应用：cs-fixer 只解析语法树，不需要 App::initialize()。
+      # 因此本 job 既不需要 .env，也不需要显式 service:discover，更不需要任何 service。
+      - name: Install dependencies (no scripts)
+        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole --no-scripts
 
       - name: PHP-CS-Fixer dry-run (backend)
         run: |
           ./vendor/bin/php-cs-fixer fix --dry-run --diff
 
   # ============================================================================
-  # Job 2: PHPUnit Tests
+  # Job 2: Language Pack Consistency Check (i18n)
+  # ============================================================================
+  lang-check:
+    name: Language Pack Consistency Check (i18n)
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+    # 【刻意不写 needs —— 请勿"优化"回去】
+    # 这里曾经是 needs: php-cs-fixer。而本 check 是 AGENTS.md 明列的 required
+    # status check（`Language Pack Consistency Check (i18n)`）。required 的语义是
+    # 「必须出现且为 success」：一旦上游 php-cs-fixer 恒红（当前仓库就是如此），
+    # 本 job 会以 skipped 收场，PR 就永远等不到这个 check 的结论而被卡死 ——
+    # 与 R40 修掉的「带 paths 过滤的 required check 永久 Expected」是同一类故障。
+    # 语言包一致性与代码风格正交，两者并行运行，各自独立作为 required check。
+
+    # ------------------------------------------------------------------------
+    # 依赖服务：只要 redis，**不要** MySQL
+    # ------------------------------------------------------------------------
+    # 为什么必须有 redis：
+    #   config/session.php 把 type/store **硬编码**成 'cache' + 'redis'，
+    #   于是 RedisHealthCheckService::boot() 里的 $usesRedisSession 恒为 true ——
+    #   自检**无条件**执行，与 APP_ENV、CACHE_DRIVER 都无关
+    #   （即使 cache.default 已经是 file，照样会走 Redis 自检）。
+    #   缺 Redis 时 boot 直接抛异常，任何 php think 命令都起不来。
+    # 为什么不需要 MySQL：
+    #   `php think lang:check` 只读 app/lang/**，不碰数据库。
+    #   实测（Redis 可达 + DB_HOST 指向不可解析主机）→ EXIT=0。
+    #   因此不挂 MySQL，省掉一次 service 启动。
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    # ------------------------------------------------------------------------
+    # 为什么本 job 在 runner 上直接跑 PHP，而不是 `docker compose up -d backend`
+    # ------------------------------------------------------------------------
+    # 先清掉一个**已经不成立**的旧理由（留档，别再拿它当依据）：
+    #   这条路径此前确实走不通 —— 它要先 `docker build`，而当时 Dockerfile 里
+    #   `RUN composer dump-autoload ...` 没带 `--no-scripts`，于是
+    #   post-autoload-dump → `php think service:discover` → Redis 自检在构建期抛异常
+    #   （构建期既没有 .env，也没有名为 'redis' 的主机）。当时记录的构建日志：
+    #     Redis health check failed (host=redis, port=6379):
+    #       getaddrinfo for redis failed: Name or service not known
+    #     Script @php think service:discover handling the post-autoload-dump event
+    #       returned with error code 1
+    #   那条失败路径已由 RV-12 从**根因**上修掉，而不是绕过：
+    #     - `composer dump-autoload` 补了 `--no-scripts`（构建期不再引导应用）；
+    #     - `vendor/services.php` 改由 `docker/docker-entrypoint.sh` 在**容器启动时**
+    #       生成（缺失/不可用时跑一次 service:discover，可用时跳过），镜像里只预创建
+    #       一个 `<?php return [];` 占位文件，并单独 chown 给运行期用户。
+    #   所以「镜像构建必然失败」不再是事实，不能继续拿它当本 job 不走镜像的理由。
+    #   ⚠️ 但 RV-12 的真实 `docker build` **尚未实跑**（见
+    #   docs/todo/open-items-2026-11-03.md §3.8），别把这段读成「构建已验收」。
+    #
+    # 现在仍然不用镜像的理由是**成本**，与构建成败无关：
+    #   1) 本 job 只读 app/lang/**、不碰数据库 —— `php think lang:check` 用不上整套编排；
+    #   2) 构建镜像要拉基础镜像（phpswoole/swoole:5.1-php8.2、composer:2.9.1）再跑一遍
+    #      composer install，分钟级且依赖外网；runner 上 composer 有 cache，低一个量级；
+    #   3) 与同类 job（本文件的 phpunit、migrations-check.yml 的 migration-data-check）共用同一套
+    #      安装参数，少一类「镜像里过了、runner 上没过」的差异，改动也只需要一处。
+    # 一句话：CI 不走镜像不是因为镜像坏了，而是它比本 job 需要的重得多。
+    # 「镜像能不能跑」属 RV-12 的独立验收（build + 起隔离实例），不要塞进 lang:check。
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_mysql, redis, mbstring, xml, bcmath
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      # 同 php-cs-fixer job：安装期不得启动应用（理由见该 job 的注释）。
+      - name: Install dependencies (no scripts)
+        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole --no-scripts
+
+      - name: Create .env for the redis service container
+        # .env.example 的键值行**带空格**（形如 `DB_HOST = mysql`），
+        # 所以必须用「键名 + 可选空白 + =」匹配。写成 `s/REDIS_HOST=.*/` 一个都匹配不上，
+        # sed 会**静默不生效**（phpunit job 里曾经如此，DB_HOST 一直停在 `mysql`）。
+        # 另外 .env.example 里**没有** REDIS_HOST 这一行，sed 无从匹配，只能追加。
+        run: |
+          cp .env.example .env
+          sed -i -E 's|^REDIS_HOST[[:space:]]*=.*|REDIS_HOST = 127.0.0.1|' .env
+          grep -qE '^REDIS_HOST[[:space:]]*=' .env || echo 'REDIS_HOST = 127.0.0.1' >> .env
+          # 断言：没生效就立刻失败，而不是等到 lang:check 报一个看不懂的连接错误
+          grep -qx 'REDIS_HOST = 127.0.0.1' .env
+          # .env 必须能被 parse_ini_file 解析（注释里的半角括号/等号会让整份文件静默失效）
+          php -r 'var_dump(parse_ini_file(".env", true, INI_SCANNER_RAW) !== false);' | grep -qx 'bool(true)'
+
+      # 与 phpunit / migration-data-check 两个 job 保持同一顺序：
+      # 安装(--no-scripts) → 写 .env → **显式** service:discover → 业务命令。
+      # service:discover 这一步同时是「应用能正常启动」的自检：
+      # .env 里的 REDIS_HOST 写错时它会以非 0 退出（RedisHealthCheckService 是 fail-closed 的），
+      # 而不是把问题拖到 lang:check 之后才以别的面目出现。
+      - name: Discover services (explicit, after .env)
+        run: php think service:discover
+
+      - name: Check language pack consistency
+        run: |
+          php think lang:check || {
+            echo "❌ Language pack consistency check failed"
+            echo "Please run the following commands locally:"
+            echo "  docker compose up -d backend"
+            echo "  docker exec -it alkaid-backend php think lang:sync --write"
+            echo "Then translate TODO: markers and commit the changes."
+            exit 1
+          }
+
+  # ============================================================================
+  # Job 3: PHPUnit Tests
   # ============================================================================
   phpunit:
     name: PHPUnit Tests
     runs-on: ubuntu-latest
     if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
-    needs: php-cs-fixer
+    # ========================================================================
+    # 【刻意不写 needs（等价于 needs: []）—— 请勿"优化"回去】
+    #
+    # 这里曾经是 needs: [php-cs-fixer, lang-check]，后果是「顺序阻断」：
+    #   1. php-cs-fixer 对全仓做 --dry-run，只要有一个文件可格式化就 exit 非 0。
+    #      实测：仅 app/ 82 个文件里就有 9 个需要修复（全仓 922 个文件更多），
+    #      所以该 job 在当前仓库状态下**必然失败**。
+    #   2. php-cs-fixer 一失败，本 job 就被 GitHub 判定为 skipped —— PHPUnit
+    #      从来没在这里真正跑过，测试信号完全丢失（"CI 绿"与"测试通过"脱钩）。
+    #   3. lang-check 自身也写着 needs: php-cs-fixer，跳过会沿依赖链向下传递，
+    #      所以只保留 needs: [lang-check] 同样救不回测试，必须整个去掉。
+    #
+    # 判断依据：代码风格与测试是**两个独立的质量维度**。风格不合规不应导致
+    # 测试结果不可见；测试失败也不应掩盖风格问题。两者各自作为独立门禁并行运行，
+    # 需要"都通过才能合并"时，请用分支保护的 required status checks 表达，
+    # 而不是用 job 之间的 needs 串成一条链。
+    # php-cs-fixer job 仍然保留（同名 job，独立门禁），只是不再作为本 job 的前置。
+    #
+    # 依据：docs/superpowers/plans/2026-10-31-phase-a-verification-baseline.md Task A2（ER-16）
+    # ========================================================================
 
     services:
       mysql:
@@ -106,17 +269,54 @@ jobs:
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
           restore-keys: ${{ runner.os }}-composer-
 
-      - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole
+      # `--no-scripts`：安装期不得启动应用（详细理由见 php-cs-fixer job 的注释）。
+      # 正确的顺序是「安装(--no-scripts) → 写 .env → 显式 service:discover → migrate → test」，
+      # 这样应用第一次启动时 .env 已经就绪，DB/Redis 都指向 127.0.0.1 上的 service 容器。
+      - name: Install dependencies (no scripts)
+        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole --no-scripts
 
       - name: Create .env file
+        # 原写法 `sed -i 's/DB_HOST=.*/DB_HOST=127.0.0.1/'` 是**静默失效**的：
+        # .env.example 的键值行带空格（`DB_HOST = mysql`），而模式里要求 `DB_HOST=` 紧贴，
+        # 于是一个都匹配不上，测试仍然去连主机名 `mysql` —— runner 上不可解析，
+        # 报出来的是「连接失败」而不是「配置没写对」，极难定位。
+        # 另外 .env.example 里根本没有 REDIS_HOST，sed 无从匹配，只能追加。
+        # 统一改成「键名 + 可选空白 + =」，并在末尾用 grep 断言真的改到了。
         run: |
           cp .env.example .env
-          sed -i 's/DB_HOST=.*/DB_HOST=127.0.0.1/' .env
-          sed -i 's/DB_NAME=.*/DB_NAME=alkaid_sys_test/' .env
-          sed -i 's/DB_USER=.*/DB_USER=root/' .env
-          sed -i 's/DB_PASS=.*/DB_PASS=root/' .env
-          sed -i 's/REDIS_HOST=.*/REDIS_HOST=127.0.0.1/' .env
+          sed -i -E 's|^DB_HOST[[:space:]]*=.*|DB_HOST = 127.0.0.1|' .env
+          sed -i -E 's|^DB_NAME[[:space:]]*=.*|DB_NAME = alkaid_sys_test|' .env
+          sed -i -E 's|^DB_USER[[:space:]]*=.*|DB_USER = root|' .env
+          sed -i -E 's|^DB_PASS[[:space:]]*=.*|DB_PASS = root|' .env
+          sed -i -E 's|^REDIS_HOST[[:space:]]*=.*|REDIS_HOST = 127.0.0.1|' .env
+          grep -qE '^REDIS_HOST[[:space:]]*=' .env || echo 'REDIS_HOST = 127.0.0.1' >> .env
+          # APP_ENV 必须写进 .env，不能只靠步骤级 env。
+          # 原因：ThinkPHP 的 env() 先读 .env，读不到才回落到 $_ENV；而 $_ENV 是否被填充
+          # 取决于 php.ini 的 variables_order **是否含 E**。本仓库容器是 EGPCS（含 E），
+          # 所以本地 env('APP_ENV') 能拿到进程环境里的 dev；CI 的 setup-php 默认是 GPCS（不含 E），
+          # 于是 $_ENV 为空、env('APP_ENV') 变 NULL，route/app.php 的
+          # `env('APP_ENV', 'production')` 就取到默认值 'production'，
+          # 三条「非生产才注册」的演示/调试路由（/think、/hello/:name、/debug/session-redis）
+          # 整批不注册 → route:verify 报 118 vs 121。
+          # 实测：php -d variables_order=GPCS 下 env('APP_ENV') 为 NULL，而 getenv 仍为 dev。
+          sed -i -E 's|^APP_ENV[[:space:]]*=.*|APP_ENV = testing|' .env
+          grep -qE '^APP_ENV[[:space:]]*=' .env || echo 'APP_ENV = testing' >> .env
+          # 断言：任何一条没生效都立刻失败，而不是等到 migrate:run 报一个看不懂的连接错误
+          grep -qx 'DB_HOST = 127.0.0.1' .env
+          grep -qx 'DB_NAME = alkaid_sys_test' .env
+          grep -qx 'DB_USER = root' .env
+          grep -qx 'APP_ENV = testing' .env
+          grep -qx 'REDIS_HOST = 127.0.0.1' .env
+          # .env 必须能被 parse_ini_file 解析（注释里的半角括号/等号会让整份文件静默失效）
+          php -r 'var_dump(parse_ini_file(".env", true, INI_SCANNER_RAW) !== false);' | grep -qx 'bool(true)'
+
+      # composer install 已用 --no-scripts，post-autoload-dump 原本做的服务发现被移到这里。
+      # 不要删掉这一步：它负责生成 vendor/services.php（think-queue / think-swoole /
+      # think-trace / think-migration 这些**包级** service 的清单），
+      # 缺它测试会跑在一个与 composer install 默认行为不同的应用状态下。
+      # 这一步同时是 fail-closed 的启动自检：.env 里 REDIS_HOST 写错时它直接以非 0 退出。
+      - name: Discover services (explicit, after .env)
+        run: php think service:discover
 
       - name: Wait for MySQL to be ready
         run: |
@@ -125,11 +325,35 @@ jobs:
             sleep 2
           done
 
+      # 迁移失败必须阻断，不设 continue-on-error：
+      # 测试库 schema 与迁移脚本不一致时，后续用例的失败是"结构性假失败"——
+      # 看起来是业务代码坏了，实际是库没建好，排查成本远高于直接红。
+      # 全新 MySQL 上 migrate:run 冷启动已验证可用（35 迁移 / 29 表），
+      # 因此不需要用 continue-on-error 兜底"可能连不上库"这种历史顾虑。
       - name: Run database migrations
         run: php think migrate:run
-        continue-on-error: true
 
-      - name: Run PHPUnit tests
+      # 迁移只建 schema 与 19 条系统权限，**不建**角色 / 系统用户 / 业务权限（R50）。
+      # 冷启动后若直接跑测试，状态是 permissions=19 / roles=0 / users=0 / sites=0，
+      # 而 tests/Helpers/AuthHelper 硬编码了 userId=1（admin），于是所有「以 admin 身份
+      # 访问受保护接口」的用例都以「缺种子数据」失败（实测 554 用例里 20+ 条）。
+      # 这些是**数据**不是 schema，按「数据归 seeder、schema 归迁移」的分工放在 seeder 里；
+      # 这里用 -s 只跑测试专用 seeder：
+      #   1. 创建 id=1 的系统用户，口令字段是随机不可用哈希（测试只校验 JWT，不需要口令），
+      #      因此本步骤**不需要** ADMIN_INIT_PASSWORD 之类的口令环境变量；
+      #   2. 创建 roles 1/2、业务权限 33 条（显式 id 1001..1033，含 workflow_* 10 条）、角色授权、默认站点；
+      #   3. 幂等：重复执行插 0 行，不覆盖已有数据。
+      # 为什么不用 `php think seed:run`（不带 -s）：那会连 CorePlatformSeed 一起跑，
+      # 而它按设计要求显式提供 ADMIN_INIT_PASSWORD，缺失即失败（R43 的口令策略，不该为 CI 放宽）。
+      - name: Seed test fixtures
+        run: php think seed:run -s TestPlatformSeed
+
+      # Unit 与 Feature 拆成两个 step（而不是 --testsuite=Unit 再跟 Feature）：
+      # app/command/TestCommand.php:184 的 --testsuite 是单值选项，不支持重复传参，
+      # 拆开还能让失败定位到具体是哪个套件。
+      # 两个 step 都不加 continue-on-error / || true：Feature 失败就是要让 job 失败，
+      # 把真实失败掩盖成绿色比没有这个 step 更糟。
+      - name: Run PHPUnit tests (Unit)
         run: php think test --testsuite=Unit
         env:
           APP_ENV: testing
@@ -139,6 +363,40 @@ jobs:
           DB_PASS: root
           REDIS_HOST: 127.0.0.1
 
+      - name: Run PHPUnit tests (Feature)
+        run: php think test --testsuite=Feature
+        env:
+          APP_ENV: testing
+          DB_HOST: 127.0.0.1
+          DB_NAME: alkaid_sys_test
+          DB_USER: root
+          DB_PASS: root
+          REDIS_HOST: 127.0.0.1
+
+      # 跑**整个 Legacy 套件**，不是按类名 filter 某一个类：
+      #   1. 套件里现在有两个守卫（LegacyCollectionUsageGuardTest /
+      #      WithoutTenantScopeUsageGuardTest），filter 一个类就只能守住一半；
+      #   2. 以后新增守卫只要落进 tests/Legacy，这里自动生效，不必再改工作流。
+      #
+      # 上一版的写法是 php think test --filter=LegacyCollectionUsageGuardTest，
+      # 而 tests/Legacy 当时**不在任何 testsuite 里** —— PHPUnit 只认 phpunit.xml 登记的套件，
+      # 于是这条步骤匹配不到任何用例，打印 No tests executed! 之后仍然 exit 0，
+      # 两个守卫长期空转（「已纳入 CI」是假的）。
+      # 现在两道防线同时生效：phpunit.xml 里登记了 Legacy 套件（能跑到），
+      # 且开了 failOnEmptyTestSuite（跑不到就以 1 结束，不会再假绿）。
+      #
+      # 与上面两条 step 不重复：本 job 的 Unit / Feature 是分开的套件，
+      # 全量 php think test（不带 --testsuite）才会把三个套件一起跑一遍。
+      - name: Run Legacy guard suite
+        run: php think test --testsuite=Legacy
+        env:
+          APP_ENV: testing
+
+      - name: Verify route documentation (T-060)
+        run: php think route:verify
+        env:
+          APP_ENV: testing
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: failure()
@@ -147,3 +405,145 @@ jobs:
           path: |
             runtime/log/
           retention-days: 7
+
+  # ============================================================================
+  # Job 4: Dependency Audit（生产依赖公告门禁）
+  # ============================================================================
+  # 本 job 取代 `.github/workflows/branch-protection.yml` 里那段 warn-only 的
+  # `if composer audit; then ... else echo "不阻止构建，仅警告"; fi`：
+  # 那段写法**发现了也不红**，等于没有门禁。这里改成 fail-closed，并以
+  # `Dependency Audit` 这个名字作为（建议设 required 的）check 名称。
+  #
+  # 【刻意不写 needs —— 请勿"优化"回去】
+  #   required 的语义是「必须出现且为 success」。一旦挂了 needs，上游 job
+  #   （php-cs-fixer 当前恒红、lang-check / phpunit 要起 service）一失败，本 job
+  #   就被判 skipped → check 永久 pending → PR 永远合不进去。这与 R40 修掉的
+  #   「带 paths 过滤的 required check 永久 Expected」是同一类故障。
+  #   依赖公告与代码风格、语言包、业务测试全都正交，并行跑、各自结论。
+  #
+  # 【刻意不写 paths: —— 请勿"优化"回去】
+  #   带 `paths:` 的 required check 在未命中路径的 PR 上**根本不会触发**，
+  #   GitHub 会一直显示 `Expected — Waiting for status to be reported`。
+  #   本 job 只要 20 秒，没必要为省这点分钟数换一个永久 pending。
+  #
+  # 【为什么**不**跑 composer install】
+  #   `--locked` 只读 `composer.lock` 里的包与版本，公告比对完全在 Composer 进程内
+  #   完成，不需要 vendor/ 里真的存在这些包。装依赖纯属浪费（分钟级、依赖外网），
+  #   而且会额外引入失败面：本仓库的 post-autoload-dump 是
+  #   `@php think service:discover` + `@php think vendor:publish`，`composer install`
+  #   会**启动应用**（Redis 自检在无 .env 的 runner 上必然抛异常，见 php-cs-fixer job 注释）。
+  #   少一步 install，就少一类与本门禁无关的假红。
+  #
+  # 【为什么这条门禁不能像 env-check 那样脱离 packagist】
+  #   env-check 之所以能做成「零依赖、秒级」，是因为它校验的事实全在**仓库里**
+  #   （`.env.example` / `.env.production` / `EnvRequirementCatalog`），不查则已，查则自足。
+  #   依赖公告没有这个性质：公告库（packagist security-advisories API）本身就是
+  #   **外部数据**，仓库里没有它的副本。要让本门禁「不依赖网络」，就只能
+  #   a) 在仓库里存一份公告快照（会过期，比不查更危险：离线快照说「没有公告」
+  #      不等于今天没有公告），或 b) 只在依赖变更时才查（那就不再是门禁，
+  #      0-day 公告出现时锁文件一个字节都没变）。
+  #   两者都会把门禁变成「看起来有、实际答不了问题」，所以本 job 明确依赖网络，
+  #   并把「拿不到公告库」当成**失败**而不是**放行**（见下）。
+  #
+  # 【为什么 fail-closed 而不是 fail-open】
+  #   fail-open 的语义是「网络抖动 → 静默放行」。而这条门禁的全部价值就是
+  #   「拦住带已知公告的 lock」，一旦失败路径放行，攻击者/马虎的升级只需要让
+  #   audit 拿不到公告库（断网、代理、限流、甚至只是 packagist 5xx）即可绕过 ——
+  #   门禁退化成装饰。反过来，fail-closed 的代价是「基础设施抖动时红一次，
+  #   重跑即可恢复」，且报错信息会明确写「无法评估」而不是「发现漏洞」，
+  #   维护者不会把基础设施问题误读成自己的包有毒。代价明显更小。
+  #   为了让这个代价尽量小：加了 3 次重试（间隔 5s / 15s），
+  #   并且**只对「无法评估」重试** —— 已经拿到「有公告」的结论时立刻失败，
+  #   重试不会让公告消失，只会让人多等 20 秒。
+  #
+  # 【退出码语义：本机实测，不是凭记忆】
+  #   实测环境 Composer 2.9.1 / PHP 8.2.29（setup-php 装的也是 Composer 2.x，
+  #   本 job 显式用 `tools: composer:v2` 钉住大版本，避免 Composer 3 改语义）：
+  #     0   —— 没有未豁免的生产依赖公告（本仓库当前状态：1 条 low 已按 ID 豁免）
+  #     1   —— 发现公告，打印公告清单
+  #     100 —— 拿不到公告库 / 其它 Composer 未捕获异常
+  #            （实测 `COMPOSER_DISABLE_NETWORK=1 composer audit --locked --no-dev`
+  #             报 `HttpDownloader.php line 329: Network disabled, request canceled:
+  #             https://packagist.org/api/security-advisories/`，退出码 100）
+  #   ⚠️ 因此**绝不能**给 composer audit 加 `--ignore-unreachable`：
+  #      那个参数的语义正是「拿不到公告库就当没问题」，与本 job 的设计相反。
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          # 不装任何扩展：composer audit 只读 composer.lock + 调公告 API，
+          # 不需要 pdo_mysql / redis / bcmath（对比 phpunit job 的扩展清单）。
+          coverage: none
+          # 钉住 Composer 大版本：下面的退出码语义是按 2.x 实测的，
+          # 大版本升级必须重新实测（0 / 1 / 100 的分工不能靠记忆）。
+          tools: composer:v2
+
+      # 只读 composer.lock，不 install（理由见 job 头部注释）。
+      - name: Audit production dependencies (fail-closed)
+        run: |
+          set -u
+
+          ATTEMPTS=3
+          DELAYS=(5 15)   # 第 1 次失败后等 5s，第 2 次失败后等 15s
+          attempt=1
+
+          while [ "$attempt" -le "$ATTEMPTS" ]; do
+            echo "::group::composer audit --locked --no-dev（第 ${attempt}/${ATTEMPTS} 次）"
+            # 必须临时关掉 -e：要拿 composer 的退出码，而不是让 shell 立刻退出。
+            # （GitHub Actions 的 bash 默认带 -e，不关的话第一行失败就跳出循环。）
+            set +e
+            audit_output=$(composer audit --locked --no-dev --no-interaction 2>&1)
+            audit_status=$?
+            set -e
+            printf '%s\n' "$audit_output"
+            echo "::endgroup::"
+
+            if [ "$audit_status" -eq 0 ]; then
+              echo "✅ 生产依赖没有未豁免的安全公告（composer audit exit=0）"
+              exit 0
+            fi
+
+            if [ "$audit_status" -eq 1 ]; then
+              # 这一个分支是「真的发现了问题」，不是基础设施故障 —— 不重试，直接红。
+              echo "❌ 发现依赖公告（composer audit exit=1），门禁不通过：清单见上面的表格。"
+              echo "   处置方式二选一："
+              echo "     1) 升级受影响的包（首选）；"
+              echo "     2) 确需暂留：写进 composer.json 的 config.audit.ignore，"
+              echo "        并在 extra.audit-rationale 写理由、extra.audit-review-by 写到期日"
+              echo "        （缺任一项 tests/Legacy/ComposerAuditConfigGuardTest 会红）。"
+              exit 1
+            fi
+
+            # 既不是 0 也不是 1 = 「无法评估」：拿不到公告库（DNS / 超时 / 代理 / 证书 /
+            # packagist 5xx）、Composer 自身异常等。
+            echo "⚠️ 无法评估依赖公告：composer audit 以 exit=${audit_status} 结束（既不是 0 也不是 1）。"
+            echo "   这**不是**「发现了漏洞」，而是「拿不到公告库，本轮什么都没评估」——"
+            echo "   例如网络 / 代理 / 防火墙故障、packagist 5xx、Composer 自身异常。"
+
+            if [ "$attempt" -lt "$ATTEMPTS" ]; then
+              delay=${DELAYS[$((attempt - 1))]}
+              echo "   ${delay}s 后重试（第 ${attempt}/${ATTEMPTS} 次已失败）..."
+              sleep "$delay"
+            fi
+
+            attempt=$((attempt + 1))
+          done
+
+          # fail-closed：重试仍拿不到公告库也必须红。
+          echo "❌ 依赖公告门禁**无法评估**（已重试 ${ATTEMPTS} 次，间隔 5s / 15s）："
+          echo "   拿不到 packagist 公告库，本轮没有评估生产依赖是否安全 —— 按 fail-closed 判红。"
+          echo "   这是基础设施问题，不是发现了漏洞；但「不知道」不能当成「没问题」，"
+          echo "   否则只要让 audit 断网就能绕过整条门禁。"
+          echo "   建议：确认本机 / CI 能访问 https://packagist.org/api/security-advisories/ ，恢复后重跑本 job。"
+          echo "   确需紧急合并：请在 PR 里留痕说明原因，并临时把 required 里的"
+          echo "   Dependency Audit 这个 check 去掉（本 job 内部**不会**自动放行）。"
+          exit 1

@@ -1,0 +1,51 @@
+name: PHPUnit Config Check
+
+# phpunit 配置一致性门禁 | PHPUnit config consistency gate
+#
+# 检查仓库内 phpunit 配置的「测试语义变量」是否保持一致：
+#   1. phpunit.xml 的 force 项必须是 t048/t050 变体的子集（含取值一致）
+#   2. DB_* 一律不得 force（连接参数必须跟随运行环境）
+#   3. 变体不得 force 基线没有的变量
+#   4. 新增的 phpunit*.xml 必须登记（递归扫描子目录，排除 vendor/node_modules/.git/runtime）
+#   5. 豁免配置必须带 review_by，到期即失败
+#
+# 详情见 scripts/check-phpunit-config.php
+
+# R40：刻意**不再声明** `paths:` 过滤 | No `paths:` filter on purpose
+#
+# 为什么去掉：本门禁要被合并前规则设为 required status check 才能阻止合并，而 GitHub 对
+#   「声明了 paths: 且本次 PR 未命中这些路径」的工作流，会一直显示
+#   `Expected — Waiting for status to be reported` 且永不结束 —— 未命中路径的 PR 反而
+#   因此永久无法合并（详见 AGENTS.md「合并前必须通过的配置类门禁」）。
+# 代价：每个 PR 都会跑一遍。本门禁是秒级纯静态校验（只读 phpunit*.xml 与脚本源码），
+#   且脚本自 R34 起是**递归扫描**的 —— 去掉 paths 后，「新加一份变体只改这份变体」也不能绕过检查 D。
+# 历史：此前 pull_request 带 `phpunit*.xml`、`**/phpunit*.xml`、`scripts/check-phpunit-config.php`、
+#   `.github/workflows/phpunit-config-check.yml`，push 带前三项（根层 + 递归两种模式并存，
+#   是为了让新增变体配置必定触发本门禁）。
+
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+
+jobs:
+  phpunit-config-check:
+    name: PHPUnit Config Consistency
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+
+      - name: Run phpunit config consistency check
+        # --strict：存在问题即返回非 0，阻止合并
+        run: php scripts/check-phpunit-config.php --strict

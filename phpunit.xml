@@ -1,11 +1,40 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
          bootstrap="vendor/autoload.php"
          colors="true"
          beStrictAboutOutputDuringTests="true"
          failOnRisky="true"
-         failOnWarning="true">
+         failOnWarning="true"
+         failOnEmptyTestSuite="true">
+    <!--
+        ============================================================
+        failOnEmptyTestSuite：一个用例都没跑，就算失败（exit 1）
+        ============================================================
+        PHPUnit 的默认行为是「0 个用例也算通过」：只打印一句 No tests executed!，退出码仍是 0。
+
+        这正是本次修的缺陷：tests/Legacy 之前不在任何 testsuite 里，
+        CI 里那条按类名 filter 的 Legacy 步骤匹配不到任何用例，却一路绿灯 ——
+        两个守卫（LegacyCollectionUsageGuardTest / WithoutTenantScopeUsageGuardTest）
+        长期处于完全空转状态。静态守卫空转比没有守卫更糟：
+        报告里它显示为「已纳入 CI」，实际上一个字节都没扫过。
+
+        打开本项后，下列「静默退化」全部变成红色：
+          1. filter 写错，或类名 / 方法名改名后匹配不到；
+          2. testsuite 名字写错 —— PHPUnit 不会报「套件不存在」，
+             只会安静地跑 0 个用例（这也是当初没被发现的原因之一）；
+          3. 目录被挪走、用例文件被删除或被清空。
+
+        影响面（逐个核对过仓库里的调用点）：
+          - .github/workflows 下的 PHPUnit 调用一共四条：三条按 testsuite 指定
+            （Unit / Feature / Legacy），一条在 env-check 里按文件路径指定；
+            没有任何「按类名 filter」的步骤，因此不存在「本来就匹配不到」的情况；
+          - list-suites / version / help 等命令走的是 Application 里提前 return 的分支，
+            不经过 ShellExitCodeCalculator，所以不受本项影响；
+          - phpunit.performance.xml 是独立配置，不继承本文件，行为不变。
+        代价：本地若故意跑一个匹配不到任何用例的 filter，也会以 1 结束。
+        这是想要的行为 —— 「一条都没跑」和「跑了且通过」必须能被区分开。
+    -->
     <testsuites>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
@@ -13,31 +42,189 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+        <testsuite name="E2E">
+            <directory>tests/E2E</directory>
+        </testsuite>
+        <!--
+            ============================================================
+            Legacy：守卫型用例（扫描全仓源码的「守门员」）
+            ============================================================
+            这里放的不是业务行为用例，而是静态守卫：
+              - LegacyCollectionUsageGuardTest：禁止新代码再引用已删除的 legacy 低代码栈
+                （Domain\Model\Collection / Infrastructure\Collection\CollectionManager /
+                Infrastructure\Field\FieldTypeRegistry）；
+              - WithoutTenantScopeUsageGuardTest：禁止未评审的 BaseModel::withoutTenantScope
+                调用（跨租户后门）。
+
+            它们必须进 testsuite，否则永远跑不到：PHPUnit 只认识这里登记的套件，
+            在 tests/Legacy 不在任何套件里的那段时间，CI 里按类名 filter 的步骤
+            匹配不到任何用例却仍是 exit 0 —— 守卫等于不存在。
+
+            进套件后的两个直接效果：
+              1. CI 用 testsuite 名整组跑，新增守卫只要放进 tests/Legacy 就自动生效，
+                 不必再改工作流（按类名 filter 的写法漏一个就是漏一个）；
+              2. 本地 php think test（不带参数）也会跑它们，提交前就能发现违规。
+            代价：全量套件多约 16 至 20 秒（实测单个守卫各约 8 秒，耗时几乎全在递归
+            读取 app/domain/infrastructure/tests/plugins 下的全部 PHP 文件 ——
+            plugins 子树里还含第三方 vendor 源码，共数千个文件）。
+            这是刻意的成本：守卫的价值来自「把全仓扫一遍」，抽稀扫描范围等于自废武功。
+        -->
+        <testsuite name="Legacy">
+            <directory>tests/Legacy</directory>
+        </testsuite>
     </testsuites>
-    <php>
-        <env name="APP_ENV" value="dev"/>
+    <!--
+        ============================================================
+        性能预算断言不参与功能回归（方案 C：用 group 分离，不搬文件）
+        ============================================================
+        打了 #[Group('performance')] 的用例，验证的是「本机此刻多快」，不是「行为对不对」。
+        随机顺序全量跑时它们会随机器负载翻红（实测 CasbinControllerTest 的
+        1000ms 预算断言出现过 1029ms / 1114ms），让功能回归的结论不可信。
+
+        约定：
+          - 墙钟阈值类断言（耗时/吞吐/命中率）→ 标 #[Group('performance')]，在这里被排除；
+          - 功能断言（字段是否存在、code/message、是否放行）→ 永远留在普通用例里，不受影响。
+
+        怎么跑被排除的这一组（都在 alkaid-backend 容器内执行）：
+          - 只跑性能预算用例：给 phpunit 加 CLI 的 group 参数，取值为 performance；
+          - 跑性能套件（含基准测试）：./vendor/bin/phpunit -c phpunit.performance.xml
+          - 收紧预算再跑：先导出 CASBIN_RELOAD_BUDGET_MS=1500，再加同一个 group 参数。
+
+        为什么上面没有贴完整命令行：XML 注释里不允许出现双连字符，而 CLI 的 group 参数
+        正是以双连字符开头。可直接照抄的命令写在
+        docs/technical-specs/testing/testing-guidelines.zh-CN.md 的「性能预算断言」一节。
+
+        另外：`tests/Benchmark/` 目前**不在**任何默认套件里（它也不该在）。
+        基准测试要跑就走 phpunit.performance.xml，别把它加进上面的 testsuites，
+        否则每次 CI 都会跑基准，既慢又不稳定。
+    -->
+    <groups>
+        <exclude>
+            <group>performance</group>
+        </exclude>
+    </groups>
+            <php>
+        <!-- memory_limit：容器 CLI 默认 128M，而全量套件峰值已到约 136M（基线也有 124M，占 97%），
+             会让 php think test（AGENTS.md 记载的标准测试命令）在 84% 处静默 exit 255：
+             看起来像「测试失败」，实际是 OOM，极难定位。
+             提高到 256M 留余量。CI 走拆分套件（testsuite 分 Unit 与 Feature 两条命令）本就不受影响，
+             这里只保证「单进程跑全量」这条路径同样可用。 -->
+        <ini name="memory_limit" value="256M"/>
+        <!--
+            ============================================================
+            A. 连接参数（DB_*）：刻意 **不加** force，必须跟随运行环境
+            ============================================================
+            PHPUnit 11 处理 <env> 的语义是（PhpHandler::handleEnvVariables）：
+                if ($force || getenv($name) === false) { putenv("{$name}={$value}"); }
+                if ($force || !isset($_ENV[$name]))    { $_ENV[$name] = $value; }
+            也就是说：**不加 force 时，已存在的 $_ENV / getenv 值胜出**。
+
+            这正是连接参数想要的行为：下面的值是「运行环境未提供时的默认值」，
+            而不是「强制值」。谁运行测试，就由谁决定连哪个库。
+
+            具体反例（实测）：容器 alkaid-backend 内 $_ENV['DB_HOST']='mysql'，而这里默认写 127.0.0.1。
+            一旦给 DB_HOST 加 force="true"：
+              - env('DB_HOST') / $_ENV['DB_HOST'] 立刻变成 127.0.0.1（实测已确认）；
+              - 而容器内 127.0.0.1:3306 是 "SQLSTATE[HY000] [2002] Connection refused"（实测已确认）；
+              - 于是任何信任 env() 的路径（config/database.php、无 .env 的干净检出、CLI 子进程）
+                都会连到不存在的库。
+            当前之所以还有一层兜底，是因为 .env 里写了 DB_HOST = mysql，ThinkPHP 加载 .env 时
+            会再覆盖一次（Env::set 无条件覆盖）。这条兜底不属于 phpunit.xml 的契约 ——
+            不要把连接参数的正确性寄托在 .env 恰好存在上。
+            结论：连接类参数永远不要加 force。
+        -->
         <env name="DB_TYPE" value="mysql"/>
         <env name="DB_HOST" value="127.0.0.1"/>
-        <env name="DB_NAME" value="alkaid_sys"/>
+        <!--
+            ER-15：DB_NAME 必须指向**测试库**（此前后台测试直接写开发库 alkaid_sys）。
+            测试库 alkaid_sys_test 由 `.env.test` 冷启动建立：
+                PHP_ENV_NAME=test php think migrate:run
+            tests/ThinkPHPTestCase.php 还有一道 fail-closed 断言：解析出的库名不含 `_test`
+            就抛异常终止（不会再「打个警告继续跑」）。若这里被改回 alkaid_sys，测试会立即失败。
+        -->
+        <env name="DB_NAME" value="alkaid_sys_test"/>
         <env name="DB_USER" value="root"/>
         <env name="DB_PASS" value="root"/>
         <env name="DB_PORT" value="3306"/>
-        <!-- Allow runtime DDL in tests for SchemaBuilder -->
-        <env name="ALLOW_RUNTIME_DDL" value="true"/>
-        <!-- Enable RateLimit middleware in tests | 在测试中启用限流中间件 -->
-        <env name="RATELIMIT_ENABLED" value="true"/>
-        <!-- Set high rate limit for testing to avoid interference | 设置较高的限流阈值避免干扰测试 -->
-        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000"/>
-        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60"/>
-        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000"/>
-        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60"/>
-        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000"/>
-        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60"/>
+
+        <!--
+            ============================================================
+            B. 测试语义固定的变量：必须加 force
+            ============================================================
+            这些值与「在哪台机器上跑」无关，只与「测试断言的前提」有关。
+            若不加 force，shell 导出的同名变量会直接抢占它们（同上 PhpHandler 语义），
+            导致测试语义随环境漂移：本地通过、CI 或同事机器上随机失败。
+        -->
+
+        <!-- APP_ENV：鉴权用例的前提是「非生产环境」。
+             不加 force 时，shell 里导出 APP_ENV=production 会让 C-5 的 JWT 强密钥校验
+             （infrastructure/Auth/JwtService.php:127-130）拒掉 .env 里的 dev 占位密钥，
+             JwtService 构造即抛 RuntimeException，鉴权类用例全线 500 而不是期望的 401。
+             实测：导出 APP_ENV=production 跑 tests/Feature/AuthMiddlewareTest.php
+             → 1 error + 2 failures（期望 3 passed）。 -->
+        <env name="APP_ENV" value="dev" force="true"/>
+
+        <!-- ALKAID_TESTING：显式声明「当前进程是测试进程」，供 CLI 命令侧做 fail-closed 守卫。
+             为什么需要它：测试里 exec('php think lowcode:create-model ...') 拉起的是**全新 PHP 进程**，
+             它会重新 load .env → 连到开发库 alkaid_sys。父进程的 ThinkPHPTestCase 守卫管不到另一个进程，
+             所以命令侧（app/command/base/LowcodeCommand.php::guardTestContextDatabase）要靠这个标记
+             判断「我在测试上下文里」，一旦发现库名不含 _test 就抛异常拒绝执行。
+             正常手工执行 php think 时没有该标记，行为完全不变。
+             force="true"：避免 shell 里遗留的同名变量把标记关掉，反而绕过守卫。 -->
+        <env name="ALKAID_TESTING" value="1" force="true"/>
+
+        <!-- DEFAULT_TENANT_ID：TenantIdentify 中间件在「请求未带 X-Tenant-ID」时落到的默认租户。
+             自本次改动起，代码里不再有隐式默认 1 —— 未配置时中间件直接抛
+             TenantContextMissingException（配置级 500），因此测试必须自带该值，
+             不能依赖本机 .env 是否恰好写了这一行（CI 也没有，只有 .env.example 有）。
+             force="true"：测试需要确定性的默认租户，不允许被 shell 导出值改变。 -->
+        <env name="DEFAULT_TENANT_ID" value="1" force="true"/>
+
+        <!-- ALLOW_RUNTIME_DDL：SchemaBuilder 相关用例需要在测试库里执行运行时 DDL。
+             闸门在 Infrastructure/Schema/SchemaBuilder.php（assertCanRunDDL）里。
+             实测：不加 force 且导出 ALLOW_RUNTIME_DDL=false 时，
+             tests/Unit/Schema/SchemaBuilderTest.php 的 9 个用例里 7 个报错
+             （SchemaBuilder.php:368 抛 HttpResponseException，即 DDL 被拒）。 -->
+        <env name="ALLOW_RUNTIME_DDL" value="true" force="true"/>
+
+        <!-- CACHE_FILE_PREFIX：R20 的修复前提是「测试缓存有独立前缀」。
+             File 驱动的 clear() 实现为 rmdir(path . prefix)
+             （vendor/topthink/framework/src/think/cache/driver/File.php:246-253）。
+             不加 force 时，运行环境导出任意前缀都会让作用域失效：
+             Cache::clear() 清的不再是 runtime/cache/test/，而是导出的那个目录。
+             实测（导出 CACHE_FILE_PREFIX=evil 跑 SchemaParserTest）：
+             runtime/cache/evil/ 被清空，runtime/cache/test/ 与根层哨兵完好无损 —— 作用域跑偏。
+             （若导出空前缀，按上式会退化为 rmdir('runtime/cache/') 整目录删除，
+             误删并行进程的缓存 → Casbin 系列伪失败。）
+             生产/开发环境不设置该变量，File 驱动前缀保持为空，行为完全不变。 -->
+        <env name="CACHE_FILE_PREFIX" value="test" force="true"/>
+
+        <!-- RATELIMIT_ENABLED：决定限流中间件是否生效（app/middleware/RateLimit.php:32）。
+             不加 force 时，运行环境导出 false 会让中间件全程 return $next($request) 直通，
+             「被限流 / 不被限流」两类断言都会失去意义（静默空转，而不是报错）。 -->
+        <env name="RATELIMIT_ENABLED" value="true" force="true"/>
+
+        <!-- RATELIMIT_SCOPE_*：限流阈值（config/ratelimit.php 的 scopes.*）必须可预期。
+             不加 force 时，同一份用例在阈值被外部调小的机器上会撞 429、在调大后又让
+             「应该被限流」的断言失效 —— 结果随机器漂移。
+             这里取较高的阈值，避免非限流用例被误伤。
+             注：tests/Feature/RateLimitMiddlewareTest.php 自身用 config() 覆盖内存配置来精确造 429，
+             所以它感知不到 env 漂移；真正会被误伤的是「没打算测限流」的其余用例。 -->
+        <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
     </php>
-    <coverage processUncoveredFiles="true">
+    <coverage includeUncoveredFiles="true"/>
+    <source>
         <include>
             <directory suffix=".php">domain</directory>
             <directory suffix=".php">infrastructure</directory>
         </include>
-    </coverage>
+    </source>
 </phpunit>

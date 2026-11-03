@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace Tests\Unit\Infrastructure\Application;
 
 use Infrastructure\Application\BaseApplication;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
 /**
  * BaseApplication Test | 应用基类测试
- *
- * @covers \Infrastructure\Application\BaseApplication
  */
+#[CoversClass(\Infrastructure\Application\BaseApplication::class)]
 class BaseApplicationTest extends TestCase
 {
     private string $testAppPath;

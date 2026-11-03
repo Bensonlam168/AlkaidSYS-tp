@@ -184,6 +184,56 @@ class ApiController extends BaseController
     }
 
     /**
+     * Assert record tenant ownership | 断言记录租户归属
+     *
+     * 缺陷 R13：历史代码对「租户归属缺失（tenant_id 为 null）」的记录一律放行
+     * （`isset($x['tenant_id'])` 对 null 值返回 false，整个校验被跳过；对象形态则显式写了
+     * `getTenantId() !== null`），使缺少 tenant_id 的脏数据可被任意租户读取/修改/发布。
+     *
+     * 此处统一收敛为 fail-closed：
+     *   - 前置守卫：当前请求租户为**非正数**时，无从判断记录归属，一律拒绝（fail-closed），
+     *     而不是退化成「`(int) null === 0` 与 0 相等即通过」的 fail-open；
+     *   - 正常情况下当前租户 ID 恒 >= 1（`app\Request::tenantId(): int`），
+     *     `(int) null === 0` 因此使「租户归属缺失」天然被判定为越权，无需额外分支；
+     *   - 归属正确 → 返回 null（调用方继续执行）；否则 → 返回 403 响应（调用方直接 return）。
+     *
+     * @param mixed $recordTenantId 记录的租户ID（可空，缺失时按 0 处理）| Record tenant ID
+     * @param int $currentTenantId 当前请求租户ID（正常情况下恒 >= 1）| Current tenant ID
+     * @param string|null $message 错误消息（null = 拒绝分支内惰性翻译 `workflow.*` 默认文案）| Error message
+     * @return Response|null null = 归属正确；否则为 403 响应 | null = owned, otherwise 403
+     */
+    protected function assertTenantOwnership(mixed $recordTenantId, int $currentTenantId, ?string $message = null): ?Response
+    {
+        // 前置守卫（缺陷 R13 边界）：当前租户为 0 / 负数时「归属」这一概念不成立。
+        // 触发路径：`Request::tenantId()` 返回 0（例如将来某条新链路上游漏判，又把 0 号上下文
+        // 注入进请求）→ 下面的相等比较会把 `(int) null === 0` 误判为「归属正确」，
+        // 使缺失归属的记录继续 fail-open。
+        // 注意（缺陷 R19）：`tenant_id <= 0` / `user_id <= 0` 的令牌**已在校验侧**
+        // （`JwtService::validateAccessToken()`）被拒，由 Auth 中间件统一返回 401，
+        // 请求根本到不了控制器。因此本守卫不是主防线，而是**纵深防御**（第二道闸），
+        // 用来兜住「将来有别的路径把非正数租户上下文注入 Request」的情况。
+        if ($currentTenantId <= 0) {
+            // 惰性求值（R22）：只有真正进入拒绝分支时才调用 trans()，归属校验通过不产生翻译开销
+            return $this->forbidden($message ?? $this->langService->trans('workflow.invalid_tenant_context'));
+        }
+
+        // 严格整数比较：null / 空字符串 / 缺失键统一折算为 0，故缺失归属必然越权
+        if ((int) $recordTenantId === $currentTenantId) {
+            return null;
+        }
+
+        // 默认文案（语言包已补齐，R22）：默认文案走 `workflow.*`，且**只在进入拒绝分支时才翻译**
+        // （惰性求值）。历史实现里调用点传入的都是提前求值的
+        // $this->langService->trans('workflow.access_denied')，即便归属校验通过也会白跑一次翻译
+        // （含一次语言包文件 include）。R22 起调用点统一省略该实参，由本方法按当前语言解析；
+        // 'workflow.access_denied' 现由 app/lang/{zh-cn,en-us}/workflow.php 提供，不再回落为原始 key。
+        //
+        // 调用点数量（评审 M2 核对）：共 **25** 处 ——
+        // 定义 7 / 实例 7 / 任务 5 / 触发器 6（原注释写的 24 是漏数）。
+        return $this->forbidden($message ?? $this->langService->trans('workflow.access_denied'));
+    }
+
+    /**
      * Validate pagination parameters | 验证分页参数
      *
      * @param int $page Page number | 页码

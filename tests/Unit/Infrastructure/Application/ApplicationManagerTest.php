@@ -7,13 +7,13 @@ namespace Tests\Unit\Infrastructure\Application;
 use Infrastructure\Application\ApplicationInterface;
 use Infrastructure\Application\ApplicationManager;
 use Infrastructure\Application\BaseApplication;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 
 /**
  * ApplicationManager Test | 应用管理器测试
- *
- * @covers \Infrastructure\Application\ApplicationManager
  */
+#[CoversClass(\Infrastructure\Application\ApplicationManager::class)]
 class ApplicationManagerTest extends TestCase
 {
     private string $testBasePath;

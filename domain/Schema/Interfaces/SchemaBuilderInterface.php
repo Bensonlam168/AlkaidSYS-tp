@@ -22,6 +22,8 @@ interface SchemaBuilderInterface
      * @param array $indexes Index definitions | 索引定义
      * @param string $engine Storage engine (e.g., InnoDB) | 存储引擎（例如InnoDB）
      * @param string $comment Table comment | 表注释
+     *
+     * 约束：幂等调用，若表已存在应安全返回 true；调用方可通过 hasTable 预检查。
      * @return bool
      */
     public function createTable(string $tableName, array $columns, array $indexes = [], string $engine = 'InnoDB', string $comment = ''): bool;
@@ -30,6 +32,8 @@ interface SchemaBuilderInterface
      * Drop a table if it exists | 删除表（如果存在）
      *
      * @param string $tableName Table name | 表名
+     *
+     * 约束：幂等调用，不存在时返回 true。
      * @return bool
      */
     public function dropTable(string $tableName): bool;
@@ -48,6 +52,8 @@ interface SchemaBuilderInterface
      * @param string $tableName Table name | 表名
      * @param string $columnName Column name | 列名
      * @param array $definition Column definition | 列定义
+     *
+     * 约束：幂等调用，若列已存在应安全返回 true。
      * @return bool
      */
     public function addColumn(string $tableName, string $columnName, array $definition): bool;

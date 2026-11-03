@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace app\controller\lowcode;
 
 use app\controller\ApiController;
+use app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses;
 use think\App;
 use think\Request;
 use Domain\Lowcode\Collection\Model\Collection;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
 use Infrastructure\Lowcode\Collection\Field\FieldFactory;
+use think\exception\HttpResponseException;
 use think\Response;
 
 /**
@@ -22,6 +24,10 @@ use think\Response;
  */
 class CollectionController extends ApiController
 {
+    // 「运行时 DDL 被拒」的对外响应统一由该 trait 提供：本类、FieldController 与
+    // RelationshipController 都走同一道 SchemaBuilder 闸门，不允许各写一份文案。
+    use RuntimeDdlDeniedResponses;
+
     protected CollectionManager $collectionManager;
 
     /**
@@ -144,8 +150,11 @@ class CollectionController extends ApiController
             $this->collectionManager->create($collection);
 
             return $this->success($collection->toArray(), 'Collection created successfully');
+        } catch (HttpResponseException $e) {
+            // 建表同样走运行时 DDL 闸门，拦截时的对外文案与删除接口一致（缺陷 B）
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -177,8 +186,13 @@ class CollectionController extends ApiController
             $this->collectionManager->update($collection);
 
             return $this->success($collection->toArray(), 'Collection updated successfully');
+        } catch (HttpResponseException $e) {
+            // update() 当前不改表结构，理论上不会触达运行时 DDL 闸门；
+            // 保留同级处理是为了让本控制器对 HttpResponseException 的处置**一致**——
+            // 将来若 update 补上 DDL 逻辑，不会又退回「空 message」。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
 
@@ -195,8 +209,21 @@ class CollectionController extends ApiController
             $this->collectionManager->delete($name, $dropTable, $tenantId);
 
             return $this->success(null, 'Collection deleted successfully');
+        } catch (HttpResponseException $e) {
+            // 缺陷 B：删除集合默认 `drop_table = true`，运行期要真删物理表。
+            // 一旦运行环境不允许运行时 DDL，`SchemaBuilder` 抛的是 HttpResponseException，
+            // 只取 getMessage() 会得到空串，客户端只能看到「没有原因的错误」。
+            return $this->runtimeDdlDeniedResponse($e);
         } catch (\Exception $e) {
-            return $this->error($e->getMessage());
+            return $this->error($this->describeExceptionMessage($e));
         }
     }
+
+    /*
+     * 上一轮曾在这里内联实现 runtimeDdlDeniedResponse() / runtimeDdlDeniedHint() /
+     * describeExceptionMessage() 三个方法。它们与 FieldController / RelationshipController
+     * 需要的是**同一套**语义（同样被 SchemaBuilder 的运行时 DDL 闸门拦下），
+     * 所以已提取到 `app\controller\lowcode\Concerns\RuntimeDdlDeniedResponses` trait，
+     * 由本类顶部的 `use` 语句引入，不再保留第二份实现。
+     */
 }

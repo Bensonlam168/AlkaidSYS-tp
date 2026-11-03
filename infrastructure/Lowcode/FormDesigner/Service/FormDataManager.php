@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Infrastructure\Lowcode\FormDesigner\Service;
 
+use app\constant\ErrorCode;
+use app\exception\ForbiddenException;
+use Domain\Lowcode\Collection\Interfaces\CollectionInterface;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
 use think\facade\Db;
 
@@ -58,13 +61,24 @@ class FormDataManager
             throw new \InvalidArgumentException("Form not found: {$formName}");
         }
 
-        // 2. Validate data | 验证数据
-        $validationResult = $this->validatorManager->validate($data, $form['schema']);
+        // 2. Guard tenant/site spoofing | 防止伪造租户/站点，直接返回 2002
+        if (isset($data['tenant_id']) && (int) $data['tenant_id'] !== $tenantId) {
+            throw new ForbiddenException('租户无权访问该数据', ErrorCode::FORBIDDEN);
+        }
+        if (isset($data['site_id']) && (int) $data['site_id'] !== $siteId) {
+            throw new ForbiddenException('站点无权访问该数据', ErrorCode::FORBIDDEN);
+        }
+
+        // 3. Validate data | 验证数据
+        $validationResult = $this->validatorManager->validate($data, $form['schema'], null, [
+            'tenant_id' => $tenantId,
+            'site_id' => $siteId,
+        ]);
         if ($validationResult !== true) {
             throw new \InvalidArgumentException('Validation failed: ' . $validationResult);
         }
 
-        // 3. Get collection and table name | 获取Collection和表名
+        // 4. Get collection and table name | 获取Collection和表名
         if (empty($form['collection_name'])) {
             throw new \RuntimeException('Form is not bound to a collection');
         }
@@ -78,7 +92,7 @@ class FormDataManager
 
         $tableName = $collection->getTableName();
 
-        // 4. Save to database | 保存到数据库
+        // 5. Save to database | 保存到数据库
         // Filter data to only include fields in the collection (plus id)
         // 过滤数据，只包含Collection中的字段（加上id）
         $fields = $collection->getFields();
@@ -165,17 +179,27 @@ class FormDataManager
      */
     public function list(string $formName, int $tenantId, array $filters = [], int $page = 1, int $pageSize = 20, int $siteId = 0): array
     {
-        $tableName = $this->getTableName($formName, $tenantId, $siteId);
+        $collection = $this->resolveCollectionByForm($formName, $tenantId, $siteId);
+        $tableName = $collection->getTableName();
 
         $query = Db::table($tableName)
             ->where('tenant_id', $tenantId)
             ->where('site_id', $siteId);
 
         // Apply filters | 应用筛选
+        // 仅允许在白名单字段上过滤，避免字段名注入
+        $allowedFilterFields = $this->getAllowedFilterFields($collection);
         foreach ($filters as $key => $value) {
-            if (!empty($value)) {
-                $query->where($key, $value);
+            if (!in_array($key, $allowedFilterFields, true)) {
+                continue;
             }
+
+            // 注意：0/\"0\" 属于有效值，不能用 empty() 直接跳过
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $query->where($key, $value);
         }
 
         $total = $query->count();
@@ -200,21 +224,45 @@ class FormDataManager
      */
     protected function getTableName(string $formName, int $tenantId, int $siteId): string
     {
+        $collection = $this->resolveCollectionByForm($formName, $tenantId, $siteId);
+        return $collection->getTableName();
+    }
+
+    /**
+     * Resolve collection by form | 通过表单解析绑定的 Collection（统一租户校验）
+     */
+    protected function resolveCollectionByForm(string $formName, int $tenantId, int $siteId): CollectionInterface
+    {
         $form = $this->schemaManager->get($formName, $tenantId, $siteId);
         if (!$form) {
             throw new \InvalidArgumentException("Form not found: {$formName}");
         }
 
+        // NOTE(P0: lowcode-collections-tenant): pass tenantId to collection manager here as well.
         if (empty($form['collection_name'])) {
             throw new \RuntimeException('Form is not bound to a collection');
         }
 
-        // NOTE(P0: lowcode-collections-tenant): pass tenantId to collection manager here as well.
         $collection = $this->collectionManager->get($form['collection_name'], $tenantId);
         if (!$collection) {
             throw new \RuntimeException("Collection not found: {$form['collection_name']}");
         }
 
-        return $collection->getTableName();
+        return $collection;
+    }
+
+    /**
+     * Build filter whitelist | 构建允许过滤的字段白名单
+     *
+     * @return array<int, string>
+     */
+    protected function getAllowedFilterFields(CollectionInterface $collection): array
+    {
+        $fields = ['id', 'created_at', 'updated_at'];
+        foreach ($collection->getFields() as $field) {
+            $fields[] = $field->getName();
+        }
+
+        return array_values(array_unique($fields));
     }
 }

@@ -1,0 +1,163 @@
+# =============================================================================
+# AlkaidSYS 生产 override（ER-18）
+#
+# 用法（必须在仓库根执行，两个 -f 的顺序不能反）：
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# 叠加后的效果：
+#   - 后端**不再挂载源码**，跑的是镜像里 COPY 进去的那份代码（可重现、可回滚）；
+#   - APP_DEBUG 强制 false，且不复存在 .env 覆盖它的可能（见下方说明）；
+#   - OPcache 打开 CLI 缓存并关闭 mtime 校验（代码在镜像内不可变，安全）；
+#   - 数据库/中间件端口整个不再发布，仅容器网络内可达；
+#   - 凭据必须显式注入，缺一个就拒绝启动（fail-fast，不落回弱默认值）；
+#   - 日志加轮转上限，避免 json-file 无限增长撑爆磁盘。
+#
+# 为什么用 !reset / !override：
+#   Compose 对 `ports` / `volumes` 这类列表默认是「追加并集」，override 里写一个
+#   更短的列表并不能删掉基文件里的条目。`!reset []` 表示清空，`!override [...]`
+#   表示用本文件的值整体替换。当前 Compose 版本（v2.31）支持这两个标签。
+#
+# 关于 .env 与 APP_DEBUG 的关系（重要）：
+#   ThinkPHP 的 Env 先取 $_ENV（容器环境变量），再用 .env 文件覆盖同名键
+#   （vendor/topthink/framework/src/think/Env.php：load() -> set()）。
+#   所以只要容器里存在 .env 且里面写了 APP_DEBUG=true，环境变量就**赢不了它**。
+#   本 override 的做法是：不挂载源码（因此容器内没有 .env），凭据与开关全部
+#   走 env_file / environment，从根上消除这种「配置文件偷偷覆盖部署参数」的情况。
+# =============================================================================
+
+# 日志轮转：compose 默认 json-file 无上限，长期运行会把宿主磁盘写满。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  # ---------------------------------------------------------------------------
+  # MySQL
+  # ---------------------------------------------------------------------------
+  mysql:
+    # 生产不向宿主机发布任何端口（基文件里的 127.0.0.1:3306 也一并清掉）
+    ports: !reset []
+    environment:
+      # `:?` 的语义：变量未设置或为空时，compose 直接报错退出，不会用弱默认值启动。
+      # 也就是说 —— 生产不会再悄悄用 root/root。
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?生产环境必须显式提供 MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-alkaid_sys}
+      MYSQL_USER: ${MYSQL_USER:?生产环境必须显式提供 MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?生产环境必须显式提供 MYSQL_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          # 生产比开发收紧 CPU 上限、放宽内存：MySQL 主要吃内存而非 CPU
+          cpus: "2.0"
+          memory: 2g
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Redis
+  # ---------------------------------------------------------------------------
+  redis:
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # RabbitMQ
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    ports: !reset []
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?生产环境必须显式提供 RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?生产环境必须显式提供 RABBITMQ_DEFAULT_PASS}
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1g
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # PHP 后端
+  # ---------------------------------------------------------------------------
+  backend:
+    # 清空基文件里的源码 bind mount —— 生产镜像必须自包含
+    volumes: !reset []
+    # 后端只通过 nginx 对外，容器端口不再发布到宿主机
+    ports: !reset []
+    env_file:
+      # 运维在宿主机上从 .env.production.example 复制并填好（该文件已被
+      # .gitignore 的 `.env.*` 规则排除，绝不入库）。
+      # 这里**不加** required: false —— 缺文件时必须直接报错退出。
+      # 曾经考虑过 required: false 以便「没有该文件也能跑 docker compose config」，
+      # 但那样会让容器带着半套配置启动（有 DB_HOST 没有 DB_USER），
+      # 把启动期的明确错误推迟成运行期的连库失败，得不偿失。
+      - .env.production
+    environment:
+      # environment 优先级高于 env_file，因此这两项一定生效
+      APP_ENV: production
+      APP_DEBUG: "false"
+    # 生产把 OPcache 真正用起来：
+    #   enable_cli=1 —— `php think swoole` 跑的是 CLI SAPI，PHP 默认
+    #                   opcache.enable_cli=Off，不显式打开则 OPcache 形同虚设；
+    #   validate_timestamps=0 —— 镜像内代码不可变，无需按 mtime 复核，
+    #                   省掉每次请求的 stat。
+    # 用 -d 传参而不是再挂一个 ini 文件，避免多一个必须同步维护的产物。
+    command:
+      - php
+      - -d
+      - opcache.enable_cli=1
+      - -d
+      - opcache.validate_timestamps=0
+      - think
+      - swoole
+    security_opt:
+      - no-new-privileges:true
+    # 健康检查：与基文件同值，**显式写一遍是为了把约束固定在这里**（不是重复配置）。
+    #
+    # liveness vs readiness（两者语义不同，配错会把局部故障放大成全局故障）：
+    #   - liveness  = 进程还能不能响应 → `/healthz`（本 healthcheck）。
+    #     它由全局中间件 HealthProbeBypass 在 SessionInit 之前短路，
+    #     因此 **Redis 抖动不会让它 500** —— 生产上这条尤其重要：
+    #     若它被 Redis 拖成 unhealthy，编排层会重启**全部**后端实例，
+    #     Redis 恢复前新实例也起不来（`RedisHealthCheckService` 在启动期 fail-fast）。
+    #   - readiness = 依赖（DB / Redis / 配置）是否可用 → `/readyz`。
+    #     失败返回 **503** 并逐项列出 checks，编排层的正确反应是**摘流量**，不是重启。
+    #
+    # ⚠️ compose 没有 readiness 概念：本文件只能表达 liveness。
+    #    生产若跑 K8s / Swarm，必须另外配 readinessProbe=/readyz（timeoutSeconds ≥ 5s），
+    #    完整 YAML 与理由见
+    #    docs/technical-specs/deployment/image-and-orchestration-production-requirements.md §6.1.2。
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # Swoole 冷启动 + 连接池预热（含启动期 Redis 读写自检）需要时间
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 2g
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Nginx 网关
+  # ---------------------------------------------------------------------------
+  nginx:
+    # 只保留 nginx 配置文件这一个挂载点，清掉指向源码目录的 `.:/var/www/alkaid:ro`
+    volumes: !override
+      - ./deploy/nginx/alkaid.api.conf:/etc/nginx/conf.d/default.conf:ro
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256m
+    logging: *default-logging

@@ -43,7 +43,9 @@ class GenerateCommand extends LowcodeCommand
             ->addOption('force', 'f', Option::VALUE_NONE, 'Force overwrite existing files | 强制覆盖现有文件')
             ->addOption('no-tests', null, Option::VALUE_NONE, 'Skip test generation | 跳过测试生成')
             ->addOption('no-routes', null, Option::VALUE_NONE, 'Skip route generation | 跳过路由生成')
-            ->addOption('append-routes', null, Option::VALUE_NONE, 'Append routes to route file | 追加路由到路由文件');
+            ->addOption('append-routes', null, Option::VALUE_NONE, 'Append routes to route file | 追加路由到路由文件')
+            ->addOption('format', null, Option::VALUE_OPTIONAL, 'Output format (text|json) | 输出格式（text|json）', 'text')
+            ->addOption('audit-out', null, Option::VALUE_OPTIONAL, 'Audit JSON output file path | 审计JSON输出文件路径');
     }
 
     /**
@@ -102,10 +104,35 @@ class GenerateCommand extends LowcodeCommand
             // Display results | 显示结果
             $this->displayResults($files);
 
+            // Structured output | 结构化输出
+            $normalizedFiles = [];
+            foreach ($files as $fileType => $path) {
+                if (is_string($path)) {
+                    $normalizedFiles[] = [
+                        'type' => $fileType,
+                        'path' => $path,
+                    ];
+                }
+            }
+
+            $this->writeStructuredOutput([
+                'files' => $normalizedFiles,
+                'options' => [
+                    'type' => $type,
+                    'tenant_id' => $tenantId,
+                    'force' => (bool) $force,
+                    'no_tests' => (bool) $noTests,
+                    'no_routes' => (bool) $noRoutes,
+                    'append_routes' => (bool) $appendRoutes,
+                ],
+            ]);
+
             $this->success('Code generation completed!');
 
-            // Show next steps | 显示下一步操作
-            $this->showNextSteps($name, $files);
+            // Show next steps | 显示下一步操作（仅文本模式展示）
+            if ($this->getOutputFormat() === 'text') {
+                $this->showNextSteps($name, $files);
+            }
 
             return 0;
         } catch (\Throwable $e) {

@@ -49,6 +49,12 @@
   - 明确的回滚或补救方案说明；
   - 覆盖典型数据形态的测试用例。
 - 应用代码、迁移与设计文档 **必须** 保持一致；如故意偏离 **必须** 记录在 `docs/report/*` 中，并在存在后续工作时在 Backlog 中建项。
+- 数据型迁移（插入权限 / 菜单等「期望长期存在的行」）**必须** 可核对「意图 ↔ 实际行」：
+  `scripts/check-migration-data.php` 会从迁移源码里提取 `'slug' => 'resource.action'` 与 `menus` 载荷，
+  与库内 `permissions.slug` / `menus.name` 逐条比对，缺失即报错并指回「哪个迁移 / 第几行 / 哪个 slug」。
+  这样新增迁移自动被覆盖，无需维护第二份期望清单。只比对**账本里记为已应用**的迁移。
+- 数据型迁移的一致性**必须**在本地跑全量（CI 只在全新库上跑 `migrate:run` 后比对，抓不到既有库漂移）：
+  `docker exec alkaid-backend php scripts/check-migration-data.php --strict`。
 
 ## 7. Legacy vs Low-code 数据模型
 
