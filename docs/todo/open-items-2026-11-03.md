@@ -102,9 +102,9 @@ IProcessTaskHistoryService   IScheduler
 
 | # | 项 | 依据 |
 |---|---|---|
-| 3.1 | 插件 `phpunit.xml` 的 `failOnEmptyTestSuite` / `failOnRisky` / `failOnWarning` 三项未开（`failOn` 声明数 = 0，豁免至 2027-04-30） | 实测补齐三项不会让绿的变红；`failOnEmptyTestSuite` 确实生效（`--filter=__no_such_test__` → exit 1） |
-| 3.2 | `plugins/workflow-engine/docs/testing-guide.md:12` 的目录树仍列已删除的 `bootstrap.php` | `grep bootstrap.php` 命中该行 |
-| 3.3 | `docs/PROJECT-OVERVIEW.md` 多项指标已过期：迁移写「27 个」（实际 38 个文件）、技术规格写「39 份」（实际 42 份）、测试写「424 用例 / 1,829 断言 / 42~43 失败」（实际 812 / 4780 / 0）、`docs/report` 写「24 份」（实际 29 份）、`git ls-files frontend` 期望「1678」（实际 1679） | 逐条用 `find` / `wc` / `git ls-files` 实测 |
+| ~~3.1~~ | ~~插件 `phpunit.xml` 的 `failOn*` 三项未开~~ → **已解决（`ea72b13`）**：三项已补，并把该豁免的 `safety_exempt_allowed` 一并移除，让它进入 fail-closed。反向验证：摘掉一条即报 `[SAFETY-DRIFT]` exit=1 | 补前后 1043/3046/24 完全一致，无新增 risky/warning |
+| ~~3.2~~ | ~~`testing-guide.md` 目录树仍列已删除的 `bootstrap.php`~~ → **已解决（`ea72b13`）**：该行已删（当前状态型指南，不加注记） | `grep -c bootstrap.php` 现为 0 |
+| ~~3.3~~ | ~~`PROJECT-OVERVIEW` 多项指标过期~~ → **已解决（`ea72b13`）**：按文档自身复现命令重算后回填 8 处（后端 PHP 434/102217、迁移 38、测试 812/4780/0、技术规格 42、Critical 7、文档质量 22、plan 12、report 29、frontend 1679）。另该文档还有 10 处过期（第 12/183/189/190/127/146/129/128/133/241 行）**未在本次授权内**，已单列在交付报告里 | 逐条实测 |
 | 3.4 | 根 `.gitignore` 里 `/frontend/node_modules`、`/frontend/dist`、`/frontend/.turbo`、`/frontend/.cache` 四条已被 `frontend/.gitignore` 覆盖，在本文件里是功能死码 | 保留的理由是「将来有人删掉 `frontend/.gitignore` 时不改变行为」；若要清理需评估该前提 |
 | 3.5 | `/storage/` 与 `/tmp/` 是 root-anchored 且仅匹配目录：根下一个名叫 `storage` 的**文件**不被忽略 | 路径矩阵实测 |
 | 3.6 | `check-raw-sql-tenant.php` / `check-rawsql-safety.php` / `check-env-production.php` 基线即 exit=1，均**不在**十道门禁内 | 前两者是人工审查工具，最后一个是生产配置预检（本地无 `.env.production`） |
