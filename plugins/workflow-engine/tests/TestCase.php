@@ -84,7 +84,7 @@ abstract class TestCase extends PHPUnitTestCase
 
                 // 事件服务
                 'processEventService' => \Alkaid\Workflow\Engine\event\ProcessEventService::class,
-                'schedulerProcessEventListener' => \Alkaid\Workflow\Engine\scheduling\SchedulerProcessEventListener::class,
+                'schedulerProcessEventListener' => \Alkaid\Workflow\Engine\scheduling\SchedulerIProcessEventListener::class,
 
                 // 数据访问层（测试实现）
                 'processDefineRepository' => \Alkaid\Workflow\Engine\Tests\Mock\MockProcessDefineRepository::class,

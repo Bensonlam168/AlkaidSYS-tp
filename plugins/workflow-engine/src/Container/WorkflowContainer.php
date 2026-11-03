@@ -27,7 +27,7 @@ use Alkaid\Workflow\Engine\parser\handler\CustomParser;
 use Alkaid\Workflow\Engine\parser\handler\WfSubProcessParser;
 use Alkaid\Workflow\Engine\event\ProcessEventService;
 use Alkaid\Workflow\Engine\scheduling\IScheduler;
-use Alkaid\Workflow\Engine\scheduling\SchedulerProcessEventListener;
+use Alkaid\Workflow\Engine\scheduling\SchedulerIProcessEventListener;
 use Psr\Container\ContainerInterface;
 
 /**
@@ -154,7 +154,7 @@ class WorkflowContainer
 
             // 事件服务
             'processEventService' => ProcessEventService::class,
-            'schedulerProcessEventListener' => SchedulerProcessEventListener::class,
+            'schedulerProcessEventListener' => SchedulerIProcessEventListener::class,
 
             // 调度器
             'scheduler' => $config['scheduler'] ?? IScheduler::class,

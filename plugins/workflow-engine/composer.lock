@@ -303,6 +303,12 @@
                 "url": "https://gitcode.com/motion-code/helper.git",
                 "reference": "d13e1d7715b02d87342419643094b53b2218adaf"
             },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/madong-code/helper/zipball/d13e1d7715b02d87342419643094b53b2218adaf",
+                "reference": "d13e1d7715b02d87342419643094b53b2218adaf",
+                "shasum": ""
+            },
             "require": {
                 "illuminate/collections": "*",
                 "php": ">=8.1"

@@ -92,7 +92,7 @@ class ServiceFactory
 
                 // 事件服务
                 'processEventService' => \Alkaid\Workflow\Engine\event\ProcessEventService::class,
-                'schedulerProcessEventListener' => \Alkaid\Workflow\Engine\scheduling\SchedulerProcessEventListener::class,
+                'schedulerProcessEventListener' => \Alkaid\Workflow\Engine\scheduling\SchedulerIProcessEventListener::class,
 
                 // 数据访问层（需要根据实际实现调整）
                 'processDefineRepository' => \Alkaid\Workflow\Engine\Integration\ProcessDefineRepository::class,
