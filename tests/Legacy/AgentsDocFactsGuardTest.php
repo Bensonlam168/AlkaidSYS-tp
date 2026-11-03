@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Tests\Legacy;
 
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Yaml\Exception\ParseException;
+use Symfony\Component\Yaml\Yaml;
 
 /**
  * 守卫：AGENTS.md 里「转述上游文件内部事实」的陈述一旦与实际漂移，必须立刻变红。
@@ -27,10 +29,14 @@ use PHPUnit\Framework\TestCase;
  *   A7 `TEMPLATE_REQUIRED_MIN_KEYS` 的「6」两处一致
  *
  * 约束：
- *   - **只读**：只 `file_get_contents` 本地文件，不写文件、不连库、不调外部命令；
- *   - 不解析 YAML 库（composer 里没有 symfony/yaml）：只认本仓库 workflow 实际使用的
- *     「顶层键 + 两空格缩进的 job id + 四空格缩进的 job 级键」这一种极简结构，
- *     遇到不能识别的写法一律报违规并要求人工确认，**不做猜测、不放宽成「非空即通过」**。
+ *   - **只读**：只 `file_get_contents` / `Yaml::parseFile` 读本地文件，不写文件、不连库、不调外部命令；
+ *   - workflow 一律交给 `symfony/yaml` **真解析**，不再靠「四空格缩进切片」猜结构：
+ *     那套文本切片的致命点是「一个 job 级键的缩进从四空格改成两空格，`needs:` 就被数成 0 处」
+ *     —— 于是 A6 静默放行（假绿，比假红危险得多）。缩进是排版，不是结构，结构只能由 YAML 解析器回答；
+ *   - ⚠️ `symfony/yaml` 是**仅为本守卫**引入的 require-dev 依赖（composer.json 里已注明），
+ *     不是「没人用的多余包」：删掉它，本文件的 workflow 断言就只剩字符串匹配；
+ *   - 解析失败（`ParseException`）必须转成**违规**而不是让用例 error：error 的语义是「守卫自己坏了」，
+ *     而守卫崩溃等于连合法 YAML 都拦不住 —— 见 `loadWorkflow()`。
  */
 final class AgentsDocFactsGuardTest extends TestCase
 {
@@ -74,6 +80,17 @@ final class AgentsDocFactsGuardTest extends TestCase
 
     /** A7：下限常量的当前值（脚本与文档都必须等于它） */
     private const EXPECTED_TEMPLATE_MIN_KEYS = 6;
+
+    /**
+     * workflow 的 YAML 解析结果缓存（键 = 相对仓库根的 workflow 路径）。
+     *
+     * 同一份 workflow 会被 A1（门禁表逐行 + 钉死清单）与 A6 反复读取，
+     * 缓存保证每个文件只解析一次。值为 null 表示「已经解析失败、违规也已报过」，
+     * 后续断言直接复用该结论，不再重复报同一条违规。
+     *
+     * @var array<string, array<string, mixed>|null>
+     */
+    private array $workflowCache = [];
 
     public function testAgentsDocFactsMatchUpstreamSources(): void
     {
@@ -137,16 +154,16 @@ final class AgentsDocFactsGuardTest extends TestCase
                 $row['gate']
             );
 
-            $yaml = self::readProjectFile($projectRoot, $workflowPath, $violations, 'A1 门禁表');
-            if ($yaml === null) {
+            $workflow = $this->loadWorkflow($projectRoot, $workflowPath, $violations, 'A1 门禁表');
+            if ($workflow === null) {
                 continue;
             }
 
             // ① 顶层 name
-            $actualWorkflowName = self::yamlTopLevelName($yaml);
+            $actualWorkflowName = self::workflowTopLevelName($workflow);
             if ($actualWorkflowName === null) {
                 $violations[] = $where . sprintf(
-                    ' 引用的 %s 里找不到顶层 `name:` 行 —— 该 workflow 缺 name（或被写成了无法识别的形态）；'
+                    ' 引用的 %s 里找不到顶层 `name:` —— 该 workflow 缺 name（或被写成了无法识别的形态）；'
                     . '请给 workflow 补顶层 name，并让 AGENTS.md 表格第 3 列与之一致。',
                     $workflowPath
                 );
@@ -161,23 +178,23 @@ final class AgentsDocFactsGuardTest extends TestCase
             }
 
             // ② job id 存在性
-            $jobBlock = self::yamlJobBlock($yaml, $row['jobId']);
-            if ($jobBlock === null) {
+            $job = self::workflowJobDefinition($workflow, $row['jobId']);
+            if ($job === null) {
                 $violations[] = $where . sprintf(
                     ' 第 4 列（job id）写的是「%s」，但 %s 的 `jobs:` 下没有这个 job id（现有 job：%s）—— '
                     . 'job id 改名/删除后必须同步表格第 4 列；job 不存在时该 required check 会永久停在 Expected，PR 无法合并。',
                     $row['jobId'],
                     $workflowPath,
-                    implode(' / ', self::yamlJobIds($yaml))
+                    implode(' / ', self::workflowJobIds($workflow))
                 );
                 continue;
             }
 
             // ③ job name（= GitHub 上显示的 check 名称）
-            $actualJobName = self::yamlJobName($jobBlock);
+            $actualJobName = self::workflowJobName($job);
             if ($actualJobName === null) {
                 $violations[] = $where . sprintf(
-                    ' 指向 %s 的 jobs.%s，但该 job 区块里没有 job 级 `name:`（四空格缩进）—— '
+                    ' 指向 %s 的 jobs.%s，但该 job 没有 job 级 `name:` 键 —— '
                     . '缺少 name 时 GitHub 退化成用 job id 当 check 名称，与表格第 5 列的「%s」不一致。'
                     . '请给该 job 补 `name:`，或按 job id 更新表格与分支保护。',
                     $workflowPath,
@@ -199,25 +216,25 @@ final class AgentsDocFactsGuardTest extends TestCase
 
         // 2) 钉死的 8 个 check：workflow 侧必须真的是这个名字（不依赖 AGENTS.md 写对）
         foreach (self::REQUIRED_GATES as $checkName => [$workflowPath, $jobId]) {
-            $yaml = self::readProjectFile($projectRoot, $workflowPath, $violations, 'A1 门禁表');
-            if ($yaml === null) {
+            $workflow = $this->loadWorkflow($projectRoot, $workflowPath, $violations, 'A1 门禁表');
+            if ($workflow === null) {
                 continue;
             }
 
-            $jobBlock = self::yamlJobBlock($yaml, $jobId);
-            if ($jobBlock === null) {
+            $job = self::workflowJobDefinition($workflow, $jobId);
+            if ($job === null) {
                 $violations[] = sprintf(
                     'A1 门禁表（钉死清单）：%s 的 `jobs:` 下找不到 job id「%s」（该 job 的 check 名称应为「%s」，现有 job：%s）—— '
                     . 'job 被删/改名会直接丢掉一个 required check，请恢复 job 或同步三处：分支保护 + AGENTS.md 表格 + 本测试的 REQUIRED_GATES。',
                     $workflowPath,
                     $jobId,
                     $checkName,
-                    implode(' / ', self::yamlJobIds($yaml))
+                    implode(' / ', self::workflowJobIds($workflow))
                 );
                 continue;
             }
 
-            $actualJobName = self::yamlJobName($jobBlock);
+            $actualJobName = self::workflowJobName($job);
             if ($actualJobName !== $checkName) {
                 $violations[] = sprintf(
                     'A1 门禁表（钉死清单）：%s 的 jobs.%s.name 实际是「%s」，但分支保护与 AGENTS.md 记录的都是「%s」—— '
@@ -714,49 +731,42 @@ final class AgentsDocFactsGuardTest extends TestCase
     {
         $violations = [];
 
-        // 按 workflow 缓存文本：backend-php-cs-fixer.yml 有 3 个 required job、migrations-check.yml 有 2 个，
-        // 同一份文件不必读三遍。
-        /** @var array<string, string|null> $yamlCache */
-        $yamlCache = [];
-
+        // 缓存交给 loadWorkflow()（按 workflow 路径缓存解析结果）：
+        // backend-php-cs-fixer.yml 有 3 个 required job、migrations-check.yml 有 2 个，
+        // 同一份文件不必解析三遍。
         foreach (self::REQUIRED_GATES as $checkName => [$workflowPath, $jobId]) {
-            if (!array_key_exists($workflowPath, $yamlCache)) {
-                $yamlCache[$workflowPath] = self::readProjectFile(
-                    $projectRoot,
-                    $workflowPath,
-                    $violations,
-                    'A6 required check 的 needs'
-                );
-            }
-
-            $yaml = $yamlCache[$workflowPath];
-            if ($yaml === null) {
+            $workflow = $this->loadWorkflow($projectRoot, $workflowPath, $violations, 'A6 required check 的 needs');
+            if ($workflow === null) {
                 continue;
             }
 
-            $jobBlock = self::yamlJobBlock($yaml, $jobId);
-            if ($jobBlock === null) {
-                // 定位不到 job 时**不许静默跳过**：解析不出区块就核对不了 needs，静默通过等于「非空即通过」。
+            $job = self::workflowJobDefinition($workflow, $jobId);
+            if ($job === null) {
+                // 定位不到 job 时**不许静默跳过**：解析不出 job 就核对不了 needs，静默通过等于「非空即通过」。
                 // A1 也会报同一条（那里同样给出 check 名称），这里再报一次是为了让「A6 到底守住了没有」自成一体。
                 $violations[] = sprintf(
                     'A6 required check 的 needs：%s 的 `jobs:` 下找不到 job id「%s」（该 job 的 check 名称应为「%s」，现有 job：%s）—— '
-                    . 'job 被改名/删除（或被写成本守卫识别不了的形态）时，这里就核对不了它有没有 `needs:`。'
+                    . 'job 被改名/删除时，这里就核对不了它有没有 `needs:`。'
                     . '请恢复 job 或同步更新本测试的 REQUIRED_GATES；不要靠删掉这条断言来变绿。',
                     $workflowPath,
                     $jobId,
                     $checkName,
-                    implode(' / ', self::yamlJobIds($yaml))
+                    implode(' / ', self::workflowJobIds($workflow))
                 );
                 continue;
             }
 
-            $count = self::yamlJobKeyCount($jobBlock, 'needs');
-            if ($count === 0) {
+            // 「有没有 needs」是**键是否存在**，不是行数：
+            // `needs: phpunit`（字符串）只占一行、`needs: [a, b]`（数组）也是一行，
+            // 靠数行数/数出现次数会把第一种写法整个漏掉，所以直接看键。
+            if (!array_key_exists('needs', $job)) {
                 continue;
             }
 
+            $needs = (string) json_encode($job['needs'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
             $violations[] = sprintf(
-                'A6 required check 的 needs：「%s」这个 required check 对应的 %s 的 jobs.%s 区块里有 %d 处 job 级 `needs:` —— '
+                'A6 required check 的 needs：「%s」这个 required check 对应的 %s 的 jobs.%s 显式声明了 job 级 `needs:`（值为 %s）—— '
                 . 'required 的语义是「必须出现且 success」：一挂 needs，上游 job 一失败/被跳过，jobs.%s 就变 skipped，'
                 . '而 skipped 不等于 success，于是该 check 永久停在 pending，PR 永远合不进去'
                 . '（与 R40 修掉的「带 `paths:` 的 required check 永久 `Expected`」是同一类故障）。'
@@ -765,7 +775,7 @@ final class AgentsDocFactsGuardTest extends TestCase
                 $checkName,
                 $workflowPath,
                 $jobId,
-                $count,
+                $needs,
                 $jobId,
                 $jobId
             );
@@ -980,115 +990,161 @@ final class AgentsDocFactsGuardTest extends TestCase
     }
 
     /**
-     * 取 workflow 的顶层 `name:`（文件里第一条以 `name:` 开头的行）。
+     * 读取并解析一份 workflow YAML（按文件缓存）；失败时向 $violations 追加一条可操作信息并返回 null。
      *
-     * 顶层 name 一定顶格，`on:` / `jobs:` 的子键都至少两空格缩进，因此 `^name:` 是安全的判定。
+     * 为什么要真解析：`name:` / `needs:` 的**归属**由 YAML 结构决定，与缩进列数无关。
+     * 旧实现按「job id 两空格、job 级键一律四空格」切文本，一旦某个 job 的键改成两空格缩进，
+     * `needs:` 就被数成 0 处 → A6 静默放行（假绿，比假红危险得多）。真解析之后，
+     * 同一份文件里的缩进是两格、四格还是 flow style，结论都一样。
+     *
+     * 解析失败必须**变违规**而不是把异常抛出去：抛出去会让用例 error（error 的语义是「守卫自己坏了」），
+     * 而守卫崩溃等于连合法 YAML 都拦不住 —— 那正好取消了本守卫存在的理由。
+     *
+     * @param array<int, string> $violations
+     * @return array<string, mixed>|null null = 读不到 / 解析失败（原因已进 $violations）
      */
-    private static function yamlTopLevelName(string $yaml): ?string
-    {
-        foreach (preg_split('/\R/u', $yaml) ?: [] as $line) {
-            if (preg_match('/^name:\s*(.+?)\s*$/', $line, $matches) === 1) {
-                return trim($matches[1], "`'\"");
-            }
+    private function loadWorkflow(
+        string $projectRoot,
+        string $workflowPath,
+        array &$violations,
+        string $group
+    ): ?array {
+        // 命中缓存直接复用结论：backend-php-cs-fixer.yml 会被 A1（逐行 + 钉死清单）与 A6 读三遍，
+        // 失败过的文件也只在第一次报违规（重复报同一条会把真正的第一条淹掉）。
+        if (array_key_exists($workflowPath, $this->workflowCache)) {
+            return $this->workflowCache[$workflowPath];
         }
 
-        return null;
-    }
+        $fullPath = $projectRoot . DIRECTORY_SEPARATOR . $workflowPath;
+        if (!is_file($fullPath)) {
+            $violations[] = sprintf(
+                '%s：文件不存在 —— %s。本守卫断言的事实全部来自该文件，被移动/改名后必须同步更新本测试与 AGENTS.md。',
+                $group,
+                $workflowPath
+            );
 
-    /**
-     * 把 workflow 拆成 `job id => job 区块`。
-     *
-     * 只认本仓库的实际写法：`jobs:` 顶格，job id 两空格缩进且独占一行，job 级键四空格缩进。
-     * 引号包裹的 job id、flow style（`jobs: {a: {...}}`）一律识别不出 —— 那时本守卫会报
-     * 「找不到 job id」并要求人工确认，而不是静默放过。
-     *
-     * @return array<string, string>
-     */
-    private static function splitYamlJobs(string $yaml): array
-    {
-        $jobs = [];
-        $currentId = null;
-        $buffer = [];
-        $inJobs = false;
-
-        $flush = static function () use (&$jobs, &$currentId, &$buffer): void {
-            if ($currentId !== null) {
-                $jobs[$currentId] = implode("\n", $buffer);
-            }
-            $currentId = null;
-            $buffer = [];
-        };
-
-        foreach (preg_split('/\R/u', $yaml) ?: [] as $line) {
-            if (!$inJobs) {
-                if (preg_match('/^jobs:\s*$/', $line) === 1) {
-                    $inJobs = true;
-                }
-                continue;
-            }
-
-            if (preg_match('/^  ([A-Za-z0-9_-]+):\s*$/', $line, $matches) === 1) {
-                $flush();
-                $currentId = $matches[1];
-                $buffer = [$line];
-                continue;
-            }
-
-            if ($currentId !== null) {
-                $buffer[] = $line;
-            }
+            return $this->workflowCache[$workflowPath] = null;
         }
 
-        $flush();
+        try {
+            $parsed = Yaml::parseFile($fullPath);
+        } catch (ParseException $exception) {
+            $violations[] = sprintf(
+                '%s：%s 不是合法 YAML，解析失败：%s —— '
+                . '写坏的 workflow 在 GitHub 上整个文件一次都不会触发，本守卫要核对的 check 名称与 job 结构随之全部作废。'
+                . '改哪里：修 workflow 的 YAML 语法（重点看缩进、未闭合的 `[` / `{` / 引号、块标量 `|` / `>` 的缩进），'
+                . '修好后本条会自动消失；不要为了让守卫变绿而删掉断言。',
+                $group,
+                $workflowPath,
+                $exception->getMessage()
+            );
 
-        return $jobs;
+            return $this->workflowCache[$workflowPath] = null;
+        } catch (\Throwable $exception) {
+            // 兜底：ParseException 之外的异常（YAML 组件大版本改了 API、文件级 IO 问题等）。
+            // 同样降级成违规 —— 守卫绝不能以 error 收场。
+            $violations[] = sprintf(
+                '%s：%s 的 YAML 解析抛出非预期异常（%s：%s）—— '
+                . 'parseFile() 正常只抛 ParseException，出现别的异常说明解析链路本身变了，请人工确认后再继续依赖本断言。',
+                $group,
+                $workflowPath,
+                get_class($exception),
+                $exception->getMessage()
+            );
+
+            return $this->workflowCache[$workflowPath] = null;
+        }
+
+        // 顶层必须是键值映射：GitHub Actions 只接受 `name:` / `on:` / `jobs:` 这种结构。
+        // 顶层被写成列表（`- xxx`）或单个标量时按 `jobs` 取键必然取不到，与其静默报「没有 job」，
+        // 不如直接说清是顶层结构坏了。
+        if (!is_array($parsed) || ($parsed !== [] && array_is_list($parsed))) {
+            $violations[] = sprintf(
+                '%s：%s 的顶层不是键值映射（实际解析成 %s）—— '
+                . 'workflow 顶层必须是 `name:` / `on:` / `jobs:` 这样的映射，写成列表或标量时无法按 job id 取键。'
+                . '改哪里：修 workflow 顶层结构（常见成因是顶层多缩进了一层，或漏了键名）。',
+                $group,
+                $workflowPath,
+                get_debug_type($parsed)
+            );
+
+            return $this->workflowCache[$workflowPath] = null;
+        }
+
+        return $this->workflowCache[$workflowPath] = $parsed;
     }
 
     /**
-     * 取某个 job 的 YAML 区块文本。
-     */
-    private static function yamlJobBlock(string $yaml, string $jobId): ?string
-    {
-        $jobs = self::splitYamlJobs($yaml);
-
-        return $jobs[$jobId] ?? null;
-    }
-
-    /**
-     * 取某个 workflow 的全部 job id（仅用于失败信息里提示「现有 job 有哪些」）。
+     * 取 workflow 的顶层 `name:`；缺失或不是字符串/数字时返回 null。
      *
+     * ⚠️ 关于 GitHub Actions 的顶层 `on:`：用 symfony/yaml 7.4 实测，它**仍被解析成字符串键 `'on'`**
+     * （值为映射），没有变成 YAML 1.1 语义下的布尔 `true`（那样 PHP 数组键会变成整数 1）。
+     * 本守卫的 A1 / A6 只读 `name` / `jobs`，不受这一点影响；但将来若有断言要按 `on` 取键，
+     * 换解析器或升大版本时必须重新实测，否则会静默拿到 null 而不是报错。
+     *
+     * @param array<string, mixed> $workflow
+     */
+    private static function workflowTopLevelName(array $workflow): ?string
+    {
+        return self::yamlScalarText($workflow['name'] ?? null);
+    }
+
+    /**
+     * 取 workflow 的全部 job id（仅用于失败信息里提示「现有 job 有哪些」）。
+     *
+     * @param array<string, mixed> $workflow
      * @return array<int, string>
      */
-    private static function yamlJobIds(string $yaml): array
+    private static function workflowJobIds(array $workflow): array
     {
-        return array_keys(self::splitYamlJobs($yaml));
-    }
-
-    /**
-     * 取 job 区块里的第一条 job 级 `name:`（四空格缩进）。
-     *
-     * 更深的 `name:`（例如 `steps[].name:` 是六空格、`artifacts` 里的 name 是十空格）不会被匹配。
-     */
-    private static function yamlJobName(string $block): ?string
-    {
-        foreach (preg_split('/\R/u', $block) ?: [] as $line) {
-            if (preg_match('/^ {4}name:\s*(.+?)\s*$/', $line, $matches) === 1) {
-                return trim($matches[1], "`'\"");
-            }
+        $jobs = $workflow['jobs'] ?? null;
+        if (!is_array($jobs)) {
+            return [];
         }
 
-        return null;
+        return array_map(static fn (int|string $jobId): string => (string) $jobId, array_keys($jobs));
     }
 
     /**
-     * 统计 job 区块内某 job 级键的出现次数（四空格缩进）。
+     * 取某个 job 的 job 级键值映射；`jobs:` 缺失、不是映射或没有该 job id 时返回 null。
      *
-     * 刻意只认四空格：本仓库所有 workflow 的 job 级键都是四空格，而注释里的
-     * `# ... needs: [...]` 以 `#` 开头不会被匹配 —— 那种「写成注释的历史说明」不该算违规。
+     * job id 存在但定义不是映射时（例如 `phpunit: PHPUnit Tests`，GitHub Actions 本身也不接受）
+     * 返回空数组：这种 job 必然没有 `name:`，A1 的 name 断言会把它判红，这里不做二次猜测。
+     *
+     * @param array<string, mixed> $workflow
+     * @return array<string, mixed>|null
      */
-    private static function yamlJobKeyCount(string $block, string $key): int
+    private static function workflowJobDefinition(array $workflow, string $jobId): ?array
     {
-        return self::countMatchingLines($block, '/^ {4}' . preg_quote($key, '/') . ':/');
+        $jobs = $workflow['jobs'] ?? null;
+        if (!is_array($jobs) || !array_key_exists($jobId, $jobs)) {
+            return null;
+        }
+
+        $job = $jobs[$jobId];
+
+        return is_array($job) ? $job : [];
+    }
+
+    /**
+     * 取 job 的 job 级 `name:`；缺失或不是字符串/数字时返回 null。
+     *
+     * 真解析之后不必再区分缩进层级：`steps[].name` / `artifacts.name` 属于**别的路径**，
+     * 根本不会出现在 job 这一层的键里。
+     *
+     * @param array<string, mixed> $job
+     */
+    private static function workflowJobName(array $job): ?string
+    {
+        return self::yamlScalarText($job['name'] ?? null);
+    }
+
+    /**
+     * 把 YAML 解析出的标量转成字符串；null / 布尔 / 数组一律返回 null（宁可报「没有 name」，也不猜）。
+     */
+    private static function yamlScalarText(mixed $value): ?string
+    {
+        return is_string($value) || is_int($value) || is_float($value) ? (string) $value : null;
     }
 
     /**

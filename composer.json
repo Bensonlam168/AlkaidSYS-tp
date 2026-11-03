@@ -46,7 +46,8 @@
         "mockery/mockery": "^1.6",
         "phpstan/phpstan": "^2.1",
         "friendsofphp/php-cs-fixer": "^3.89",
-        "fakerphp/faker": "^1.24"
+        "fakerphp/faker": "^1.24",
+        "symfony/yaml": "^7.4"
     },
     "autoload": {
         "psr-4": {
