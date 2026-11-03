@@ -113,7 +113,8 @@ class ServiceFactory
             'dynamic_dependencies' => [],
 
             'extension_parameters' => [
-                'debug' => env('APP_DEBUG', false),
+                // 这里的 env() 有守卫，原因见 resolveDebugFlag() 的注释
+                'debug' => self::resolveDebugFlag(),
                 'tenant_id' => null, // 多租户ID，将由请求上下文动态设置
                 'database_prefix' => 'alkaid_',
                 'cache_driver' => 'redis',
@@ -128,6 +129,45 @@ class ServiceFactory
 
         // 深度合并配置
         return array_replace_recursive($defaultConfig, $config);
+    }
+
+    /**
+     * 解析调试开关（全局 env() 的守卫式兜底）
+     *
+     * 为什么需要这个守卫：
+     * ThinkPHP 的全局助手函数 env() 定义在 vendor/topthink/framework/src/helper.php，
+     * 而该包的 composer.json 里 autoload.files 为空 —— 它由主应用引导阶段
+     * （think\App::initialize() 里的 include_once）载入，composer 并不会自动加载它。
+     * 插件被当作独立包运行（自带 vendor 与 autoloader，例如插件自身的 PHPUnit）时，
+     * 全局命名空间里没有 env()，直接调用会抛 \Error；而 tests/TestCase.php 里
+     * catch (\Exception $e) 接不住 \Error（Error 不继承 Exception），错误会直接冒到 PHPUnit。
+     * 所以这里先探测函数是否存在：宿主应用内行为完全不变，独立运行时退化为读环境变量。
+     *
+     * 注意：不能用 autoload.files 注册全局 env() polyfill —— 那会与 ThinkPHP helper.php
+     * 里的同名函数冲突，谁先加载谁生效，属于隐埋的雷。
+     *
+     * 取值顺序：先 $_ENV 再 getenv()。PHPUnit 的 <env> 注入与 php.ini 里 variables_order
+     * 含 E 时（本仓库容器即 EGPCS）都写进 $_ENV，而 putenv() 与容器/Shell 环境只进 getenv()，
+     * 两者合起来取才不会漏。
+     *
+     * @return bool
+     */
+    private static function resolveDebugFlag(): bool
+    {
+        // 宿主应用内：与改造前完全一致，仍走 ThinkPHP 的 env()
+        if (function_exists('env')) {
+            return (bool) env('APP_DEBUG', false);
+        }
+
+        // 插件独立运行时：读环境变量，未设置即视为 false
+        $value = $_ENV['APP_DEBUG'] ?? getenv('APP_DEBUG');
+
+        if ($value === false || $value === null) {
+            return false;
+        }
+
+        // 环境变量是字符串，'false' / '0' / '' 直接 (bool) 会被当成 true，必须按布尔语义解析
+        return filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? false;
     }
 
     /**

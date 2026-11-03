@@ -37,9 +37,9 @@
                WORKFLOW_TENANT_ENABLED / WORKFLOW_DEBUG 这 3 条 WORKFLOW_*，
                在插件 src/ 里一遍都读不到（src/ 唯一的 env 调用是
                src/Container/ServiceFactory.php 的 env('APP_DEBUG', false)）。
-               全插件唯一提到它们的是 tests/bootstrap.php，而本文件的 bootstrap 指向
-               vendor/autoload.php，那份 bootstrap **从未被载入**；何况它里面也只是
-               给 $_ENV 赋值，并不会去读 PHPUnit 注入的 env。
+               全插件唯一提到它们的是 tests/bootstrap.php —— 那份 bootstrap 因本文件的
+               bootstrap 指向 vendor/autoload.php 而**从未被载入**，已于 2026-11-02 删除；
+               何况它里面也只是给 $_ENV 赋值，并不会去读 PHPUnit 注入的 env。
                即：这 9 条声明是死配置，删掉不改变任何用例的行为。
             2. 那套 DB 值与本仓库真实测试库**三处不符**，留着只会误导下一个读配置的人：
                主机名 写的是 127.0.0.1，但 alkaid-backend 容器里 127.0.0.1:3306 是

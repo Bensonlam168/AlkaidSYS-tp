@@ -27,6 +27,13 @@
 #### 1.2 测试引导文件
 **文件**: `tests/bootstrap.php`
 
+> ⚠️ **2026-11-02 注记（记录保留原样，勿据此判断现状）**
+>
+> 该文件（231 行）已于 2026-11-02 删除，且它**从未被 PHPUnit 载入**：
+> `phpunit.xml` 的 `bootstrap` 指向 `vendor/autoload.php`，`composer.json` 的 `autoload-dev`
+> 也只有 `psr-4`、没有 `files` 条目。下面列出的「功能特性」与「工具函数」是当时的实现记录，
+> 其中 6 个全局函数在插件 `src/` 与 `tests/` 里的真实调用数为 0。
+
 **功能特性**:
 - 测试环境初始化
 - Composer自动加载

@@ -169,6 +169,14 @@ plugins/workflow-engine/
 - `tests/TestCase.php` - 测试基类
 - `tests/bootstrap.php` - 测试引导文件
 
+> ⚠️ **2026-11-02 注记（清单保留原样，勿据此判断现状）**
+>
+> 上面最后一项 `tests/bootstrap.php`（231 行）已于 2026-11-02 删除。
+> 它其实是**死文件**：本插件 `phpunit.xml` 的 `bootstrap` 指向 `vendor/autoload.php`，
+> `composer.json` 的 `autoload-dev` 只有 `psr-4`、没有 `files` 条目，因此它从未被载入过；
+> 它定义的 6 个全局函数（`createTestWorkflowDefinition()` 等）在 `src/` 与 `tests/` 中
+> 真实调用数为 0。本清单记录的是 2025-12-16 当时的产出，故保留不删。
+
 **Mock对象**:
 - `tests/Mock/MockProcessDefineRepository.php` - 定义仓储Mock
 - `tests/Mock/MockProcessInstanceRepository.php` - 实例仓储Mock
