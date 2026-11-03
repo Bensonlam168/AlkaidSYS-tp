@@ -123,6 +123,17 @@ class WorkflowContainerTest extends TestCase
 
     /**
      * 测试服务不存在的情况
+     *
+     * 契约说明（为什么断言「返回 null」而不是「抛异常」）：
+     * - 已初始化容器的 get() 走 ServiceContext::find()，其既有语义就是「找不到返回 null」
+     *   （见 src/Core/ServiceContext.php:70-73）；
+     * - 引擎内部所有消费者都按这个口径判空：WorkflowContainer::getNodeParser() 先 has() 再 get()，
+     *   ProcessServiceTrait 的 processXxxService() 返回类型均为 ?IProcessXxxService，
+     *   ModelParser 用「!= null」判断；改实现去抛异常会让 has()/get() 存在性口径分裂，
+     *   且所有已用 has() 守住的调用点都要再加 try/catch；
+     * - 未初始化态的 get() 抛异常行为另有 testGetOnUninitializedContainerThrows 覆盖。
+     * 原用例把「工作流容器尚未初始化」这条**未初始化态**的消息挂在**已初始化**容器上断言，
+     * 任何实现都不可能让它成立，属于用例自身矛盾，故按实际契约修正。
      */
     public function testNonExistentService(): void
     {
@@ -131,10 +142,25 @@ class WorkflowContainerTest extends TestCase
         // 不存在的服务
         $this->assertFalse($container->has('nonexistent_service'));
 
-        // 尝试获取不存在的服务应该抛出异常
+        // 已初始化的容器：未知服务按「缺失」处理，返回 null 而非抛异常
+        $this->assertNull($container->get('nonexistent_service'));
+    }
+
+    /**
+     * 测试未初始化容器上调用 get() 的错误处理
+     *
+     * 补上原用例真正想表达的语义：只有**未初始化**时 get() 才抛「工作流容器尚未初始化」。
+     * 该分支此前没有任何用例覆盖。
+     */
+    public function testGetOnUninitializedContainerThrows(): void
+    {
+        $container = new WorkflowContainer();
+
+        $this->assertFalse($container->isInitialized());
+
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('工作流容器尚未初始化');
-        $container->get('nonexistent_service');
+        $container->get('any_service');
     }
 
     /**
