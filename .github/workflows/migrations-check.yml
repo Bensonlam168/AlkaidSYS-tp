@@ -48,8 +48,13 @@ name: Migrations Check
 #   事故只以「后台 403 / 2002」的形式暴露。
 # 这类状态用单元测试、静态检查都抓不到，必须「真建一遍库 → 比对迁移意图与库里的实际行」。
 # 所以 job ② 会：
-#   起 MySQL 8.0 service → composer install → 写 .env → php think migrate:run →
-#   php scripts/check-migration-data.php --strict（**不带** --no-db，即真实比对）
+#   起 MySQL + Redis service → composer install --no-scripts → 写 .env →
+#   php think service:discover（显式，等价于被 --no-scripts 跳过的 post-autoload-dump）→
+#   php think migrate:run → php scripts/check-migration-data.php --strict（**不带** --no-db，即真实比对）
+#
+# ⚠️ 顺序不能倒：composer install **不得**启动应用（故加 --no-scripts），
+#   应用第一次启动必须在写 .env 之后。反过来的话 env('REDIS_HOST') 会回落到
+#   docker-compose 的服务名 'redis'，runner 上不可解析，安装期即失败。
 #
 # ⚠️ 必须同时起 **redis** service：`config/session.php` 的 store 是 redis，
 #    `app/provider/RedisHealthCheckService::boot()` 会在**每次 App::initialize()** 做一次读写自检，
@@ -166,8 +171,19 @@ jobs:
 
       # 迁移要经过 think\App::initialize()，因此必须有 vendor/ 与 .env；
       # 与 backend-php-cs-fixer.yml 的 phpunit job 保持同一套安装参数（含忽略 swoole 扩展）。
-      - name: Install dependencies
-        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole
+      #
+      # `--no-scripts` 不能省：composer.json 的 post-autoload-dump 会执行
+      # `php think service:discover`，那是**应用启动**；而安装发生在写 .env 之前，
+      # 此时 env('REDIS_HOST') 回落默认值 'redis'（docker-compose 的服务名），
+      # runner 上不可解析 → RedisHealthCheckService::boot() 抛异常 → 安装失败。
+      # 实测 CI 日志（修复前）：
+      #   Redis health check failed (host=redis, port=6379):
+      #     getaddrinfo for redis failed: Temporary failure in name resolution
+      #   Script @php think service:discover handling the post-autoload-dump event
+      #     returned with error code 1
+      # 服务发现在「写 .env 之后」显式执行（见下一步）。
+      - name: Install dependencies (no scripts)
+        run: composer install --prefer-dist --no-progress --no-interaction --ignore-platform-req=ext-swoole --no-scripts
 
       - name: Create .env for the service containers
         # 为什么不用 `sed -i 's/DB_HOST=.*/..'`：`.env.example` 的键值行**带空格**
@@ -189,6 +205,12 @@ jobs:
           grep -qx 'REDIS_HOST = 127.0.0.1' .env
           # .env 必须能被 parse_ini_file 解析（注释里的半角括号/等号会让整份文件静默失效）
           php -r 'var_dump(parse_ini_file(".env", true, INI_SCANNER_RAW) !== false);' | grep -qx 'bool(true)'
+
+      # 对应 post-autoload-dump 里被 --no-scripts 跳过的 `php think service:discover`。
+      # 放在 .env 之后：此刻 DB_HOST / REDIS_HOST 都已是 127.0.0.1，Redis service 也已 healthy。
+      # 它同时是启动自检 —— REDIS_HOST 写错时以非 0 退出，而不是拖到 migrate:run 才暴露。
+      - name: Discover services (explicit, after .env)
+        run: php think service:discover
 
       - name: Wait for MySQL and Redis to be ready
         run: |
