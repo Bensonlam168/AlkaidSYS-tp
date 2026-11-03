@@ -1,6 +1,10 @@
-# 前端CI/CD工作流
+# 前端 CI/CD 工作流
 name: Frontend CI/CD
 
+# ⚠️ 本工作流带 paths: ['frontend/**'] 过滤：只改后端或其他目录的 PR 根本不会触发它。
+#    因此**绝不要把本工作流里的任何 check 设为 required status check** ——
+#    required 的语义是「必须出现且为 success」，一个压根不出现的 check 会让 PR 永久停在
+#    "Expected — Waiting for status to be reported"，再也无法合并（教训见 AGENTS.md R40）。
 on:
   pull_request:
     branches: [ main, develop ]
@@ -11,218 +15,189 @@ on:
 
 # 环境变量
 env:
-  NODE_VERSION: '18'
-  PNPM_VERSION: '9.15.5'
+  # 与 frontend/.node-version（22.1.0）对齐，同时满足 frontend/package.json 的 engines.node（>=20.10.0）。
+  # 原值 '18' 既低于 engines 下限，也与 .node-version 差了两个大版本。
+  NODE_VERSION: '22.1.0'
+  # 原 PNPM_VERSION（'9.15.5'）已删除：pnpm 版本改由 pnpm/action-setup 读
+  # frontend/package.json 的 packageManager（pnpm@10.14.0）决定，避免「两处版本各说一套」。
 
 jobs:
   # 前端代码质量检查
   frontend-quality:
     name: 前端代码质量检查
     runs-on: ubuntu-latest
-    
+    defaults:
+      run:
+        working-directory: frontend
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-      
-      - name: 设置Node.js环境
+
+      # 顺序不能反：setup-node 的 cache: 'pnpm' 内部要执行 pnpm store path 去定位缓存目录，
+      # 此时 pnpm 必须已经装好并在 PATH 上。
+      #
+      # 这里只给 package_json_file、**不给 version**，原因：本仓库根 package.json 的
+      # packageManager 是 pnpm@9.15.5，而 frontend/package.json 是 pnpm@10.14.0。
+      # 若显式写 version 又沿用默认的 package_json_file: package.json（仓库根），
+      # action 会直接抛 "Multiple versions of pnpm specified" 并失败；
+      # 交给 frontend 的 packageManager 做唯一真相源即可，杜绝两处版本冲突。
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      # 原来这里写的是 cache: 'npm' —— 本仓库是 pnpm monorepo，只有 frontend/pnpm-lock.yaml，
+      # 于是 setup-node 报 "Dependencies lock file is not found ... Supported file patterns:
+      # package-lock.json, npm-shrinkwrap.json, yarn.lock" 直接失败（本次修的正是它）。
+      - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      
-      - name: 安装pnpm
-        run: |
-          corepack enable
-          pnpm --version
-      
-      - name: 缓存pnpm依赖
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pnpm-store
-            frontend/node_modules
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-      
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # 原「缓存pnpm依赖」那段 actions/cache（~/.pnpm-store + frontend/node_modules）已删除：
+      # ① cache: 'pnpm' 已在 setup-node 里缓存 pnpm store，手工再缓存一遍没有收益；
+      # ② 缓存 node_modules 在 pnpm workspace 里是反模式 —— 里面是指向 store 的软链接，
+      #    跨机器恢复后软链悬空，比不缓存更糟。
       - name: 安装依赖
-        run: |
-          cd frontend
-          pnpm install --frozen-lockfile
-      
-      - name: ESLint检查
-        run: |
-          echo "🔍 执行ESLint检查..."
-          cd frontend
-          pnpm lint
-          if [ $? -ne 0 ]; then
-            echo "❌ ESLint检查失败"
-            exit 1
-          fi
-          echo "✅ ESLint检查通过"
-      
-      - name: Prettier格式检查
-        run: |
-          echo "🎨 执行Prettier格式检查..."
-          cd frontend
-          pnpm prettier --check .
-          if [ $? -ne 0 ]; then
-            echo "❌ Prettier格式检查失败"
-            exit 1
-          fi
-          echo "✅ Prettier格式检查通过"
-      
-      - name: Stylelint检查
-        run: |
-          echo "🎨 执行Stylelint检查..."
-          cd frontend
-          pnpm stylelint "**/*.{vue,css,less,scss}"
-          if [ $? -ne 0 ]; then
-            echo "❌ Stylelint检查失败"
-            exit 1
-          fi
-          echo "✅ Stylelint检查通过"
-      
-      - name: TypeScript类型检查
-        run: |
-          echo "📝 执行TypeScript类型检查..."
-          cd frontend
-          pnpm typecheck
-          if [ $? -ne 0 ]; then
-            echo "❌ TypeScript类型检查失败"
-            exit 1
-          fi
-          echo "✅ TypeScript类型检查通过"
+        run: pnpm install --frozen-lockfile
+
+      # pnpm lint = vsh lint，一次并行跑三条检查（见 frontend/scripts/vsh/src/lint/index.ts）：
+      #   eslint . --cache
+      #   prettier . --ignore-unknown --check --cache
+      #   stylelint "**/*.{vue,css,less,scss}" --cache
+      # 所以原来独立的「Prettier格式检查」与「Stylelint检查」两步是冗余的，已删除
+      # （而且原写法 `pnpm prettier ...` / `pnpm stylelint ...` 并不是声明的脚本，语义也不对）。
+      - name: 代码检查（ESLint + Prettier + Stylelint）
+        run: pnpm lint
+
+      # 原「TypeScript类型检查」步骤已删除：它跑的 `pnpm typecheck` 在 frontend/package.json
+      # 里并不存在（真实入口是 check:type = turbo run typecheck，且只有 apps/web-* 与
+      # playground 声明了 typecheck）。本次只做「消灭不存在的命令」，不新增门禁 ——
+      # 新增的 check 必须先在真实 CI 上验证为绿才有意义。
 
   # 前端单元测试
   frontend-tests:
     name: 前端单元测试
     runs-on: ubuntu-latest
-    
+    defaults:
+      run:
+        working-directory: frontend
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-      
-      - name: 设置Node.js环境
+
+      # pnpm 引导写法与 frontend-quality 一致（详见该 job 的注释）
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      
-      - name: 安装pnpm
-        run: |
-          corepack enable
-          pnpm --version
-      
-      - name: 缓存pnpm依赖
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pnpm-store
-            frontend/node_modules
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-      
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # 原「缓存pnpm依赖」的 actions/cache 已删除，理由同 frontend-quality
+
       - name: 安装依赖
-        run: |
-          cd frontend
-          pnpm install --frozen-lockfile
-      
+        run: pnpm install --frozen-lockfile
+
       - name: 运行单元测试
-        run: |
-          echo "🧪 运行前端单元测试..."
-          cd frontend
-          pnpm test:unit
-          if [ $? -ne 0 ]; then
-            echo "❌ 前端单元测试失败"
-            exit 1
-          fi
-          echo "✅ 前端单元测试通过"
-      
+        run: pnpm test:unit
+
+      # 覆盖率上传改成「尽力而为」（fail_ci_if_error: false），依据：
+      # ① 仓库里没有任何 CODECOV_TOKEN 的引用（.github 下唯一命中是 frontend/.github/workflows/ci.yml
+      #    里被注释掉的上游残留），公共仓库无 token 时上传是否成功不由本仓库掌控；
+      # ② test:unit = vitest run --dom，未开 --coverage，frontend/coverage 根本不会生成，
+      #    上传目标目录不存在。
+      # 两件事都与「单元测试是否通过」无关，让它们把 job 染色（fail_ci_if_error: true）
+      # 等于用一个不相干的信号否定测试结果。
       - name: 上传测试覆盖率
         uses: codecov/codecov-action@v4
         with:
           directory: frontend/coverage
           flags: frontend
           name: frontend-coverage
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
   # 前端构建
   frontend-build:
     name: 前端构建
     runs-on: ubuntu-latest
     needs: [frontend-quality, frontend-tests]
-    
+    defaults:
+      run:
+        working-directory: frontend
+
     strategy:
       matrix:
+        # 四个都对应真实存在的应用：apps/web-antd、web-naive、web-tdesign、web-ele
+        # （apps/backend-mock 不是应用，故不在矩阵里）
         app: [antd, naive, tdesign, ele]
-    
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-      
-      - name: 设置Node.js环境
+
+      # pnpm 引导写法与 frontend-quality 一致（详见该 job 的注释）
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-      
-      - name: 安装pnpm
-        run: |
-          corepack enable
-          pnpm --version
-      
-      - name: 缓存pnpm依赖
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pnpm-store
-            frontend/node_modules
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-      
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # 原「缓存pnpm依赖」的 actions/cache 已删除，理由同 frontend-quality
+
       - name: 安装依赖
-        run: |
-          cd frontend
-          pnpm install --frozen-lockfile
-      
+        run: pnpm install --frozen-lockfile
+
       - name: 构建前端应用
         run: |
           echo "🔨 构建前端应用 (${{ matrix.app }})..."
-          cd frontend
           pnpm build:${{ matrix.app }}
-          if [ $? -ne 0 ]; then
-            echo "❌ 前端构建失败 (${{ matrix.app }})"
-            exit 1
-          fi
           echo "✅ 前端构建成功 (${{ matrix.app }})"
-      
+
+      # 产物路径修正：turbo.json 里 build 的 outputs 是每个包自己的 dist/**，
+      # 实际落点是 frontend/apps/web-<app>/dist —— 原来的 frontend/dist/ 从来不存在，
+      # upload-artifact 只会告警“没找到文件”，下游 download-artifact 又会因产物缺失而失败。
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build-${{ matrix.app }}
-          path: frontend/dist/
+          path: frontend/apps/web-${{ matrix.app }}/dist/
           retention-days: 7
 
-  # 前端部署（仅main分支）
+  # 前端部署（仅 main 分支 push）
   frontend-deploy:
     name: 前端部署
     runs-on: ubuntu-latest
     needs: [frontend-build]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-      
+
+      # 产物路径与 frontend-build 的上传路径保持一致
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
           name: frontend-build-antd
-          path: frontend/dist/
-      
+          path: frontend/apps/web-antd/dist/
+
+      # 部署仍是占位实现（只有 echo），保留原样，不做「假装部署成功」的扩展
       - name: 部署到生产环境
         run: |
           echo "🚀 部署前端到生产环境..."
@@ -236,36 +211,39 @@ jobs:
     runs-on: ubuntu-latest
     needs: [frontend-build]
     if: github.event_name == 'pull_request'
-    
+    # 整段声明为非阻断：仓库里**没有任何** lighthouserc.* / .lighthouserc.* 配置文件
+    # （frontend/ 与仓库根都查过），`lhci autorun` 必然以「找不到配置」失败，
+    # 且 LHCI_GITHUB_APP_TOKEN 也未配置。它当前只提供「信息」，不提供可依赖的信号，
+    # 因此不能让它拦住 PR —— 想让它变成真门禁，先补 lighthouserc 再摘掉这一行。
+    continue-on-error: true
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
-      
+
+      # 产物路径与 frontend-build 的上传路径保持一致
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
           name: frontend-build-antd
-          path: frontend/dist/
-      
+          path: frontend/apps/web-antd/dist/
+
       - name: 安装Lighthouse CI
         run: |
           npm install -g @lhci/cli@0.12.x
-      
+
       - name: 运行Lighthouse性能测试
         run: |
           echo "⚡ 运行Lighthouse性能测试..."
           cd frontend
           lhci autorun
-          if [ $? -ne 0 ]; then
-            echo "❌ Lighthouse性能测试失败"
-            exit 1
-          fi
           echo "✅ Lighthouse性能测试通过"
         env:
           LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
-      
+
       - name: 上传Lighthouse报告
         uses: actions/upload-artifact@v4
         with:
           name: lighthouse-report
           path: .lighthouseci/
+          if-no-files-found: ignore
