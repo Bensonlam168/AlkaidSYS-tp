@@ -175,11 +175,11 @@ API 网关层    Nginx + Swoole（路由分发 / 限流 / 认证）
 
 | 指标 | 数值 |
 |---|---|
-| 后端 PHP | 335 文件 / 57,376 行 |
-| 迁移 | 27 个，`migrate:status` 全部 up |
-| 测试 | 424 用例 / 1,829 断言，**42~43 个失败**（全部为跨测试污染，业务缺陷 0） |
+| 后端 PHP | 434 文件 / 102,217 行 |
+| 迁移 | 38 个，`migrate:status` 全部 up（另有 1 条孤儿 applied 记录 `20251125` 显示 **MISSING**，属改名遗留，已登记 `scripts/check-migrations.php` 的 `ORPHAN_APPLIED_EXEMPTIONS` 豁免至 2027-02-28） |
+| 测试 | 812 用例 / 4,780 断言，**0 失败 / 0 错误**（另有 3 skipped、3 incomplete、32 PHPUnit Deprecations） |
 | 设计文档 | 73 份 |
-| 技术规格 | 39 份 |
+| 技术规格 | 42 份 |
 | 最大阻塞项 | 4 个 Critical（**已修复 3 个**：C-2 前端入库、C-3 vendor 出库（`268389e`）、C-4 跨租户注册） |
 
 ### 三个比写代码更紧急的问题
@@ -213,13 +213,13 @@ API 网关层    Nginx + Swoole（路由分发 / 限流 / 认证）
 - [低代码框架架构](../design/09-lowcode-framework/40-lowcode-framework-architecture.md)
 
 ### 想了解当前质量
-- [代码质量审查报告](report/quality-review-superpowers-2026-10-30.md)（4 Critical / 9 Important / 17 Minor）
-- [文档质量分析报告](report/doc-review-design-docs-2026-10-30.md)（20 项问题）
+- [代码质量审查报告](report/quality-review-superpowers-2026-10-30.md)（7 Critical / 9 Important / 17 Minor）
+- [文档质量分析报告](report/doc-review-design-docs-2026-10-30.md)（22 项问题）
 - [低代码架构规范](technical-specs/lowcode/lowcode-architecture-guidelines.md)（含 Legacy→新架构迁移映射表）
 
 ### 想了解具体任务历史
-- `docs/todo/plan/` —— T-056 ~ T-066 任务完成报告（10 份）
-- `docs/report/` —— 24 份审计/分析报告
+- `docs/todo/plan/` —— 12 份（其中 T-056 ~ T-066 任务完成报告 10 份，另有开发计划与项目状态报告各 1 份）
+- `docs/report/` —— 29 份审计/分析报告
 
 ---
 
@@ -244,7 +244,7 @@ docker exec alkaid-backend php think migrate:status | grep -cE '^\s+up\s'
 docker exec alkaid-backend php think test
 
 # 前端是否在版本库（关键验证）
-git ls-files frontend | wc -l                              # 期望 1678（已修复；修复前为 1）
+git ls-files frontend | wc -l                              # 期望 1679（已修复；修复前为 1）
 git ls-tree HEAD frontend                                  # 期望 040000 tree（非 160000 commit）
 git ls-files | grep -c node_modules                        # 期望 0（产物不入库）
 

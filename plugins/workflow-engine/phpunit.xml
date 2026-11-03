@@ -5,7 +5,30 @@
          colors="true"
          stopOnFailure="false"
          cacheDirectory=".phpunit.cache"
-         beStrictAboutOutputDuringTests="true">
+         beStrictAboutOutputDuringTests="true"
+         failOnEmptyTestSuite="true"
+         failOnRisky="true"
+         failOnWarning="true">
+    <!--
+        ============================================================
+        三条 failOn* 与根基线（根 phpunit.xml）对齐
+        ============================================================
+        补这三项之前，本配置的 failOn 声明数为 0，于是下面三类「静默通过」都能发生：
+          1. failOnEmptyTestSuite 未开：一个用例都没跑（filter 写错 / 套件名写错 /
+             目录被挪走 / 用例被删空）仍以 0 退出。PHPUnit 只打印一句
+             No tests executed!，退出码不变 —— 「跑了且通过」与「一条都没跑」无法区分。
+             实测有效性：跑一个匹配不到任何用例的 filter 参数（取值 __no_such_test__）
+             后 exit=1（补之前是 exit=0）。
+          2. failOnRisky 未开：risky 用例（没有任何断言 / 断言未执行）被当成通过。
+             注意本配置已开 beStrictAboutOutputDuringTests，它只负责把「测试期有输出」
+             标成 risky；若 failOnRisky 是 false，这个标记就只停留在报告里，不影响退出码。
+          3. failOnWarning 未开：warning 被当成通过。
+
+        补齐前后对照（实测，1043 tests / 3046 assertions / 24 errors，两次数值完全一致）：
+        三项只是把「已经存在但没折算成退出码」的问题显性化，不改变有多少条用例在跑。
+        这 24 个 error 是 DI 容器契约缺件与宿主耦合（见 docs/todo/open-items-2026-11-03.md §2），
+        与本文档的三项开关无关 —— 不要用「放宽 flag」的方式去消数字。
+    -->
     <testsuites>
         <testsuite name="Workflow Engine Test Suite">
             <directory>tests</directory>

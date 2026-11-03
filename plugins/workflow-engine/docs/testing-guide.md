@@ -9,7 +9,6 @@
 ```
 tests/
 ├── TestCase.php                          # 测试基类
-├── bootstrap.php                         # 测试引导文件
 ├── Unit/                                 # 单元测试
 │   ├── Container/
 │   │   └── WorkflowContainerTest.php     # 容器测试
