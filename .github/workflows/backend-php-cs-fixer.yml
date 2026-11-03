@@ -279,10 +279,22 @@ jobs:
           sed -i -E 's|^DB_PASS[[:space:]]*=.*|DB_PASS = root|' .env
           sed -i -E 's|^REDIS_HOST[[:space:]]*=.*|REDIS_HOST = 127.0.0.1|' .env
           grep -qE '^REDIS_HOST[[:space:]]*=' .env || echo 'REDIS_HOST = 127.0.0.1' >> .env
+          # APP_ENV 必须写进 .env，不能只靠步骤级 env。
+          # 原因：ThinkPHP 的 env() 先读 .env，读不到才回落到 $_ENV；而 $_ENV 是否被填充
+          # 取决于 php.ini 的 variables_order **是否含 E**。本仓库容器是 EGPCS（含 E），
+          # 所以本地 env('APP_ENV') 能拿到进程环境里的 dev；CI 的 setup-php 默认是 GPCS（不含 E），
+          # 于是 $_ENV 为空、env('APP_ENV') 变 NULL，route/app.php 的
+          # `env('APP_ENV', 'production')` 就取到默认值 'production'，
+          # 三条「非生产才注册」的演示/调试路由（/think、/hello/:name、/debug/session-redis）
+          # 整批不注册 → route:verify 报 118 vs 121。
+          # 实测：php -d variables_order=GPCS 下 env('APP_ENV') 为 NULL，而 getenv 仍为 dev。
+          sed -i -E 's|^APP_ENV[[:space:]]*=.*|APP_ENV = testing|' .env
+          grep -qE '^APP_ENV[[:space:]]*=' .env || echo 'APP_ENV = testing' >> .env
           # 断言：任何一条没生效都立刻失败，而不是等到 migrate:run 报一个看不懂的连接错误
           grep -qx 'DB_HOST = 127.0.0.1' .env
           grep -qx 'DB_NAME = alkaid_sys_test' .env
           grep -qx 'DB_USER = root' .env
+          grep -qx 'APP_ENV = testing' .env
           grep -qx 'REDIS_HOST = 127.0.0.1' .env
           # .env 必须能被 parse_ini_file 解析（注释里的半角括号/等号会让整份文件静默失效）
           php -r 'var_dump(parse_ini_file(".env", true, INI_SCANNER_RAW) !== false);' | grep -qx 'bool(true)'
