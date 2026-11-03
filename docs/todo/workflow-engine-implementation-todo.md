@@ -198,8 +198,8 @@
 - **验收标准**：测试框架可运行，示例测试通过
 - **完成时间**：2025-12-16
 - **实际产出**：
-  - `tests/TestCase.php` 基类已创建（8178行）
-  - `tests/bootstrap.php` 测试引导文件已创建（6523行）
+  - `tests/TestCase.php` 基类已创建（实测 271 行）
+  - `tests/bootstrap.php` 测试引导文件已创建（实测 231 行；该文件从未被载入，已于 2026-11-02 删除）
   - 测试目录结构：Unit/、Feature/、Integration/、Mock/
   - 已实现测试用例：
     - `Unit/Container/WorkflowContainerTest.php` - 容器测试
