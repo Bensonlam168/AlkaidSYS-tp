@@ -11,22 +11,30 @@
 
 ---
 
-## 1. P0：远端与本地完全不同步
+## 1. ~~P0：远端与本地完全不同步~~ 已解决（2026-11-03）
 
-| 项 | 值 |
-|---|---|
-| `origin/develop` 指向 | `c36ab58 2025-11-24 chore(git): init AlkaidSYS-tp repo` |
-| 本地领先 | 299 个提交 |
-| 相对远端改动量 | 2,914 文件，+413,564 / −5,045 行 |
-| 提交时间跨度 | 2025-11-25 → 2026-11-03 |
-| 推送通道 | `remote.origin.pushurl = no-push-disabled://local-only`（本会话刻意封禁） |
+原先的状态与含义（留档）：`origin/develop` 停在 `c36ab58 2025-11-24 chore(git): init`，
+本地领先 299 个提交、2,914 文件、+413,564 / −5,045 行，提交时间跨度
+2025-11-25 → 2026-11-03。线上只有初始化提交，**全部实际工作量只存在于本地**，
+一次误删或被 `git clean -fdx` 清理即不可恢复。
 
-**含义**：线上仓库只有初始化提交，**全部实际工作量只存在于本地**。一次误删
-或被 `git clean -fdx` 清理即不可恢复。
+**已处置**：2026-11-03 移除 `remote.origin.pushurl` 的 `no-push-disabled://local-only`
+覆盖后推送 `develop`，`c36ab58..1e5c00e`（300 个提交），fast-forward 无需 force。
+推送后本地与 `origin/develop` **0 ahead / 0 behind**。
 
-**处置建议（需人决定推送时机）**：恢复 `pushurl` 后先推 `develop`，再考虑
-`main`。推送前确认分支保护与 required checks 已按 AGENTS.md 的清单配置到位，
-否则推上去也不会生效。
+**推送前做过的检查**（可复现）：
+- `.env` / `.env.local` / `.env.production` 均未入库；入库的只有三个 env 模板
+- 历史中从未出现真 `.env`；私钥 / AKIA / ghp_ 特征唯一命中是文档示例代码
+  `design/07-integration-ops/25-system-integration.md` 的 `wordwrap($privateKey…)`，非真密钥
+- 当前树无 > 5MB 文件；历史最大单文件 22.6 MB（`phpstan.phar`，随 vendor 出库但仍留在历史里），
+  低于 GitHub 100MB 上限。推送范围 11,835 对象 / 7,921 blob / 73.1 MB 未压缩
+- 五份门禁工作流的 `paths:` 过滤全为 0，不会出现永久 `Expected`
+- 7 个 required check 名称与文档一致；`CODEOWNERS` 存在
+- 全量 812 tests / 0 failures；十道门禁全 exit=0
+
+**仍未做**：`main` 未推（`origin/main` 仍指向 `60c2387`，`develop` 领先它 300 个提交）。
+分支保护是否已把这 7 个 check 勾为 required 属 GitHub 仓库设置，本地无法读取，需在
+Settings → Branches 人工确认（清单见 AGENTS.md）。
 
 ---
 
@@ -149,3 +157,4 @@ cd plugins/workflow-engine && composer install
 | 日期 | 变更 |
 |---|---|
 | 2026-11-03 | 建立台账；登记远端分叉、DI 契约三项决策、B 类测试归属、7 项小遗留 |
+| 2026-11-03 | §1 远端分叉已解决：推送 `develop` 至 `1e5c00e`，本地与远端同步 |
