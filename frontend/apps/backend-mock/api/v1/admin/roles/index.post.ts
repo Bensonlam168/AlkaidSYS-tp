@@ -12,8 +12,8 @@ export default defineEventHandler(async (event) => {
       message: 'Validation failed',
       data: {
         errors: {
-          name: !body.name ? ['name is required'] : [],
-          slug: !body.slug ? ['slug is required'] : [],
+          name: body.name ? [] : ['name is required'],
+          slug: body.slug ? [] : ['slug is required'],
         },
       },
       timestamp: Date.now(),

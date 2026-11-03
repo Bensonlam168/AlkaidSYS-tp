@@ -13,7 +13,6 @@ export async function authLogin(page: Page) {
 
   // 进一步等待 bootstrap 在 window 上暴露 __APP_AUTH_LOGIN__，避免偶发性时序问题
   await page.waitForFunction(() => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const globalAny = window as any;
     return typeof globalAny.__APP_AUTH_LOGIN__ === 'function';
   });
@@ -28,7 +27,7 @@ export async function authLogin(page: Page) {
   try {
     await page.evaluate(async () => {
       // 从全局对象上获取在 bootstrap 中暴露的 E2E 登录帮助函数
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       const globalAny = window as any;
       const loginHelper = globalAny.__APP_AUTH_LOGIN__ as
         | ((

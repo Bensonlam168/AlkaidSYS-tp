@@ -17,15 +17,21 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event);
-  const { name, slug, domain, status, config, max_sites, max_users, expires_at } = body;
+  const {
+    name,
+    slug,
+    domain,
+    status,
+    config,
+    max_sites,
+    max_users,
+    expires_at,
+  } = body;
 
   // Validate required fields
   if (!name || !slug) {
     setResponseStatus(event, 422);
-    return useResponseError(
-      'ValidationError',
-      'Name and slug are required',
-    );
+    return useResponseError('ValidationError', 'Name and slug are required');
   }
 
   // Validate slug format

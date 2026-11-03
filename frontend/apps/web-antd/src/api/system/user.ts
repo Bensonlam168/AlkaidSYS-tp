@@ -32,10 +32,10 @@ export namespace SystemUserApi {
   export interface UserWithRoles {
     user: SystemUser;
     roles: Array<{
+      description?: string;
       id: number;
       name: string;
       slug: string;
-      description?: string;
     }>;
   }
 
@@ -106,10 +106,9 @@ export namespace SystemUserApi {
  * Get user list | 获取用户列表
  */
 async function getUserList(params: Recordable<any>) {
-  return requestClient.get<SystemUserApi.UserListResponse>(
-    '/v1/admin/users',
-    { params },
-  );
+  return requestClient.get<SystemUserApi.UserListResponse>('/v1/admin/users', {
+    params,
+  });
 }
 
 /**
@@ -152,10 +151,7 @@ async function deleteUser(id: number) {
  * @param id User ID
  * @param status New status
  */
-async function updateUserStatus(
-  id: number,
-  status: SystemUserApi.UserStatus,
-) {
+async function updateUserStatus(id: number, status: SystemUserApi.UserStatus) {
   return requestClient.patch(`/v1/admin/users/${id}/status`, { status });
 }
 

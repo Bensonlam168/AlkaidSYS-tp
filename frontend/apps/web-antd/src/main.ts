@@ -13,7 +13,8 @@ function applySecurityCsp() {
     (import.meta.env.VITE_PLUGIN_IFRAME_URL
       ? (() => {
           try {
-            return new URL(import.meta.env.VITE_PLUGIN_IFRAME_URL as string).origin;
+            return new URL(import.meta.env.VITE_PLUGIN_IFRAME_URL as string)
+              .origin;
           } catch {
             return '';
           }
@@ -24,19 +25,25 @@ function applySecurityCsp() {
     .map((item) => item.trim())
     .filter(Boolean);
 
-  const frameSrcList = Array.from(
-    new Set(["'self'", ...(pluginOrigin ? [pluginOrigin] : []), ...extraFrameSrc]),
-  );
+  const frameSrcList = [
+    ...new Set([
+      "'self'",
+      ...(pluginOrigin ? [pluginOrigin] : []),
+      ...extraFrameSrc,
+    ]),
+  ];
 
   const cspContent = `frame-ancestors ${frameAncestors}; frame-src ${frameSrcList.join(
     ' ',
   )};`;
 
-  let meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  let meta = document.querySelector(
+    'meta[http-equiv="Content-Security-Policy"]',
+  );
   if (!meta) {
     meta = document.createElement('meta');
     meta.setAttribute('http-equiv', 'Content-Security-Policy');
-    document.head.appendChild(meta);
+    document.head.append(meta);
   }
   meta.setAttribute('content', cspContent);
 }

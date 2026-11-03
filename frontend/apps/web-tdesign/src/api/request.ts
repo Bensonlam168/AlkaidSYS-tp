@@ -67,10 +67,11 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
 
       config.headers.Authorization = formatToken(accessStore.accessToken);
       config.headers['Accept-Language'] = preferences.app.locale;
-      if (tenantStore.tenantId != null) {
+      // tenantId / siteId 的类型是 null | number，不存在 undefined，故用 === null 判定
+      if (tenantStore.tenantId !== null) {
         config.headers['X-Tenant-ID'] = String(tenantStore.tenantId);
       }
-      if (tenantStore.siteId != null) {
+      if (tenantStore.siteId !== null) {
         config.headers['X-Site-ID'] = String(tenantStore.siteId);
       }
       return config;

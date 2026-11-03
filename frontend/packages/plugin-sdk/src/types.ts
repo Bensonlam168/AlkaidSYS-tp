@@ -1,71 +1,71 @@
 export type PluginMessageType =
+  | 'context:update'
+  | 'event'
   | 'handshake'
   | 'handshake:ack'
   | 'heartbeat'
   | 'heartbeat:ack'
   | 'request'
-  | 'response'
-  | 'event'
-  | 'context:update';
+  | 'response';
 
 export interface PluginMessage<T = unknown> {
-  source: 'alkaid-host' | 'alkaid-plugin';
-  type: PluginMessageType;
-  pluginKey: string;
-  version?: string;
-  requestId?: string;
   payload?: T;
+  pluginKey: string;
+  requestId?: string;
+  source: 'alkaid-host' | 'alkaid-plugin';
   timestamp?: number;
+  type: PluginMessageType;
+  version?: string;
 }
 
 export interface PluginUserInfo {
   id?: string;
-  username?: string;
   realName?: string;
   roles?: string[];
+  username?: string;
 }
 
 export interface PluginContext {
-  token?: string | null;
-  tenantId?: number | string | null;
-  siteId?: number | string | null;
-  permissions?: string[];
-  user?: PluginUserInfo;
-  traceId?: string;
   issuedAt: number;
+  permissions?: string[];
+  siteId?: null | number | string;
+  tenantId?: null | number | string;
+  token?: null | string;
+  traceId?: string;
+  user?: PluginUserInfo;
 }
 
 export interface PluginRequestPayload {
-  path: string;
-  method?: string;
-  headers?: Record<string, string>;
   body?: unknown;
+  headers?: Record<string, string>;
+  method?: string;
+  path: string;
 }
 
 export interface PluginResponsePayload {
-  ok: boolean;
-  status: number;
   data?: unknown;
   error?: string;
+  ok: boolean;
+  status: number;
 }
 
 export interface PluginEventPayload {
-  eventName: string;
   data?: unknown;
+  eventName: string;
 }
 
 export interface PluginHandshakeAck {
+  capabilities?: string[];
   sdkVersion: string;
   supportedVersions: string[];
-  capabilities?: string[];
 }
 
 export interface HostContextProvider {
-  (): Promise<PluginContext> | PluginContext;
+  (): PluginContext | Promise<PluginContext>;
 }
 
 export interface TokenProvider {
-  (): Promise<string | null | undefined> | string | null | undefined;
+  (): null | Promise<null | string | undefined> | string | undefined;
 }
 
 export interface PluginRequestHandler {
@@ -80,33 +80,33 @@ export interface PluginEventHandler {
 }
 
 export interface HostLifecycleHandler {
-  (detail: { status: 'ready' | 'offline' | 'error'; reason?: string }): void;
+  (detail: { reason?: string; status: 'error' | 'offline' | 'ready' }): void;
 }
 
 export interface IframeHostOptions {
+  allowedOrigins?: string[];
+  allowHttpInDev?: boolean;
+  contextProvider?: HostContextProvider;
+  handshakeTimeout?: number;
+  heartbeatInterval?: number;
+  iframeGetter: () => HTMLIFrameElement | null;
+  onEvent?: PluginEventHandler;
+  onRequest?: PluginRequestHandler;
+  onStatusChange?: HostLifecycleHandler;
   pluginKey: string;
   pluginUrl: string;
-  iframeGetter: () => HTMLIFrameElement | null;
-  allowedOrigins?: string[];
   protocolVersion?: string;
-  heartbeatInterval?: number;
-  handshakeTimeout?: number;
-  allowHttpInDev?: boolean;
   tokenProvider?: TokenProvider;
-  contextProvider?: HostContextProvider;
-  onRequest?: PluginRequestHandler;
-  onEvent?: PluginEventHandler;
-  onStatusChange?: HostLifecycleHandler;
 }
 
 export interface IframePluginClientOptions {
+  allowedHostOrigins?: string[];
   pluginKey: string;
   protocolVersion?: string;
-  allowedHostOrigins?: string[];
 }
 
 export interface PluginReadyDetail {
+  capabilities?: string[];
   context: PluginContext;
   hostVersion: string;
-  capabilities?: string[];
 }

@@ -18,7 +18,10 @@ export function useFormSchema(): VbenFormSchema[] {
       rules: z
         .string()
         .min(2, $t('ui.formRules.minLength', [$t('system.dept.deptName'), 2]))
-        .max(50, $t('ui.formRules.maxLength', [$t('system.dept.deptName'), 50])),
+        .max(
+          50,
+          $t('ui.formRules.maxLength', [$t('system.dept.deptName'), 50]),
+        ),
     },
     {
       component: 'ApiTreeSelect',

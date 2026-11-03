@@ -1,123 +1,122 @@
 <script lang="ts" setup>
-import { ref, onMounted, reactive, h } from 'vue'
+import { h, onMounted, reactive, ref } from 'vue';
 
-import { Page } from '@vben/common-ui'
+import { Page } from '@vben/common-ui';
+import { RotateCw, Trash2 } from '@vben/icons';
 
 import {
-  Card,
-  Statistic,
-  Row,
-  Col,
+  Alert,
   Button,
-  Space,
+  Card,
+  Col,
   Descriptions,
   DescriptionsItem,
-  Alert,
-  Tag,
   Divider,
   Form,
   FormItem,
-  InputNumber,
   Input,
-} from 'ant-design-vue'
-
-import { RotateCw, Trash2 } from '@vben/icons'
+  InputNumber,
+  Row,
+  Space,
+  Statistic,
+  Tag,
+} from 'ant-design-vue';
 
 import {
+  checkPermission,
+  clearAllCache,
   getCacheStats,
   getPerformanceMetrics,
-  clearAllCache,
   getUserPermissions,
-  checkPermission,
-} from '#/api/admin/permission-monitor'
+} from '#/api/admin/permission-monitor';
 
 // 响应式数据
-const cacheStats = ref<any>({})
-const performance = ref<any>({})
-const loading = ref(false)
-const refreshing = ref(false)
-const userPermissions = ref<any>(null)
-const permissionCheckResult = ref<any>(null)
+const cacheStats = ref<any>({});
+const performance = ref<any>({});
+const loading = ref(false);
+const refreshing = ref(false);
+const userPermissions = ref<any>(null);
+const permissionCheckResult = ref<any>(null);
 
 const queryForm = reactive({
   userId: 1,
   permission: 'user:read',
-})
+});
 
 // 加载缓存统计
 const loadCacheStats = async () => {
   try {
-    const data = await getCacheStats()
-    cacheStats.value = data
+    const data = await getCacheStats();
+    cacheStats.value = data;
   } catch (error) {
-    console.error('Failed to load cache stats:', error)
+    console.error('Failed to load cache stats:', error);
   }
-}
+};
 
 // 加载性能指标
 const loadPerformanceMetrics = async () => {
   try {
-    const data = await getPerformanceMetrics()
+    const data = await getPerformanceMetrics();
     performance.value = {
       p95_latency_ms: data.cache?.overall?.p95_latency_ms ?? 0,
       hit_rate: data.cache?.overall?.hit_rate ?? 0,
       total_queries: data.cache?.overall?.total_queries ?? 0,
       avg_latency_ms: data.cache?.overall?.avg_latency_ms ?? 0,
-    }
+    };
   } catch (error) {
-    console.error('Failed to load performance metrics:', error)
+    console.error('Failed to load performance metrics:', error);
   }
-}
+};
 
 // 刷新统计
 const refreshStats = async () => {
-  refreshing.value = true
+  refreshing.value = true;
   try {
-    await Promise.all([loadCacheStats(), loadPerformanceMetrics()])
+    await Promise.all([loadCacheStats(), loadPerformanceMetrics()]);
   } finally {
-    refreshing.value = false
+    refreshing.value = false;
   }
-}
+};
 
 // 清除所有缓存
 const clearAllCacheHandler = async () => {
-  loading.value = true
+  loading.value = true;
   try {
-    await clearAllCache()
-    await refreshStats()
+    await clearAllCache();
+    await refreshStats();
   } catch (error) {
-    console.error('Failed to clear cache:', error)
+    console.error('Failed to clear cache:', error);
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 
 // 查询用户权限
 const searchUserPermissions = async () => {
   try {
-    const data = await getUserPermissions(queryForm.userId)
-    userPermissions.value = data
-    permissionCheckResult.value = null
+    const data = await getUserPermissions(queryForm.userId);
+    userPermissions.value = data;
+    permissionCheckResult.value = null;
   } catch (error) {
-    console.error('Failed to get user permissions:', error)
+    console.error('Failed to get user permissions:', error);
   }
-}
+};
 
 // 检查权限
 const checkPermissionHandler = async () => {
   try {
-    const data = await checkPermission(queryForm.userId, queryForm.permission)
-    permissionCheckResult.value = data
-    userPermissions.value = null
+    const data = await checkPermission(queryForm.userId, queryForm.permission);
+    permissionCheckResult.value = data;
+    userPermissions.value = null;
   } catch (error) {
-    console.error('Failed to check permission:', error)
+    console.error('Failed to check permission:', error);
   }
-}
+};
 
 // 初始化
 onMounted(async () => {
-  await refreshStats()
-})
+  await refreshStats();
+});
 </script>
 
 <template>
@@ -134,7 +133,10 @@ onMounted(async () => {
             <template #prefix>
               <span
                 :style="{
-                  color: (performance.p95_latency_ms || 0) < 100 ? '#52c41a' : '#faad14',
+                  color:
+                    (performance.p95_latency_ms || 0) < 100
+                      ? '#52c41a'
+                      : '#faad14',
                 }"
               >
                 ●
@@ -143,7 +145,10 @@ onMounted(async () => {
             <template #suffix>
               <span
                 :style="{
-                  color: (performance.p95_latency_ms || 0) < 100 ? '#52c41a' : '#faad14',
+                  color:
+                    (performance.p95_latency_ms || 0) < 100
+                      ? '#52c41a'
+                      : '#faad14',
                 }"
               >
                 / 100ms
@@ -162,7 +167,8 @@ onMounted(async () => {
             <template #prefix>
               <span
                 :style="{
-                  color: (performance.hit_rate || 0) >= 90 ? '#52c41a' : '#faad14',
+                  color:
+                    (performance.hit_rate || 0) >= 90 ? '#52c41a' : '#faad14',
                 }"
               >
                 ●
@@ -171,7 +177,8 @@ onMounted(async () => {
             <template #suffix>
               <span
                 :style="{
-                  color: (performance.hit_rate || 0) >= 90 ? '#52c41a' : '#faad14',
+                  color:
+                    (performance.hit_rate || 0) >= 90 ? '#52c41a' : '#faad14',
                 }"
               >
                 / 90%
@@ -284,12 +291,7 @@ onMounted(async () => {
 
       <Divider />
 
-      <Alert
-        v-if="userPermissions"
-        type="success"
-        show-icon
-        class="mb-3"
-      >
+      <Alert v-if="userPermissions" type="success" show-icon class="mb-3">
         <template #message>
           用户 {{ queryForm.userId }} 的权限 ({{ userPermissions.count }} 个)
         </template>
@@ -307,11 +309,7 @@ onMounted(async () => {
         </template>
       </Alert>
 
-      <Alert
-        v-if="permissionCheckResult"
-        type="info"
-        show-icon
-      >
+      <Alert v-if="permissionCheckResult" type="info" show-icon>
         <template #message>权限检查结果</template>
         <template #description>
           用户 {{ queryForm.userId }}

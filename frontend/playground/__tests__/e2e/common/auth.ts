@@ -3,28 +3,28 @@ import type { Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 export async function authLogin(page: Page) {
-	// 确保登录表单已经渲染：先等待登录按钮出现，避免路由切换尚未完成
-	const loginButton = page.getByRole('button', { name: 'login' });
-	await expect(loginButton).toBeVisible();
+  // 确保登录表单已经渲染：先等待登录按钮出现，避免路由切换尚未完成
+  const loginButton = page.getByRole('button', { name: 'login' });
+  await expect(loginButton).toBeVisible();
 
-	// 用户名输入框：优先按 name 查找，若不存在则兼容按文本输入框类型查找
-	let usernameInput = page.locator(`input[name='username']`);
-	if ((await usernameInput.count()) === 0) {
-		usernameInput = page.locator("input[type='text']").first();
-	}
-	await expect(usernameInput).toBeVisible();
+  // 用户名输入框：优先按 name 查找，若不存在则兼容按文本输入框类型查找
+  let usernameInput = page.locator(`input[name='username']`);
+  if ((await usernameInput.count()) === 0) {
+    usernameInput = page.locator("input[type='text']").first();
+  }
+  await expect(usernameInput).toBeVisible();
 
-	// 密码输入框：优先按 name 查找，若不存在则退化为按 password 类型查找
-	let passwordInput = page.locator(`input[name='password']`);
-	if ((await passwordInput.count()) === 0) {
-		passwordInput = page.locator("input[type='password']").first();
-	}
-	await expect(passwordInput).toBeVisible();
+  // 密码输入框：优先按 name 查找，若不存在则退化为按 password 类型查找
+  let passwordInput = page.locator(`input[name='password']`);
+  if ((await passwordInput.count()) === 0) {
+    passwordInput = page.locator("input[type='password']").first();
+  }
+  await expect(passwordInput).toBeVisible();
 
-	const sliderCaptcha = await page.locator(`div[name='captcha']`);
-	const sliderCaptchaAction = await page.locator(`div[name='captcha-action']`);
-	await expect(sliderCaptcha).toBeVisible();
-	await expect(sliderCaptchaAction).toBeVisible();
+  const sliderCaptcha = await page.locator(`div[name='captcha']`);
+  const sliderCaptchaAction = await page.locator(`div[name='captcha-action']`);
+  await expect(sliderCaptcha).toBeVisible();
+  await expect(sliderCaptchaAction).toBeVisible();
 
   // 拖动验证码滑块
   // 获取拖动按钮的位置
@@ -51,7 +51,7 @@ export async function authLogin(page: Page) {
   const newActionBoundingBox = await sliderCaptchaAction.boundingBox();
   expect(newActionBoundingBox?.x).toBeGreaterThan(actionBoundingBox.x);
 
-	// 到这里已经校验成功，点击进行登录
-	await page.waitForTimeout(300);
-	await loginButton.click();
+  // 到这里已经校验成功，点击进行登录
+  await page.waitForTimeout(300);
+  await loginButton.click();
 }

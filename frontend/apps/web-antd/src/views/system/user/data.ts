@@ -18,7 +18,9 @@ export function useFormSchema(): VbenFormSchema[] {
         .string()
         .min(3, { message: $t('system.user.usernameMinLength') })
         .max(50, { message: $t('system.user.usernameMaxLength') })
-        .regex(/^[a-zA-Z0-9_]+$/, { message: $t('system.user.usernameFormat') }),
+        .regex(/^\w+$/, {
+          message: $t('system.user.usernameFormat'),
+        }),
     },
     {
       component: 'Input',
@@ -103,7 +105,8 @@ export function useGridFormSchema(): VbenFormSchema[] {
  */
 export function useColumns<T = SystemUserApi.SystemUser>(
   onActionClick: OnActionClickFn<T>,
-  onStatusChange?: (row: T, status: SystemUserApi.UserStatus) => void,
+  // 预留的状态切换回调（当前列表页未接入，参数名以 _ 前缀标记为未使用）
+  _onStatusChange?: (row: T, status: SystemUserApi.UserStatus) => void,
 ): VxeTableGridOptions['columns'] {
   return [
     {
@@ -180,7 +183,11 @@ export function useColumns<T = SystemUserApi.SystemUser>(
         options: [
           { code: 'edit', text: $t('common.edit') },
           { code: 'roles', text: $t('system.user.assignRoles'), more: true },
-          { code: 'resetPassword', text: $t('system.user.resetPassword'), more: true },
+          {
+            code: 'resetPassword',
+            text: $t('system.user.resetPassword'),
+            more: true,
+          },
           { code: 'delete', text: $t('common.delete'), danger: true },
         ],
       },

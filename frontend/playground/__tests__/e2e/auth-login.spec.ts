@@ -3,8 +3,8 @@ import { expect, test } from '@playwright/test';
 import { authLogin } from './common/auth';
 
 test.beforeEach(async ({ page }) => {
-	// 直接访问登录页，避免根路由重定向或守卫逻辑变化导致无法找到登录表单
-	await page.goto('/auth/login');
+  // 直接访问登录页，避免根路由重定向或守卫逻辑变化导致无法找到登录表单
+  await page.goto('/auth/login');
 });
 
 test.describe('Auth Login Page Tests', () => {

@@ -64,10 +64,9 @@ export namespace SystemRoleApi {
  * Get role list | 获取角色列表
  */
 async function getRoleList(params: Recordable<any>) {
-  return requestClient.get<Array<SystemRoleApi.SystemRole>>(
-    '/v1/admin/roles',
-    { params },
-  );
+  return requestClient.get<Array<SystemRoleApi.SystemRole>>('/v1/admin/roles', {
+    params,
+  });
 }
 
 /**
@@ -83,10 +82,7 @@ async function getRole(id: number) {
  * @param data Role data
  */
 async function createRole(data: SystemRoleApi.CreateRoleRequest) {
-  return requestClient.post<SystemRoleApi.SystemRole>(
-    '/v1/admin/roles',
-    data,
-  );
+  return requestClient.post<SystemRoleApi.SystemRole>('/v1/admin/roles', data);
 }
 
 /**

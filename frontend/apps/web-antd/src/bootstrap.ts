@@ -9,9 +9,9 @@ import '@vben/styles/antd';
 
 import { useTitle } from '@vueuse/core';
 
+import { requestClient } from '#/api/request';
 import { $t, setupI18n } from '#/locales';
 import { useAuthStore } from '#/store';
-import { requestClient } from '#/api/request';
 
 import { initComponentAdapter } from './adapter/component';
 import { initSetupVbenForm } from './adapter/form';
@@ -50,9 +50,7 @@ async function bootstrap(namespace: string) {
 
   // 在开发环境下，为 E2E 测试暴露基于 auth store 的登录帮助函数与通用请求助手
   if (import.meta.env.DEV) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__APP_AUTH_LOGIN__ = async (
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       params: any,
       onSuccess?: () => Promise<void> | void,
     ) => {
@@ -60,7 +58,6 @@ async function bootstrap(namespace: string) {
       return authStore.authLogin(params, onSuccess);
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__APP_TENANT_REQUEST__ = async (url: string) => {
       return requestClient.get(url);
     };

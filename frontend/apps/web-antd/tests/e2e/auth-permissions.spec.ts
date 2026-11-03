@@ -8,13 +8,14 @@ test.describe('Auth & permission integration (/v1/auth/me)', () => {
     page.on('request', (request) => {
       const url = request.url();
       if (url.includes('/auth') || url.includes('/v1/auth')) {
-        // eslint-disable-next-line no-console
         console.log('[E2E][auth-request]', request.method(), url);
       }
     });
   });
 
-  test('should login and receive permissions from /v1/auth/me', async ({ page }) => {
+  test('should login and receive permissions from /v1/auth/me', async ({
+    page,
+  }) => {
     // 直接访问认证登录页，避免根路由偏好设置或守卫逻辑变化
     await page.goto('/auth/login');
 
@@ -46,7 +47,9 @@ test.describe('Auth & permission integration (/v1/auth/me)', () => {
     }
   });
 
-  test('should persist permissions into access store (localStorage)', async ({ page }) => {
+  test('should persist permissions into access store (localStorage)', async ({
+    page,
+  }) => {
     // 保持与上一个用例一致，直接进入登录页
     await page.goto('/auth/login');
 
@@ -86,8 +89,8 @@ test.describe('Auth & permission integration (/v1/auth/me)', () => {
     });
 
     const storedAccessCodes = (await accessCodesHandle.jsonValue()) as
-      | string[]
-      | null;
+      | null
+      | string[];
 
     expect(storedAccessCodes).not.toBeNull();
     expect(Array.isArray(storedAccessCodes)).toBe(true);

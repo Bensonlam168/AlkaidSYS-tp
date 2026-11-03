@@ -230,9 +230,7 @@ const { accessMode, hasAccessByCodes } = useAccess();
     <Button> Visible to users with forms:create permission </Button>
   </AccessControl>
   <AccessControl :codes="['forms:view', 'forms:create']" type="code">
-    <Button>
-      Visible to users with either forms:view or forms:create
-    </Button>
+    <Button> Visible to users with either forms:view or forms:create </Button>
   </AccessControl>
 </template>
 ```

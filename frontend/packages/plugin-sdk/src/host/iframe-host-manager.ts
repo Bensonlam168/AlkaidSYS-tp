@@ -1,9 +1,3 @@
-import {
-  useAccessStore,
-  useTenantStore,
-  useUserStore,
-} from '@vben/stores';
-
 import type {
   IframeHostOptions,
   PluginContext,
@@ -14,29 +8,35 @@ import type {
   PluginResponsePayload,
 } from '../types';
 
+import { useAccessStore, useTenantStore, useUserStore } from '@vben/stores';
+
 const DEFAULT_PROTOCOL_VERSION = '1.0.0';
-const DEFAULT_HEARTBEAT_INTERVAL = 15000;
+const DEFAULT_HEARTBEAT_INTERVAL = 15_000;
 const DEFAULT_HANDSHAKE_TIMEOUT = 8000;
 
 /**
  * Host 侧 iframe 通信管理器，负责握手、心跳、安全校验与请求转发
  */
 export class IframeHostBridge {
-  private readonly pluginOrigin: string;
   private readonly allowedOrigins: Set<string>;
-  private readonly protocolVersion: string;
-  private readonly heartbeatInterval: number;
-  private readonly handshakeTimeout: number;
-  private handshakeTimer: number | null = null;
-  private heartbeatTimer: number | null = null;
-  private lastHeartbeatAck = 0;
-  private ready = false;
   private destroyed = false;
-  private pendingContext: PluginContext | null = null;
+  private readonly handshakeTimeout: number;
+  private handshakeTimer: null | number = null;
+  private readonly heartbeatInterval: number;
+  private heartbeatTimer: null | number = null;
+  private lastHeartbeatAck = 0;
+  private pendingContext: null | PluginContext = null;
+  private readonly pluginOrigin: string;
+  private readonly protocolVersion: string;
+  private ready = false;
 
   constructor(private readonly options: IframeHostOptions) {
     const url = new URL(options.pluginUrl);
-    if (url.protocol !== 'https:' && !options.allowHttpInDev && !import.meta.env.DEV) {
+    if (
+      url.protocol !== 'https:' &&
+      !options.allowHttpInDev &&
+      !import.meta.env.DEV
+    ) {
       throw new Error('iframe 插件仅允许 HTTPS，开发模式外禁止非安全协议');
     }
 
@@ -48,7 +48,22 @@ export class IframeHostBridge {
     this.protocolVersion = options.protocolVersion ?? DEFAULT_PROTOCOL_VERSION;
     this.heartbeatInterval =
       options.heartbeatInterval ?? DEFAULT_HEARTBEAT_INTERVAL;
-    this.handshakeTimeout = options.handshakeTimeout ?? DEFAULT_HANDSHAKE_TIMEOUT;
+    this.handshakeTimeout =
+      options.handshakeTimeout ?? DEFAULT_HANDSHAKE_TIMEOUT;
+  }
+
+  /**
+   * 清理资源
+   */
+  destroy() {
+    this.destroyed = true;
+    window.removeEventListener('message', this.handleMessage);
+    if (this.handshakeTimer) {
+      window.clearTimeout(this.handshakeTimer);
+    }
+    if (this.heartbeatTimer) {
+      window.clearInterval(this.heartbeatTimer);
+    }
   }
 
   /**
@@ -78,51 +93,18 @@ export class IframeHostBridge {
   }
 
   /**
-   * 清理资源
+   * 状态变更回调
    */
-  destroy() {
-    this.destroyed = true;
-    window.removeEventListener('message', this.handleMessage);
-    if (this.handshakeTimer) {
-      window.clearTimeout(this.handshakeTimer);
-    }
-    if (this.heartbeatTimer) {
-      window.clearInterval(this.heartbeatTimer);
-    }
+  private emitStatus(status: 'error' | 'offline' | 'ready', reason?: string) {
+    this.options.onStatusChange?.({ status, reason });
   }
 
   /**
-   * 发送握手消息
+   * 处理插件事件
    */
-  private async sendHandshake() {
-    const iframe = this.options.iframeGetter();
-    if (!iframe?.contentWindow) {
-      this.emitStatus('error', 'iframe 尚未就绪，无法握手');
-      return;
-    }
-
-    const context = await this.resolveContext();
-    this.pendingContext = context;
-    this.ready = false;
-
-    const message: PluginMessage<PluginContext> = {
-      source: 'alkaid-host',
-      type: 'handshake',
-      pluginKey: this.options.pluginKey,
-      version: this.protocolVersion,
-      payload: context,
-      timestamp: Date.now(),
-    };
-
-    iframe.contentWindow.postMessage(message, this.pluginOrigin);
-
-    if (this.handshakeTimer) window.clearTimeout(this.handshakeTimer);
-    this.handshakeTimer = window.setTimeout(() => {
-      if (!this.ready) {
-        this.emitStatus('error', '握手超时');
-        this.destroy();
-      }
-    }, this.handshakeTimeout);
+  private handleEvent(payload?: PluginEventPayload) {
+    if (!payload) return;
+    this.options.onEvent?.(payload);
   }
 
   /**
@@ -138,75 +120,27 @@ export class IframeHostBridge {
     if (data.source !== 'alkaid-plugin') return;
 
     switch (data.type) {
-      case 'handshake:ack':
-        this.onHandshakeAck(data.payload as PluginHandshakeAck | undefined);
-        break;
-      case 'heartbeat:ack':
-        this.lastHeartbeatAck = Date.now();
-        break;
-      case 'request':
-        this.handleRequest(data);
-        break;
-      case 'event':
+      case 'event': {
         this.handleEvent(data.payload as PluginEventPayload);
         break;
-      default:
+      }
+      case 'handshake:ack': {
+        this.onHandshakeAck(data.payload as PluginHandshakeAck | undefined);
         break;
+      }
+      case 'heartbeat:ack': {
+        this.lastHeartbeatAck = Date.now();
+        break;
+      }
+      case 'request': {
+        this.handleRequest(data);
+        break;
+      }
+      default: {
+        break;
+      }
     }
   };
-
-  /**
-   * 握手确认处理
-   */
-  private onHandshakeAck(ack?: PluginHandshakeAck) {
-    if (
-      ack?.supportedVersions &&
-      !ack.supportedVersions.includes(this.protocolVersion)
-    ) {
-      this.emitStatus('error', '协议版本不兼容');
-      this.destroy();
-      return;
-    }
-
-    this.ready = true;
-    this.lastHeartbeatAck = Date.now();
-    if (this.handshakeTimer) {
-      window.clearTimeout(this.handshakeTimer);
-      this.handshakeTimer = null;
-    }
-    if (this.pendingContext) {
-      // ready 后补发上下文
-      this.updateContext(this.pendingContext);
-    }
-    this.startHeartbeat();
-    this.emitStatus('ready');
-  }
-
-  /**
-   * 心跳调度
-   */
-  private startHeartbeat() {
-    if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = window.setInterval(() => {
-      if (this.destroyed) return;
-      const iframe = this.options.iframeGetter();
-      if (!iframe?.contentWindow) return;
-
-      const now = Date.now();
-      if (this.lastHeartbeatAck && now - this.lastHeartbeatAck > this.heartbeatInterval * 2) {
-        this.emitStatus('offline', '心跳超时');
-      }
-
-      const heartbeat: PluginMessage = {
-        source: 'alkaid-host',
-        type: 'heartbeat',
-        pluginKey: this.options.pluginKey,
-        version: this.protocolVersion,
-        timestamp: now,
-      };
-      iframe.contentWindow.postMessage(heartbeat, this.pluginOrigin);
-    }, this.heartbeatInterval);
-  }
 
   /**
    * 处理插件请求，限制仅允许相对路径
@@ -238,7 +172,11 @@ export class IframeHostBridge {
         type: 'response',
         pluginKey: this.options.pluginKey,
         requestId,
-        payload: { ok: false, status: 501, error: 'Host 未注册 onRequest 处理器' },
+        payload: {
+          ok: false,
+          status: 501,
+          error: 'Host 未注册 onRequest 处理器',
+        },
         timestamp: Date.now(),
       };
       iframe.contentWindow.postMessage(resp, this.pluginOrigin);
@@ -275,11 +213,30 @@ export class IframeHostBridge {
   }
 
   /**
-   * 处理插件事件
+   * 握手确认处理
    */
-  private handleEvent(payload?: PluginEventPayload) {
-    if (!payload) return;
-    this.options.onEvent?.(payload);
+  private onHandshakeAck(ack?: PluginHandshakeAck) {
+    if (
+      ack?.supportedVersions &&
+      !ack.supportedVersions.includes(this.protocolVersion)
+    ) {
+      this.emitStatus('error', '协议版本不兼容');
+      this.destroy();
+      return;
+    }
+
+    this.ready = true;
+    this.lastHeartbeatAck = Date.now();
+    if (this.handshakeTimer) {
+      window.clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
+    if (this.pendingContext) {
+      // ready 后补发上下文
+      this.updateContext(this.pendingContext);
+    }
+    this.startHeartbeat();
+    this.emitStatus('ready');
   }
 
   /**
@@ -326,9 +283,65 @@ export class IframeHostBridge {
   }
 
   /**
-   * 状态变更回调
+   * 发送握手消息
    */
-  private emitStatus(status: 'ready' | 'offline' | 'error', reason?: string) {
-    this.options.onStatusChange?.({ status, reason });
+  private async sendHandshake() {
+    const iframe = this.options.iframeGetter();
+    if (!iframe?.contentWindow) {
+      this.emitStatus('error', 'iframe 尚未就绪，无法握手');
+      return;
+    }
+
+    const context = await this.resolveContext();
+    this.pendingContext = context;
+    this.ready = false;
+
+    const message: PluginMessage<PluginContext> = {
+      source: 'alkaid-host',
+      type: 'handshake',
+      pluginKey: this.options.pluginKey,
+      version: this.protocolVersion,
+      payload: context,
+      timestamp: Date.now(),
+    };
+
+    iframe.contentWindow.postMessage(message, this.pluginOrigin);
+
+    if (this.handshakeTimer) window.clearTimeout(this.handshakeTimer);
+    this.handshakeTimer = window.setTimeout(() => {
+      if (!this.ready) {
+        this.emitStatus('error', '握手超时');
+        this.destroy();
+      }
+    }, this.handshakeTimeout);
+  }
+
+  /**
+   * 心跳调度
+   */
+  private startHeartbeat() {
+    if (this.heartbeatTimer) window.clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = window.setInterval(() => {
+      if (this.destroyed) return;
+      const iframe = this.options.iframeGetter();
+      if (!iframe?.contentWindow) return;
+
+      const now = Date.now();
+      if (
+        this.lastHeartbeatAck &&
+        now - this.lastHeartbeatAck > this.heartbeatInterval * 2
+      ) {
+        this.emitStatus('offline', '心跳超时');
+      }
+
+      const heartbeat: PluginMessage = {
+        source: 'alkaid-host',
+        type: 'heartbeat',
+        pluginKey: this.options.pluginKey,
+        version: this.protocolVersion,
+        timestamp: now,
+      };
+      iframe.contentWindow.postMessage(heartbeat, this.pluginOrigin);
+    }, this.heartbeatInterval);
   }
 }

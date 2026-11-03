@@ -48,11 +48,10 @@ const [Drawer, drawerApi] = useVbenDrawer({
           ]);
           roleList.value = rolesResult || [];
           // Pre-select user's current roles
-          if (userResult?.roles && Array.isArray(userResult.roles)) {
-            selectedRoleIds.value = userResult.roles.map((r) => r.id);
-          } else {
-            selectedRoleIds.value = [];
-          }
+          selectedRoleIds.value =
+            userResult?.roles && Array.isArray(userResult.roles)
+              ? userResult.roles.map((r) => r.id)
+              : [];
         } catch {
           roleList.value = [];
           selectedRoleIds.value = [];
@@ -87,15 +86,17 @@ function onCheckboxChange(roleId: number, checked: boolean) {
   <Drawer :title="getDrawerTitle">
     <Spin :spinning="loading">
       <div class="space-y-4">
-        <p class="text-muted-foreground mb-4 text-sm">
+        <p class="mb-4 text-sm text-muted-foreground">
           {{ $t('system.user.selectRolesHint') }}
         </p>
         <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div
             v-for="role in roleList"
             :key="role.id"
-            class="border-border hover:border-primary flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors"
-            @click="onCheckboxChange(role.id, !selectedRoleIds.includes(role.id))"
+            class="flex cursor-pointer items-center gap-3 rounded-lg border border-border p-3 transition-colors hover:border-primary"
+            @click="
+              onCheckboxChange(role.id, !selectedRoleIds.includes(role.id))
+            "
           >
             <Checkbox
               :checked="selectedRoleIds.includes(role.id)"
@@ -109,13 +110,16 @@ function onCheckboxChange(roleId: number, checked: boolean) {
                   {{ $t('system.role.systemRole') }}
                 </Tag>
               </div>
-              <p v-if="role.description" class="text-muted-foreground text-xs">
+              <p v-if="role.description" class="text-xs text-muted-foreground">
                 {{ role.description }}
               </p>
             </div>
           </div>
         </div>
-        <div v-if="roleList.length === 0 && !loading" class="text-muted-foreground py-8 text-center">
+        <div
+          v-if="roleList.length === 0 && !loading"
+          class="py-8 text-center text-muted-foreground"
+        >
           {{ $t('system.user.noRolesAvailable') }}
         </div>
       </div>

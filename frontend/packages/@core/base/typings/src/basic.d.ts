@@ -13,6 +13,11 @@ interface BasicUserInfo {
    */
   avatar: string;
   /**
+   * 用户权限码（resource:action 格式）
+   * User permission codes (resource:action format)
+   */
+  permissions?: string[];
+  /**
    * 用户昵称
    */
   realName: string;
@@ -28,11 +33,6 @@ interface BasicUserInfo {
    * 用户名
    */
   username: string;
-  /**
-   * 用户权限码（resource:action 格式）
-   * User permission codes (resource:action format)
-   */
-  permissions?: string[];
 }
 
 type ClassType = Array<object | string> | object | string;

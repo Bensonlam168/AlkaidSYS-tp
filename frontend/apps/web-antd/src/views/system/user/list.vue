@@ -14,12 +14,7 @@ import { Button, message, Modal } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
-import {
-  deleteUser,
-  getUserList,
-  resetUserPassword,
-  updateUserStatus,
-} from '#/api/system/user';
+import { deleteUser, getUserList, resetUserPassword } from '#/api/system/user';
 import { $t } from '#/locales';
 
 import { useColumns, useGridFormSchema, useResetPasswordSchema } from './data';
@@ -142,12 +137,12 @@ function onActionClick({
       onEdit(row);
       break;
     }
-    case 'roles': {
-      onAssignRoles(row);
-      break;
-    }
     case 'resetPassword': {
       onResetPassword(row);
+      break;
+    }
+    case 'roles': {
+      onAssignRoles(row);
       break;
     }
     default: {
@@ -161,7 +156,7 @@ function confirm(content: string, title: string) {
     Modal.confirm({
       content,
       onCancel() {
-        reject();
+        reject(new Error('用户取消操作'));
       },
       onOk() {
         resolve();
