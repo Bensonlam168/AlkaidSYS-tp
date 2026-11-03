@@ -1,24 +1,25 @@
 # 项目审计与审查报告目录
 
-> **最后更新**: 2026-10-31
+> **最后更新**: 2026-11-03
 >
 > **状态**: 活跃文档
 >
 > **说明**: 本目录包含当前项目活跃的审计、审查和分析报告。过期报告已归档至 `report_archive/` 目录。
 >
-> **计数口径**（2026-10-31 复核）：本目录顶层 29 个 `.md`，其中 28 份为报告 + 1 份本索引。
+> **计数口径**（2026-11-03 复核）：本目录顶层 30 个 `.md`，其中 29 份为报告 + 1 份本索引。
 >
-> **重启阅读入口**：[企业生产级重启审计与重建路线](enterprise-production-restart-audit-2026-10-31.md)。各历史报告是对应版本的审计快照，修复状态和相互冲突的结论以该报告的实证复核与证据边界为参考；报告不自动取代 Always Rules 或已接受的 ADR。
+> **当前阅读入口**：[整改实施评审报告](remediation-implementation-review-2026-11-03.md)与[后续开发指引](../todo/enterprise-restart-development-guide-2026-11-03.md)。原始问题与架构背景见[企业生产级重启审计与重建路线](enterprise-production-restart-audit-2026-10-31.md)。历史报告保留各自版本的快照，当前状态按最新评审的实证与证据边界阅读；报告不自动取代 Always Rules 或已接受的 ADR。
 
 ---
 
-## 当前报告（28 份报告 + 本索引，历史状态需结合源码复核）
+## 当前报告（29 份报告 + 本索引，历史状态需结合源码复核）
 
 ### 综合审计与审查
 
 | 文档名称 | 日期 | 状态 | 描述 |
 |----------|------|------|------|
-| [enterprise-production-restart-audit-2026-10-31.md](enterprise-production-restart-audit-2026-10-31.md) | 2026-10-31 | 🟢 **重启审计入口** | 当前提交的设计裁决、20 项主要问题、旧报告纠偏、资产去留、重启阶段与企业上线证据门槛 |
+| [remediation-implementation-review-2026-11-03.md](remediation-implementation-review-2026-11-03.md) | 2026-11-03 | 🟢 **当前评审入口** | 92 个整改提交的风险导向复核、20 项发现、原 ER 映射、真实 CI/门禁证据及开发裁决；配套[开发指引](../todo/enterprise-restart-development-guide-2026-11-03.md) |
+| [enterprise-production-restart-audit-2026-10-31.md](enterprise-production-restart-audit-2026-10-31.md) | 2026-10-31 | 历史审计基线 | 原始设计裁决、20 项主要问题、旧报告纠偏、资产去留、重启阶段与企业上线证据门槛 |
 | [production-readiness-analysis-2026-10-31.md](production-readiness-analysis-2026-10-31.md) | 2026-10-31 | 历史分析，部分结论需纠偏 | 图谱及生产就绪度分析；CI、公告、任务 API 等结论的本次复核见重启审计第 8 节 |
 | `quality-review-superpowers-2026-10-30.md` | 2026-10-30 | 🟢 **最新** | **代码质量审查报告**（4 Critical / 9 Important / 17 Minor）。四路独立审计 + 主审逐项复核。结论：不建议合并 |
 | `doc-review-design-docs-2026-10-30.md` | 2026-10-30 | 🟢 **最新** | **design/ 与 docs/ 文档质量分析**（184 份 / 83,674 行）。22 项问题：5 阻断 / 7 严重 / 7 中等 / 3 轻微（P0 五项已修复） |
@@ -171,7 +172,9 @@
 
 ### 最新审计报告
 
-- [企业生产级重启审计与重建路线](enterprise-production-restart-audit-2026-10-31.md) - 2026-10-31 ← **重启阅读入口**
+- [整改实施评审报告](remediation-implementation-review-2026-11-03.md) - 2026-11-03 ← **当前评审入口**
+- [后续开发指引](../todo/enterprise-restart-development-guide-2026-11-03.md) - 2026-11-03（工作包、依赖与验收门槛）
+- [企业生产级重启审计与重建路线](enterprise-production-restart-audit-2026-10-31.md) - 2026-10-31（历史审计基线）
 - [生产就绪度历史分析](production-readiness-analysis-2026-10-31.md) - 2026-10-31（结合重启审计勘误阅读）
 - [代码质量审查报告](quality-review-superpowers-2026-10-30.md) - 2026-10-30 ← 最新
 - [文档质量分析报告](doc-review-design-docs-2026-10-30.md) - 2026-10-30 ← 最新
@@ -193,5 +196,5 @@
 
 ---
 
-*索引文档最后更新: 2026-10-31*
+*索引文档最后更新: 2026-11-03*
 *下次审查时间: 2026-11-30*
