@@ -216,10 +216,30 @@ jobs:
     needs: collect-metrics
     steps:
       - name: 生成指标报告
+        # metrics-data 是一个 JSON 字符串。**不能**在 Actions 表达式里写
+        # `| fromjson | jq '.x'` —— GitHub 表达式没有 `|` 运算符（那是 jq 语法），
+        # 写进去会让整个 workflow 在加载期就解析失败（表现是每次推送都红、0 个 job）。
+        # 正确做法：把 JSON 通过 env 传进 shell，在 shell 里交给 jq。
+        env:
+          METRICS: ${{ needs.collect-metrics.outputs.metrics-data }}
         run: |
           echo "📋 生成Git工作流指标报告..."
           
-          cat > metrics-report.md << 'EOF'
+          # 下面三个值必须在 heredoc **之前**算好。
+          # 原因：heredoc 用的是 << 'EOF'（带引号），带引号的 heredoc **不做任何展开** ——
+          # 里面写的 $(echo ... | bc) 和 $(date ...) 不会执行，只会被原样写进报告。
+          # 所以要展开的值先算成变量，并把 heredoc 改成不带引号（<<EOF）让 ${VAR} 生效。
+          # 已确认：本 heredoc 体内除这三处外没有 shell 变量，也没有反引号，
+          # 改成不带引号不会误展开其它内容（Actions 表达式在配置阶段就已替换成字面值）。
+          QUALITY="${{ needs.collect-metrics.outputs.quality-score }}"
+          PERFORMANCE="${{ needs.collect-metrics.outputs.performance-score }}"
+          COMBINED=$(echo "scale=2; ($QUALITY + $PERFORMANCE) / 2" | bc)
+          LARGE_PRS="$(echo "$METRICS" | jq -r '.pull_requests.large_prs')"
+          TOTAL_PRS="$(echo "$METRICS" | jq -r '.pull_requests.total')"
+          LARGE_RATIO=$(echo "scale=2; ($LARGE_PRS / $TOTAL_PRS) * 100" | bc)
+          REPORT_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          cat > metrics-report.md <<EOF
           # Git工作流指标报告
           
           ## 📊 指标概览
@@ -228,47 +248,47 @@ jobs:
           
           ### 🎯 质量分数: ${{ needs.collect-metrics.outputs.quality-score }}/100
           ### ⚡ 性能分数: ${{ needs.collect-metrics.outputs.performance-score }}/100
-          ### 📈 综合分数: $(echo "scale=2; (${{ needs.collect-metrics.outputs.quality-score }} + ${{ needs.collect-metrics.outputs.performance-score }}) / 2" | bc)/100
+          ### 📈 综合分数: ${COMBINED}/100
           
           ## 📋 详细指标
           
           ### Pull Request 指标
-          - 总PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.total' }}
-          - 开放PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.open' }}
-          - 已关闭PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.closed' }}
-          - 已合并PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.merged' }}
-          - 合并率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.merge_rate' }}%
-          - 平均生命周期: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.average_lifetime_days' }} 天
-          - 大型PR数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.large_prs' }}
+          - 总PR数: $(echo "$METRICS" | jq -r '.pull_requests.total')
+          - 开放PR数: $(echo "$METRICS" | jq -r '.pull_requests.open')
+          - 已关闭PR数: $(echo "$METRICS" | jq -r '.pull_requests.closed')
+          - 已合并PR数: $(echo "$METRICS" | jq -r '.pull_requests.merged')
+          - 合并率: $(echo "$METRICS" | jq -r '.pull_requests.merge_rate')%
+          - 平均生命周期: $(echo "$METRICS" | jq -r '.pull_requests.average_lifetime_days') 天
+          - 大型PR数: $(echo "$METRICS" | jq -r '.pull_requests.large_prs')
           
           ### 提交指标
-          - 总提交数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.total' }}
-          - 功能提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.feat' }}
-          - 修复提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.fix' }}
-          - 文档提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.docs' }}
-          - 重构提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.refactor' }}
-          - 测试提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.test' }}
-          - 维护提交: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.chore' }}
-          - 提交规范率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.validity_rate' }}%
+          - 总提交数: $(echo "$METRICS" | jq -r '.commits.total')
+          - 功能提交: $(echo "$METRICS" | jq -r '.commits.feat')
+          - 修复提交: $(echo "$METRICS" | jq -r '.commits.fix')
+          - 文档提交: $(echo "$METRICS" | jq -r '.commits.docs')
+          - 重构提交: $(echo "$METRICS" | jq -r '.commits.refactor')
+          - 测试提交: $(echo "$METRICS" | jq -r '.commits.test')
+          - 维护提交: $(echo "$METRICS" | jq -r '.commits.chore')
+          - 提交规范率: $(echo "$METRICS" | jq -r '.commits.validity_rate')%
           
           ### CI/CD 指标
-          - 总运行次数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.total_runs' }}
-          - 成功运行次数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.successful_runs' }}
-          - 失败运行次数: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.failed_runs' }}
-          - 成功率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.success_rate' }}%
-          - 平均运行时间: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.average_duration_minutes' }} 分钟
+          - 总运行次数: $(echo "$METRICS" | jq -r '.ci_cd.total_runs')
+          - 成功运行次数: $(echo "$METRICS" | jq -r '.ci_cd.successful_runs')
+          - 失败运行次数: $(echo "$METRICS" | jq -r '.ci_cd.failed_runs')
+          - 成功率: $(echo "$METRICS" | jq -r '.ci_cd.success_rate')%
+          - 平均运行时间: $(echo "$METRICS" | jq -r '.ci_cd.average_duration_minutes') 分钟
           
           ## 📈 趋势分析
           
           ### 质量趋势
-          - 提交规范性: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.commits.validity_rate' }}%
-          - PR合并率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.merge_rate' }}%
-          - CI成功率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.success_rate' }}%
+          - 提交规范性: $(echo "$METRICS" | jq -r '.commits.validity_rate')%
+          - PR合并率: $(echo "$METRICS" | jq -r '.pull_requests.merge_rate')%
+          - CI成功率: $(echo "$METRICS" | jq -r '.ci_cd.success_rate')%
           
           ### 性能趋势
-          - PR处理速度: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.average_lifetime_days' }} 天
-          - CI运行效率: ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.ci_cd.average_duration_minutes' }} 分钟
-          - 大型PR比例: $(echo "scale=2; (${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.large_prs' }} / ${{ needs.collect-metrics.outputs.metrics-data | fromjson | jq '.pull_requests.total' }}) * 100" | bc)%
+          - PR处理速度: $(echo "$METRICS" | jq -r '.pull_requests.average_lifetime_days') 天
+          - CI运行效率: $(echo "$METRICS" | jq -r '.ci_cd.average_duration_minutes') 分钟
+          - 大型PR比例: ${LARGE_RATIO}%
           
           ## 🎯 改进建议
           
@@ -288,7 +308,7 @@ jobs:
           - 加强团队协作效率
           
           ---
-          *报告生成时间: $(date -u +%Y-%m-%dT%H:%M:%SZ)*
+          *报告生成时间: ${REPORT_TIME}*
           EOF
           
           echo "📄 指标报告已生成"
@@ -320,9 +340,13 @@ jobs:
   notify-low-scores:
     runs-on: ubuntu-latest
     needs: collect-metrics
-    if: |
-      ${{ needs.collect-metrics.outputs.quality-score < 70 || 
-          needs.collect-metrics.outputs.performance-score < 70 }}
+    # 注意：这里**不能**写成 `if: |` 的块标量。
+    # 块标量会让条件变成「换行 + 缩进」的多行字符串，GitHub 对 `if` 的求值规则是：
+    # 只要 `${{ }}` 前后还夹着其它字符（换行也算），整条条件就**恒为 true**，
+    # 于是这个「低分才通知」的 job 会每次都跑。actionlint 报的就是这一类：
+    #   if: condition "... || \n ..." is always evaluated to true because extra characters are around ${{ }}
+    # 写成单行、且不在 if 里套 ${{ }}（if 本身就是表达式上下文）即可。
+    if: needs.collect-metrics.outputs.quality-score < 70 || needs.collect-metrics.outputs.performance-score < 70
     steps:
       - name: 发送低分通知
         run: |

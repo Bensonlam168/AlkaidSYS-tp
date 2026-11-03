@@ -132,8 +132,14 @@ jobs:
           extensions: mbstring, xml, ctype, iconv, intl, pdo, pdo_mysql, dom, filter, gd, hash, json, pcre, session, simplexml, spl, tokenizer, curl
 
       - name: 安装PHP依赖
+        # `--no-scripts` 必须加：composer.json 的 post-autoload-dump 会执行
+        # `php think service:discover`，那是**应用启动**；而本 workflow 全程不生成 `.env`，
+        # 于是 env('REDIS_HOST') 回落到默认值 'redis'（docker-compose 的服务名），
+        # runner 上不可解析 → RedisHealthCheckService::boot() 抛异常 → 安装失败。
+        # 同一处缺陷在 backend-php-cs-fixer.yml / migrations-check.yml 已经修过并验证。
+        # 这里只做静态检查（敏感信息扫描等），根本不需要应用启动，所以也不必补 service:discover。
         run: |
-          composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader
+          composer install --no-progress --no-interaction --prefer-dist --optimize-autoloader --no-scripts
 
       - name: 敏感信息泄露检查
         run: |
