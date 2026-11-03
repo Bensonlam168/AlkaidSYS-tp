@@ -41,6 +41,36 @@ composer.phar
 !.env.example
 !.env.production.example
 
+# 前端构建配置：必须入库，否则干净检出 / CI 无法构建
+#
+# 为什么必须放行：上面的 .env 与 .env.* 本是给后端 ThinkPHP 凭证写的，但它们是**不带前导 /**
+# 的模式，在 gitignore 里等价于「任意层级」，于是把 frontend/ 下的构建配置一起挡住了。
+# 后果不是「少了个便利文件」，而是**干净检出直接构建失败**：apps/web-antd/index.html 里有
+# `<%= VITE_APP_TITLE %>`，而 VITE_APP_TITLE 只来自 apps/web-antd/.env，
+# 文件不在索引里 → 变量 undefined → vite-plugin-html 的 EJS 渲染抛错 → pnpm build:antd 失败。
+# 本地之所以「看起来能过」，只是因为磁盘上恰好有这些文件；CI 与新人克隆没有。
+# Vben 官方约定这类文件入库（只含构建期常量与占位符，如
+# VITE_APP_STORE_SECURE_KEY=please-replace-me-with-your-own-key），不含任何真实密钥。
+#
+# 为什么不能用 `!.env*` 这种大范围放行：那会把 .env.local、.env.*.local、
+# 以及将来某个真含密钥的 .env.<环境> 一起请回索引。下面逐条点名**具体文件名**，
+# 只有这 4 个环境是入库的；local 系（frontend/.gitignore 的 `*.local` / `.env.*.local`）
+# 与其它任何 .env.* 仍然保持忽略。
+#
+# 为什么用 `**` 而不是逐层写（如 /frontend/*/.env 与 /frontend/apps/*/.env 各来一遍）：
+#   「/ 后接 ** 再接 /」匹配**零个或多个**目录层级，因此 `/frontend/**/.env` 同时覆盖
+#   frontend/playground/.env 与 frontend/apps/web-antd/.env，4 条规则等价于 8 条；
+#   符合本文件头部维护约定第 2 条（一条包含另一条时只保留范围更广的那条）。
+#   并且将来新增 app 目录（frontend/apps/web-xxx/）时其 env 会自动入库 —— 若逐层枚举，
+#   新 app 的 env 会被静默忽略，**重演本次「干净检出构建失败」**。
+#   放宽的仅是「文件名」，不是「层级」：层级在 frontend/ 内，那里本来就只有前端构建配置。
+# 注：被整目录忽略的路径（node_modules 等）不受这些 ! 影响 ——
+#     gitignore 无法把「父目录已被忽略」的文件重新纳入。
+!/frontend/**/.env
+!/frontend/**/.env.development
+!/frontend/**/.env.production
+!/frontend/**/.env.analyze
+
 # ---------------------------------------------------------------------------
 # IDE 与系统
 # ---------------------------------------------------------------------------
