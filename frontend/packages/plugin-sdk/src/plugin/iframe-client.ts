@@ -16,21 +16,21 @@ type EventCallback = (eventName: string, data?: unknown) => void;
  * 插件侧 postMessage SDK，封装握手、心跳与请求/事件通信
  */
 export class IframePluginClient {
-  private readonly pluginKey: string;
-  private readonly protocolVersion: string;
   private readonly allowedHostOrigins: Set<string>;
-  private hostOrigin: string | null = null;
-  private hostWindow: Window | null = null;
-  private readyContext: PluginContext | null = null;
-  private readyCallbacks: ReadyCallback[] = [];
   private eventCallbacks: EventCallback[] = [];
+  private hostOrigin: null | string = null;
+  private hostWindow: null | Window = null;
   private pendingRequests = new Map<
     string,
     {
-      resolve: (value: PluginResponsePayload) => void;
       reject: (reason?: unknown) => void;
+      resolve: (value: PluginResponsePayload) => void;
     }
   >();
+  private readonly pluginKey: string;
+  private readonly protocolVersion: string;
+  private readyCallbacks: ReadyCallback[] = [];
+  private readyContext: null | PluginContext = null;
   private readyPromise: Promise<void>;
   private resolveReady!: () => void;
 
@@ -44,10 +44,26 @@ export class IframePluginClient {
   }
 
   /**
-   * 初始化监听
+   * 插件向 Host 发送事件
    */
-  start() {
-    window.addEventListener('message', this.handleMessage);
+  async emit(eventName: string, data?: unknown) {
+    await this.waitReady();
+    const message: PluginMessage = {
+      source: 'alkaid-plugin',
+      type: 'event',
+      pluginKey: this.pluginKey,
+      version: this.protocolVersion,
+      payload: { eventName, data },
+      timestamp: Date.now(),
+    };
+    this.postToHost(message);
+  }
+
+  /**
+   * 监听 Host 事件（含 context:update）
+   */
+  onEvent(callback: EventCallback) {
+    this.eventCallbacks.push(callback);
   }
 
   /**
@@ -59,13 +75,6 @@ export class IframePluginClient {
       return;
     }
     this.readyCallbacks.push(callback);
-  }
-
-  /**
-   * 监听 Host 事件（含 context:update）
-   */
-  onEvent(callback: EventCallback) {
-    this.eventCallbacks.push(callback);
   }
 
   /**
@@ -98,26 +107,34 @@ export class IframePluginClient {
   }
 
   /**
-   * 插件向 Host 发送事件
+   * 初始化监听
    */
-  async emit(eventName: string, data?: unknown) {
-    await this.waitReady();
-    const message: PluginMessage = {
-      source: 'alkaid-plugin',
-      type: 'event',
-      pluginKey: this.pluginKey,
-      version: this.protocolVersion,
-      payload: { eventName, data },
-      timestamp: Date.now(),
-    };
-    this.postToHost(message);
+  start() {
+    window.addEventListener('message', this.handleMessage);
   }
 
   /**
-   * 等待 ready
+   * Host 事件转发给回调
    */
-  private async waitReady() {
-    await this.readyPromise;
+  private dispatchEventFromHost(event?: { data?: unknown; eventName: string }) {
+    if (!event) return;
+    this.eventCallbacks.forEach((cb) => cb(event.eventName, event.data));
+  }
+
+  /**
+   * 生成请求 ID
+   */
+  private generateRequestId() {
+    return `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  /**
+   * 上下文更新
+   */
+  private handleContextUpdate(context?: PluginContext) {
+    if (!context) return;
+    this.readyContext = context;
+    this.dispatchEventFromHost({ eventName: 'context:update', data: context });
   }
 
   /**
@@ -131,7 +148,10 @@ export class IframePluginClient {
 
     // 首次握手记录 host 来源
     if (!this.hostOrigin) {
-      if (this.allowedHostOrigins.size > 0 && !this.allowedHostOrigins.has(event.origin)) {
+      if (
+        this.allowedHostOrigins.size > 0 &&
+        !this.allowedHostOrigins.has(event.origin)
+      ) {
         return;
       }
       this.hostOrigin = event.origin;
@@ -141,35 +161,57 @@ export class IframePluginClient {
     }
 
     switch (data.type) {
-      case 'handshake':
-        this.onHandshake(data);
-        break;
-      case 'heartbeat':
-        this.replyHeartbeat();
-        break;
-      case 'response':
-        this.handleResponse(data);
-        break;
-      case 'context:update':
+      case 'context:update': {
         this.handleContextUpdate(data.payload as PluginContext);
         break;
-      case 'event':
-        this.dispatchEventFromHost(data.payload as { eventName: string; data?: unknown });
+      }
+      case 'event': {
+        this.dispatchEventFromHost(
+          data.payload as { data?: unknown; eventName: string },
+        );
         break;
-      default:
+      }
+      case 'handshake': {
+        this.onHandshake(data);
         break;
+      }
+      case 'heartbeat': {
+        this.replyHeartbeat();
+        break;
+      }
+      case 'response': {
+        this.handleResponse(data);
+        break;
+      }
+      default: {
+        break;
+      }
     }
   };
+
+  /**
+   * 处理 Host 响应
+   */
+  private handleResponse(message: PluginMessage<PluginResponsePayload>) {
+    const requestId = message.requestId;
+    if (!requestId) return;
+    const resolver = this.pendingRequests.get(requestId);
+    if (!resolver) return;
+    this.pendingRequests.delete(requestId);
+    resolver.resolve(message.payload as PluginResponsePayload);
+  }
 
   /**
    * 握手处理，记录上下文并返回 ack
    */
   private onHandshake(message: PluginMessage<PluginContext>) {
-    this.readyContext =
+    // 用局部变量承接上下文，避免后续回调里出现非空断言
+    const readyContext =
       message.payload ??
       ({
         issuedAt: Date.now(),
       } satisfies PluginContext);
+    this.readyContext = readyContext;
     const ack: PluginMessage = {
       source: 'alkaid-plugin',
       type: 'handshake:ack',
@@ -186,7 +228,18 @@ export class IframePluginClient {
     this.resolveReady();
     this.readyCallbacks
       .splice(0)
-      .forEach((cb) => cb({ context: this.readyContext! }));
+      .forEach((cb) => cb({ context: readyContext }));
+  }
+
+  /**
+   * 发送消息到 Host
+   */
+  private postToHost(message: PluginMessage) {
+    if (!this.hostOrigin || !this.hostWindow) {
+      // 尚未握手成功，不发送
+      return;
+    }
+    this.hostWindow.postMessage(message, this.hostOrigin);
   }
 
   /**
@@ -204,49 +257,9 @@ export class IframePluginClient {
   }
 
   /**
-   * 处理 Host 响应
+   * 等待 ready
    */
-  private handleResponse(message: PluginMessage<PluginResponsePayload>) {
-    const requestId = message.requestId;
-    if (!requestId) return;
-    const resolver = this.pendingRequests.get(requestId);
-    if (!resolver) return;
-    this.pendingRequests.delete(requestId);
-    resolver.resolve(message.payload as PluginResponsePayload);
-  }
-
-  /**
-   * 上下文更新
-   */
-  private handleContextUpdate(context?: PluginContext) {
-    if (!context) return;
-    this.readyContext = context;
-    this.dispatchEventFromHost({ eventName: 'context:update', data: context });
-  }
-
-  /**
-   * Host 事件转发给回调
-   */
-  private dispatchEventFromHost(event?: { eventName: string; data?: unknown }) {
-    if (!event) return;
-    this.eventCallbacks.forEach((cb) => cb(event.eventName, event.data));
-  }
-
-  /**
-   * 发送消息到 Host
-   */
-  private postToHost(message: PluginMessage) {
-    if (!this.hostOrigin || !this.hostWindow) {
-      // 尚未握手成功，不发送
-      return;
-    }
-    this.hostWindow.postMessage(message, this.hostOrigin);
-  }
-
-  /**
-   * 生成请求 ID
-   */
-  private generateRequestId() {
-    return `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  private async waitReady() {
+    await this.readyPromise;
   }
 }

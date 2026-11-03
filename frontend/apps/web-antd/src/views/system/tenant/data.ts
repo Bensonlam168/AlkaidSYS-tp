@@ -70,7 +70,7 @@ export function useFormSchema(): VbenFormSchema[] {
       defaultValue: 10,
       componentProps: {
         min: 1,
-        max: 10000,
+        max: 10_000,
         placeholder: $t('system.tenant.maxUsersPlaceholder'),
       },
     },

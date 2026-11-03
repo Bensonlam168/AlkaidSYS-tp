@@ -25,7 +25,7 @@ export namespace LowcodeFormApi {
  */
 export async function getLowcodeForm(
   name: string,
-  opts: { withValidator?: boolean; withParsed?: boolean } = {},
+  opts: { withParsed?: boolean; withValidator?: boolean } = {},
 ) {
   const { withValidator = true, withParsed = true } = opts;
 

@@ -14,7 +14,9 @@ export default eventHandler((event) => {
   }
 
   // Get permissions for this user
-  const userCodes = MOCK_CODES.find((item) => item.username === userinfo.username);
+  const userCodes = MOCK_CODES.find(
+    (item) => item.username === userinfo.username,
+  );
   const permissions = userCodes?.codes || [];
 
   // Return in the format expected by /v1/auth/me

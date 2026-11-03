@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PluginMessage } from '../src/types';
+
 import { createPinia, setActivePinia } from 'pinia';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IframeHostBridge } from '../src/host/iframe-host-manager';
-import type { PluginMessage } from '../src/types';
 
 class MockContentWindow {
   sent: Array<{ message: any; targetOrigin?: string }> = [];
@@ -23,7 +24,7 @@ const createIframe = () => {
   return { iframe, mockWindow };
 };
 
-describe('IframeHostBridge', () => {
+describe('iframeHostBridge', () => {
   beforeEach(() => {
     // 为单测注入 Pinia 实例，避免 useStore 无激活实例报错
     setActivePinia(createPinia());

@@ -13,7 +13,9 @@ test.describe('Iframe Plugin Loader Page', () => {
       const sandbox = await iframeLocator.first().getAttribute('sandbox');
       await expect(sandbox ?? '').toContain('allow-scripts');
       await expect(sandbox ?? '').toContain('allow-same-origin');
-      const referrer = await iframeLocator.first().getAttribute('referrerpolicy');
+      const referrer = await iframeLocator
+        .first()
+        .getAttribute('referrerpolicy');
       await expect(referrer).toBe('no-referrer');
     } else {
       await expect(

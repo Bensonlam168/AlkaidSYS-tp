@@ -83,7 +83,10 @@ export default eventHandler(async (event) => {
       item.domain?.toLowerCase()?.includes(String(domain).toLowerCase()),
     );
   }
-  if (status && ['active', 'inactive', 'suspended'].includes(status as string)) {
+  if (
+    status &&
+    ['active', 'inactive', 'suspended'].includes(status as string)
+  ) {
     listData = listData.filter((item) => item.status === status);
   }
 

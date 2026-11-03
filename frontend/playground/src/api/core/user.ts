@@ -3,17 +3,17 @@ import type { UserInfo } from '@vben/types';
 import { requestClient } from '#/api/request';
 
 interface AuthMeResponse {
+  permissions: string[];
+  roles: number[];
   user: {
+    avatar?: string;
+    email: string;
     id: number;
+    name?: string;
+    status: string;
     tenant_id: number;
     username: string;
-    email: string;
-    name?: string;
-    avatar?: string;
-    status: string;
   };
-  roles: number[];
-  permissions: string[];
 }
 
 export async function getUserInfoApi(): Promise<UserInfo> {

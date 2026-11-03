@@ -9,7 +9,15 @@ import { setupVbenVxeTable, useVbenVxeGrid } from '@vben/plugins/vxe-table';
 import { get, isFunction, isString } from '@vben/utils';
 
 import { objectOmit } from '@vueuse/core';
-import { Button, Dropdown, Image, Menu, Popconfirm, Switch, Tag } from 'ant-design-vue';
+import {
+  Button,
+  Dropdown,
+  Image,
+  Menu,
+  Popconfirm,
+  Switch,
+  Tag,
+} from 'ant-design-vue';
 
 import { $t } from '#/locales';
 

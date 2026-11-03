@@ -85,7 +85,7 @@ function confirm(content: string, title: string) {
     Modal.confirm({
       content,
       onCancel() {
-        reject();
+        reject(new Error('用户取消操作'));
       },
       onOk() {
         resolve();

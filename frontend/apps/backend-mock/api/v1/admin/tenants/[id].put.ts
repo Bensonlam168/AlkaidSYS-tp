@@ -1,4 +1,9 @@
-import { defineEventHandler, getRouterParam, readBody, setResponseStatus } from 'h3';
+import {
+  defineEventHandler,
+  getRouterParam,
+  readBody,
+  setResponseStatus,
+} from 'h3';
 import { verifyAccessToken } from '~/utils/jwt-utils';
 import {
   unAuthorizedResponse,
@@ -23,7 +28,16 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readBody(event);
-  const { name, slug, domain, status, config, max_sites, max_users, expires_at } = body;
+  const {
+    name,
+    slug,
+    domain,
+    status,
+    config,
+    max_sites,
+    max_users,
+    expires_at,
+  } = body;
 
   // Validate slug format if provided
   if (slug && !/^[a-z0-9_-]+$/.test(slug)) {

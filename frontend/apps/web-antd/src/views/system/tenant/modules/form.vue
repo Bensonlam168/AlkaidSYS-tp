@@ -30,11 +30,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
     drawerApi.lock();
 
     try {
-      if (id.value) {
-        await updateTenant(id.value, values);
-      } else {
-        await createTenant(values);
-      }
+      await (id.value ? updateTenant(id.value, values) : createTenant(values));
       emits('success');
       drawerApi.close();
     } catch {

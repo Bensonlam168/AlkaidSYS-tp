@@ -88,7 +88,7 @@ function confirm(content: string, title: string) {
     Modal.confirm({
       content,
       onCancel() {
-        reject();
+        reject(new Error('用户取消操作'));
       },
       onOk() {
         resolve();
@@ -139,7 +139,9 @@ async function onDelete(row: SystemMenuApi.SystemMenu) {
   deleteMenu(row.id)
     .then(() => {
       message.success({
-        content: $t('ui.actionMessage.deleteSuccess', [row.meta?.title || row.name]),
+        content: $t('ui.actionMessage.deleteSuccess', [
+          row.meta?.title || row.name,
+        ]),
         key: 'action_process_msg',
       });
       onRefresh();

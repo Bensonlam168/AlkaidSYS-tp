@@ -62,18 +62,21 @@ test.describe('Tenant Headers Integration', () => {
       return null;
     });
 
-    const tenantState = (await tenantStateHandle.jsonValue()) as {
-      tenantId: number | null;
-      tenantCode?: string | null;
-      siteId?: number | null;
-      siteCode?: string | null;
-    } | null;
+    const tenantState = (await tenantStateHandle.jsonValue()) as null | {
+      siteCode?: null | string;
+      siteId?: null | number;
+      tenantCode?: null | string;
+      tenantId: null | number;
+    };
 
     expect(tenantState).not.toBeNull();
 
+    if (!tenantState) {
+      throw new Error('Tenant Store 未持久化到 localStorage，无法校验请求头');
+    }
+
     // 使用应用内部暴露的 E2E HTTP 助手发起一次真实业务请求
     await page.evaluate(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const globalAny = window as any;
       const tenantRequest = globalAny.__APP_TENANT_REQUEST__ as
         | ((url: string) => Promise<unknown>)
@@ -90,24 +93,24 @@ test.describe('Tenant Headers Integration', () => {
     expect(capturedHeaders.length).toBeGreaterThan(0);
     const headers = capturedHeaders[0];
 
-    const expectedTenantId = tenantState!.tenantId;
+    const expectedTenantId = tenantState.tenantId ?? null;
 
-    if (expectedTenantId != null) {
-      // 当 Tenant Store 中存在 tenantId 时，必须携带 X-Tenant-ID 请求头
-      expect(headers['x-tenant-id']).toBe(String(expectedTenantId));
-    } else {
+    if (expectedTenantId === null) {
       // 如果 Tenant Store 中没有 tenantId，则不应发送 X-Tenant-ID
       expect(headers['x-tenant-id']).toBeUndefined();
+    } else {
+      // 当 Tenant Store 中存在 tenantId 时，必须携带 X-Tenant-ID 请求头
+      expect(headers['x-tenant-id']).toBe(String(expectedTenantId));
     }
 
-    const expectedSiteId = tenantState!.siteId ?? null;
+    const expectedSiteId = tenantState.siteId ?? null;
 
-    if (expectedSiteId != null) {
-      // 当 Tenant Store 中存在 siteId 时，必须携带 X-Site-ID 请求头
-      expect(headers['x-site-id']).toBe(String(expectedSiteId));
-    } else {
+    if (expectedSiteId === null) {
       // 否则不应发送 X-Site-ID
       expect(headers['x-site-id']).toBeUndefined();
+    } else {
+      // 当 Tenant Store 中存在 siteId 时，必须携带 X-Site-ID 请求头
+      expect(headers['x-site-id']).toBe(String(expectedSiteId));
     }
   });
 });

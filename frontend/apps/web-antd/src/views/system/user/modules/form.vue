@@ -31,7 +31,7 @@ const [Drawer, drawerApi] = useVbenDrawer({
     try {
       if (id.value) {
         // Update: remove password field since it's not editable
-        const { password, ...updateData } = values;
+        const { password: _password, ...updateData } = values;
         await updateUser(id.value, updateData);
       } else {
         await createUser(values);

@@ -9,7 +9,11 @@ import { h } from 'vue';
 import { IconifyIcon } from '@vben/icons';
 
 import { z } from '#/adapter/form';
-import { getMenuList, isMenuNameExists, isMenuPathExists } from '#/api/system/menu';
+import {
+  getMenuList,
+  isMenuNameExists,
+  isMenuPathExists,
+} from '#/api/system/menu';
 import { $t } from '#/locales';
 
 /**
@@ -194,7 +198,9 @@ export function useFormSchema(formData?: { id?: number }): VbenFormSchema[] {
           return values.type === 'button' ? 'required' : null;
         },
         show: (values) => {
-          return ['button', 'catalog', 'embedded', 'menu'].includes(values.type);
+          return ['button', 'catalog', 'embedded', 'menu'].includes(
+            values.type,
+          );
         },
         triggerFields: ['type'],
       },

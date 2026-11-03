@@ -1,6 +1,7 @@
 import type { UserInfo } from '@vben/types';
 
 import { useTenantStore } from '@vben/stores';
+
 import { requestClient } from '#/api/request';
 
 /**
@@ -9,13 +10,13 @@ import { requestClient } from '#/api/request';
  */
 interface AuthMeResponse {
   user: {
+    avatar?: string;
+    email: string;
     id: number;
+    name?: string;
+    status: string;
     tenant_id: number;
     username: string;
-    email: string;
-    name?: string;
-    avatar?: string;
-    status: string;
   };
   roles: number[];
   /**

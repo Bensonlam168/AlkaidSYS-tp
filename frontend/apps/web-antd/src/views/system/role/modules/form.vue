@@ -8,11 +8,7 @@ import { useVbenDrawer } from '@vben/common-ui';
 import { Checkbox, Collapse, Spin } from 'ant-design-vue';
 
 import { useVbenForm } from '#/adapter/form';
-import {
-  createRole,
-  getAllPermissions,
-  updateRole,
-} from '#/api/system/role';
+import { createRole, getAllPermissions, updateRole } from '#/api/system/role';
 import { $t } from '#/locales';
 
 import { useFormSchema } from '../data';
@@ -47,11 +43,9 @@ const [Drawer, drawerApi] = useVbenDrawer({
     };
 
     try {
-      if (id.value) {
-        await updateRole(id.value, submitData);
-      } else {
-        await createRole(submitData);
-      }
+      await (id.value
+        ? updateRole(id.value, submitData)
+        : createRole(submitData));
       emits('success');
       drawerApi.close();
     } catch {
@@ -118,7 +112,7 @@ function togglePermission(permissionId: number, checked: boolean) {
     }
   } else {
     const index = selectedPermissions.value.indexOf(permissionId);
-    if (index > -1) {
+    if (index !== -1) {
       selectedPermissions.value.splice(index, 1);
     }
   }
@@ -146,7 +140,7 @@ function toggleGroupAll(group: SystemRoleApi.Permission[], checked: boolean) {
       }
     } else {
       const index = selectedPermissions.value.indexOf(permission.id);
-      if (index > -1) {
+      if (index !== -1) {
         selectedPermissions.value.splice(index, 1);
       }
     }
@@ -174,7 +168,7 @@ function getResourceName(resource: string): string {
 
     <!-- Permissions Section | 权限部分 -->
     <div class="mt-4">
-      <div class="text-base font-medium mb-2">
+      <div class="mb-2 text-base font-medium">
         {{ $t('system.role.permissions') }}
       </div>
       <Spin :spinning="loadingPermissions">
@@ -188,9 +182,7 @@ function getResourceName(resource: string): string {
                 <Checkbox
                   :checked="isGroupAllSelected(group)"
                   :indeterminate="isGroupIndeterminate(group)"
-                  @change="
-                    (e: any) => toggleGroupAll(group, e.target.checked)
-                  "
+                  @change="(e: any) => toggleGroupAll(group, e.target.checked)"
                   @click.stop
                 >
                   {{ $t('common.selectAll') }}
@@ -208,7 +200,7 @@ function getResourceName(resource: string): string {
                     <span class="font-medium">{{ permission.name }}</span>
                     <span
                       v-if="permission.description"
-                      class="text-gray-500 text-xs ml-1"
+                      class="ml-1 text-xs text-gray-500"
                     >
                       ({{ permission.description }})
                     </span>
@@ -218,7 +210,7 @@ function getResourceName(resource: string): string {
             </Collapse.Panel>
           </template>
         </Collapse>
-        <div v-else class="text-gray-500 text-center py-4">
+        <div v-else class="py-4 text-center text-gray-500">
           {{ $t('system.role.noPermissions') }}
         </div>
       </Spin>

@@ -1,14 +1,14 @@
 import { acceptHMRUpdate, defineStore } from 'pinia';
 
 interface TenantState {
-  /** 当前租户 ID */
-  tenantId: number | null;
-  /** 当前租户编码（预留字段） */
-  tenantCode: string | null;
-  /** 当前站点 ID（预留字段） */
-  siteId: number | null;
   /** 当前站点编码（预留字段） */
-  siteCode: string | null;
+  siteCode: null | string;
+  /** 当前站点 ID（预留字段） */
+  siteId: null | number;
+  /** 当前租户编码（预留字段） */
+  tenantCode: null | string;
+  /** 当前租户 ID */
+  tenantId: null | number;
 }
 
 /**
@@ -26,7 +26,7 @@ export const useTenantStore = defineStore('core-tenant', {
     /**
      * 设置当前租户上下文
      */
-    setTenant(payload: Partial<TenantState> | null) {
+    setTenant(payload: null | Partial<TenantState>) {
       if (!payload) {
         this.clearTenant();
         return;

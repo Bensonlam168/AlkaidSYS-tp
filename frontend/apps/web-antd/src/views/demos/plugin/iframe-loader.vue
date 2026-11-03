@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { Alert, Card, Space, Tag, Typography } from 'ant-design-vue';
+import { computed, ref, watch } from 'vue';
 
 import { IframePluginLoader } from '@alkaidsys/plugin-sdk';
+import { Alert, Card, Space, Tag, Typography } from 'ant-design-vue';
 
 import { requestClient } from '#/api/request';
 
@@ -12,14 +12,30 @@ const loading = ref(false);
 // 读取插件 URL 与安全白名单，允许通过环境变量配置
 const pluginUrl = computed(() => import.meta.env.VITE_PLUGIN_IFRAME_URL || '');
 
-const pluginOrigin = computed(() => {
+// 解析插件 URL：computed 保持纯计算，不在这里写日志
+const pluginUrlParse = computed(() => {
+  if (!pluginUrl.value) {
+    return { error: '', origin: '' };
+  }
   try {
-    return pluginUrl.value ? new URL(pluginUrl.value).origin : '';
+    return { error: '', origin: new URL(pluginUrl.value).origin };
   } catch (error) {
-    logs.value.unshift(`插件 URL 无效：${error}`);
-    return '';
+    return { error: `插件 URL 无效：${error}`, origin: '' };
   }
 });
+
+const pluginOrigin = computed(() => pluginUrlParse.value.origin);
+
+// 解析失败时补一条日志（副作用从 computed 移到 watch，避免在计算属性里改状态）
+watch(
+  () => pluginUrlParse.value.error,
+  (error) => {
+    if (error) {
+      logs.value.unshift(error);
+    }
+  },
+  { immediate: true },
+);
 
 const allowedOrigins = computed(() => {
   const extra = (import.meta.env.VITE_PLUGIN_IFRAME_ALLOWED_ORIGINS || '')
@@ -27,7 +43,7 @@ const allowedOrigins = computed(() => {
     .map((item) => item.trim())
     .filter(Boolean);
   const origins = pluginOrigin.value ? [pluginOrigin.value] : [];
-  return Array.from(new Set([...origins, ...extra]));
+  return [...new Set([...extra, ...origins])];
 });
 
 const csp = computed(() => import.meta.env.VITE_PLUGIN_IFRAME_CSP || undefined);
@@ -36,12 +52,17 @@ const csp = computed(() => import.meta.env.VITE_PLUGIN_IFRAME_CSP || undefined);
  * Host -> 后端代理：仅允许相对路径，自动附加 JWT/租户/站点/trace_id
  */
 async function handleRequest(
-  payload: { path: string; method?: string; body?: unknown; headers?: Record<string, string> },
+  payload: {
+    body?: unknown;
+    headers?: Record<string, string>;
+    method?: string;
+    path: string;
+  },
   context: {
-    token?: string | null;
-    tenantId?: number | string | null;
-    siteId?: number | string | null;
-    traceId?: string | null;
+    siteId?: null | number | string;
+    tenantId?: null | number | string;
+    token?: null | string;
+    traceId?: null | string;
   },
 ) {
   try {
@@ -51,10 +72,14 @@ async function handleRequest(
       method: payload.method ?? 'GET',
       data: payload.body,
       headers: {
-        ...(payload.headers ?? {}),
+        ...payload.headers,
         ...(context.token ? { Authorization: `Bearer ${context.token}` } : {}),
-        ...(context.tenantId != null ? { 'X-Tenant-ID': String(context.tenantId) } : {}),
-        ...(context.siteId != null ? { 'X-Site-ID': String(context.siteId) } : {}),
+        ...(context.tenantId === null || context.tenantId === undefined
+          ? {}
+          : { 'X-Tenant-ID': String(context.tenantId) }),
+        ...(context.siteId === null || context.siteId === undefined
+          ? {}
+          : { 'X-Site-ID': String(context.siteId) }),
         ...(context.traceId ? { 'X-Trace-Id': context.traceId } : {}),
       },
     });
@@ -68,11 +93,11 @@ async function handleRequest(
   }
 }
 
-function handleEvent(payload: { eventName: string; data?: unknown }) {
+function handleEvent(payload: { data?: unknown; eventName: string }) {
   logs.value.unshift(`收到事件: ${payload.eventName}`);
 }
 
-function handleStatusChange(detail: { status: string; reason?: string }) {
+function handleStatusChange(detail: { reason?: string; status: string }) {
   if (detail.status === 'error' && detail.reason) {
     logs.value.unshift(`握手失败: ${detail.reason}`);
   }
@@ -83,15 +108,20 @@ function handleStatusChange(detail: { status: string; reason?: string }) {
   <Space direction="vertical" size="middle" class="w-full">
     <Card title="iframe 插件加载器示例" bordered>
       <Typography.Paragraph>
-        该示例演示如何使用 <code>@alkaidsys/plugin-sdk</code> 实现 postMessage 握手、上下文注入与安全白名单校验。
+        该示例演示如何使用 <code>@alkaidsys/plugin-sdk</code> 实现 postMessage
+        握手、上下文注入与安全白名单校验。
       </Typography.Paragraph>
       <Typography.Paragraph>
-        使用前请在环境变量中设置 <code>VITE_PLUGIN_IFRAME_URL</code>（插件 URL），可选
-        <code>VITE_PLUGIN_IFRAME_ALLOWED_ORIGINS</code>（逗号分隔）与 <code>VITE_PLUGIN_IFRAME_CSP</code>。
+        使用前请在环境变量中设置 <code>VITE_PLUGIN_IFRAME_URL</code>（插件
+        URL），可选
+        <code>VITE_PLUGIN_IFRAME_ALLOWED_ORIGINS</code>（逗号分隔）与
+        <code>VITE_PLUGIN_IFRAME_CSP</code>。
       </Typography.Paragraph>
       <Space wrap>
         <Tag color="blue">URL: {{ pluginUrl || '未配置' }}</Tag>
-        <Tag color="geekblue">Origin 白名单: {{ allowedOrigins.join(', ') || '无' }}</Tag>
+        <Tag color="geekblue">
+          Origin 白名单: {{ allowedOrigins.join(', ') || '无' }}
+        </Tag>
         <Tag color="purple">CSP: {{ csp || '未配置' }}</Tag>
       </Space>
     </Card>
@@ -106,7 +136,7 @@ function handleStatusChange(detail: { status: string; reason?: string }) {
     <Card v-else title="插件沙箱">
       <IframePluginLoader
         :src="pluginUrl"
-        :plugin-key="'demo-plugin'"
+        plugin-key="demo-plugin"
         :allowed-origins="allowedOrigins"
         :csp="csp"
         :sandbox="['allow-scripts', 'allow-same-origin', 'allow-forms']"
@@ -119,10 +149,10 @@ function handleStatusChange(detail: { status: string; reason?: string }) {
     </Card>
 
     <Card title="事件与日志" size="small">
-      <Typography.Paragraph v-if="!logs.length">
+      <Typography.Paragraph v-if="logs.length === 0">
         暂无日志，等待插件事件或请求。
       </Typography.Paragraph>
-      <ul v-else class="list-disc pl-4 space-y-1">
+      <ul v-else class="list-disc space-y-1 pl-4">
         <li v-for="(item, index) in logs" :key="index">{{ item }}</li>
       </ul>
     </Card>
