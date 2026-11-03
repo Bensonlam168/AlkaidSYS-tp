@@ -125,12 +125,17 @@ RUN groupadd -g "${GID}" alkaid \
 # -----------------------------------------------------------------------------
 # 第 4 层：依赖（只有 composer.json / composer.lock 变化才会失效）
 #
-# --no-autoloader --no-scripts 是必须的：此刻 app/、domain/、infrastructure/、
-# plugins/ 都还没进来，
-#   - `--optimize-autoloader` 会据此生成残缺的 classmap；
-#   - post-autoload-dump 的 `php think service:discover` / `php think
-#     vendor:publish` 也需要源码存在才能正确生成 vendor/services.php。
-# 因此这两件事都推迟到源码就位后（下一个 RUN）执行。
+# --no-autoloader --no-scripts 是必须的，两条理由不同：
+#   1) 此刻 app/、domain/、infrastructure/、plugins/ 都还没进来，
+#      `--optimize-autoloader` 会据此生成**残缺的 classmap**；
+#   2) post-autoload-dump 是 `@php think service:discover` + `@php think vendor:publish`，
+#      而这两条在构建期**一条都不能跑**：
+#        - service:discover 会引导整个应用并触发 Redis 自检 → 构建必崩（详见第 5 层）；
+#        - vendor:publish 只在 config/{queue,swoole,trace}.php **不存在**时才写入，
+#          这三份配置都已随源码进版本库（实测输出 `File ... exist!`），
+#          所以构建期跑它是空操作，跳过不会少任何文件。
+# 于是：autoloader 推迟到源码就位后的下一个 RUN 生成；
+#       services.php 推迟到容器启动时由 docker/docker-entrypoint.sh 生成。
 # -----------------------------------------------------------------------------
 COPY composer.json composer.lock ./
 
@@ -150,9 +155,67 @@ RUN composer install \
 # -----------------------------------------------------------------------------
 COPY --chown=${UID}:${GID} . .
 
-RUN composer dump-autoload --optimize --no-dev --no-interaction \
+# --no-scripts 是**必须的**，不是「顺手省点时间」（RV-12）：
+#   根 composer.json 的 post-autoload-dump 是 `@php think service:discover` +
+#   `@php think vendor:publish`，而 `php think` 会把整个应用引导起来
+#   （App::initialize() -> initializer/BootService -> $app->boot()）。app/service.php
+#   注册的 RedisHealthCheckService 在 boot 阶段要做一次 Redis 读写自检，且
+#   config/session.php 恒为 type=cache + store=redis —— 也就是说**这条自检在任何
+#   环境都不跳过**。构建期没有 .env，也解析不到 compose 才有的 `redis` 主机名
+#   → 自检抛异常 → 构建必然失败。不是「某些环境偶发」，是必然。
+#   因此这里只生成 autoloader（源码已就位，classmap 是完整的），
+#   services.php 的生成挪到容器启动时（docker/docker-entrypoint.sh，第 7 层）。
+RUN composer dump-autoload --optimize --no-dev --no-interaction --no-scripts \
     && mkdir -p runtime \
     && chown -R "${UID}:${GID}" runtime
+
+# -----------------------------------------------------------------------------
+# 第 6 层：让运行期用户可写 vendor/services.php（RV-12）
+#
+# 为什么需要写权限：services.php 改由 entrypoint 在容器启动时生成（第 7 层），
+# 而运行期用户是 alkaid、整个 vendor/ 是 root 所有（第 4 层 composer install 以
+# root 执行）。两条路里选后者：
+#   a) 整份 vendor/ chown 给 alkaid —— 运行期进程就能改写任何依赖代码，镜像的
+#      可重现性直接作废；而且 chown -R 要给 vendor 下每个文件各记一条属主变更
+#      （本地 vendor 实测 8132 个文件，生产 --no-dev 会少一些），层体积与构建时间都白涨；
+#   b) **只预创建这一个文件**并 chown 它本身（本层做法）—— 不需要 vendor/ 目录的
+#      写权限：file_put_contents() 覆盖一个**已存在**的文件只需要该文件的写权限。
+#
+# 为什么预置 `return [];` 而不是一个 0 字节空文件（这点很关键）：
+#   - 0 字节文件会让框架 initializer/RegisterService 里的
+#     `array_merge($services, include $file)` 拿到 int 1 → TypeError，
+#     连 `php think service:discover` 自己都起不来（实测：include 空文件返回 1）；
+#   - `return [];` 是合法数组，discover 可以正常引导并覆盖它；
+#   - 它同时**不含任何服务**，所以 entrypoint 不能只看「文件存在」就跳过生成，
+#     否则容器会带着空 services.php 启动 —— 而 `php think swoole` 命令根本不存在。
+# -----------------------------------------------------------------------------
+RUN printf '%s\n' \
+        '<?php' \
+        '' \
+        '// 构建期占位：运行期由 docker/docker-entrypoint.sh 执行 php think service:discover 覆盖。' \
+        'return [];' \
+        > vendor/services.php \
+    && chown "${UID}:${GID}" vendor/services.php \
+    && chmod 0644 vendor/services.php
+
+# -----------------------------------------------------------------------------
+# 第 7 层：ENTRYPOINT —— 在容器启动时生成 vendor/services.php（RV-12）
+#
+# 必须在 `USER alkaid` **之前**：/usr/local/bin 是 root 所有的，切换用户后写不进去。
+# 用 `COPY --chmod=755` 而不是再跟一条 `chmod`：少一层，且脚本权限在构建期就固定，
+# 不取决于宿主机上那份文件的 umask/可执行位。
+# 为什么是 entrypoint 而不是构建期生成，见第 5 层的说明（构建期引导应用必崩）。
+#
+# ⚠️ 本 ENTRYPOINT **取代**了基础镜像的 /entrypoint.sh。对 TASK 模式（CMD 非空，
+#    本镜像正是这种）两者等价 —— 都以 `exec "$@"` 收尾；差别是基础镜像的
+#    /usr/local/boot/*.sh 不再执行。那些脚本只在 SERVICE 模式（CMD 为空）、或设置了
+#    AUTORELOAD_PROGRAMS / DISABLE_DEFAULT_SERVER / BLACKFIRE_* 时才做事，而第 3 层
+#    已明确本镜像不使用这些开关。若将来要用，把 entrypoint 最后一行改成
+#    `exec /entrypoint.sh "$@"` 委托回基础镜像即可。
+# -----------------------------------------------------------------------------
+COPY --chmod=755 docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 # 生产默认值：开发环境由 docker-compose.yml 的 environment（APP_ENV=dev）覆盖，
 # 且 .env 只会覆盖它自己定义过的键（Env::load 合并到 $_ENV 之上）。

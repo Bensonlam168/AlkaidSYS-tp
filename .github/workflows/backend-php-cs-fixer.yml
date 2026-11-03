@@ -104,23 +104,34 @@ jobs:
           --health-retries=10
 
     # ------------------------------------------------------------------------
-    # 为什么不再用 `docker compose -f docker-compose.yml up -d backend`
+    # 为什么本 job 在 runner 上直接跑 PHP，而不是 `docker compose up -d backend`
     # ------------------------------------------------------------------------
-    # 那条路径要先 `docker build`，而 Dockerfile 第 5 层的
-    #   RUN composer dump-autoload --optimize --no-dev --no-interaction
-    # 会触发 post-autoload-dump → `php think service:discover`。
-    # 构建期既没有 .env（.dockerignore 里被排除）也没有名为 'redis' 的主机，
-    # 于是**镜像构建本身**失败。实测 CI 日志（修复前）：
-    #   #22 [stage-0 10/10] RUN composer dump-autoload --optimize ...
-    #   #22 0.923 [RuntimeException]
-    #   #22 0.923 Redis health check failed (host=redis, port=6379):
-    #   #22 0.923   getaddrinfo for redis failed: Name or service not known
-    #   #22 0.933 Script @php think service:discover handling the post-autoload-dump
-    #   #22 0.933   event returned with error code 1
-    #   ERROR: process "/bin/sh -c composer dump-autoload ..." did not complete successfully
-    # 即：这条 job 的红**不在 workflow 里，而在 Dockerfile 里**，本文件改不动它。
-    # 改成在 runner 上直接跑 PHP：不依赖镜像、不依赖 Dockerfile，
-    # 且与同类 job（phpunit / migration-data-check）保持同一套安装参数。
+    # 先清掉一个**已经不成立**的旧理由（留档，别再拿它当依据）：
+    #   这条路径此前确实走不通 —— 它要先 `docker build`，而当时 Dockerfile 里
+    #   `RUN composer dump-autoload ...` 没带 `--no-scripts`，于是
+    #   post-autoload-dump → `php think service:discover` → Redis 自检在构建期抛异常
+    #   （构建期既没有 .env，也没有名为 'redis' 的主机）。当时记录的构建日志：
+    #     Redis health check failed (host=redis, port=6379):
+    #       getaddrinfo for redis failed: Name or service not known
+    #     Script @php think service:discover handling the post-autoload-dump event
+    #       returned with error code 1
+    #   那条失败路径已由 RV-12 从**根因**上修掉，而不是绕过：
+    #     - `composer dump-autoload` 补了 `--no-scripts`（构建期不再引导应用）；
+    #     - `vendor/services.php` 改由 `docker/docker-entrypoint.sh` 在**容器启动时**
+    #       生成（缺失/不可用时跑一次 service:discover，可用时跳过），镜像里只预创建
+    #       一个 `<?php return [];` 占位文件，并单独 chown 给运行期用户。
+    #   所以「镜像构建必然失败」不再是事实，不能继续拿它当本 job 不走镜像的理由。
+    #   ⚠️ 但 RV-12 的真实 `docker build` **尚未实跑**（见
+    #   docs/todo/open-items-2026-11-03.md §3.8），别把这段读成「构建已验收」。
+    #
+    # 现在仍然不用镜像的理由是**成本**，与构建成败无关：
+    #   1) 本 job 只读 app/lang/**、不碰数据库 —— `php think lang:check` 用不上整套编排；
+    #   2) 构建镜像要拉基础镜像（phpswoole/swoole:5.1-php8.2、composer:2.9.1）再跑一遍
+    #      composer install，分钟级且依赖外网；runner 上 composer 有 cache，低一个量级；
+    #   3) 与同类 job（本文件的 phpunit、migrations-check.yml 的 migration-data-check）共用同一套
+    #      安装参数，少一类「镜像里过了、runner 上没过」的差异，改动也只需要一处。
+    # 一句话：CI 不走镜像不是因为镜像坏了，而是它比本 job 需要的重得多。
+    # 「镜像能不能跑」属 RV-12 的独立验收（build + 起隔离实例），不要塞进 lang:check。
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

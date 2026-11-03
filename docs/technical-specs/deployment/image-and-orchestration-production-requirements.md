@@ -74,18 +74,37 @@ COPY --from=composer:2.9.1 /usr/bin/composer /usr/bin/composer
 ### 3.2 依赖层与源码层分离
 
 ```dockerfile
+# 第 4 层：依赖（只有 composer.json / composer.lock 变化才会失效）
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-interaction --prefer-dist --no-autoloader --no-scripts
+# 第 5 层：源码（autoloader 与 runtime/ 在源码就位后补做）
 COPY --chown=${UID}:${GID} . .
-RUN composer dump-autoload --optimize --no-dev --no-interaction
+RUN composer dump-autoload --optimize --no-dev --no-interaction --no-scripts \
+    && mkdir -p runtime \
+    && chown -R "${UID}:${GID}" runtime
+# 第 6 层：预创建 vendor/services.php 占位，只 chown 这一个文件
+RUN printf '%s\n' '<?php' '' 'return [];' > vendor/services.php \
+    && chown "${UID}:${GID}" vendor/services.php \
+    && chmod 0644 vendor/services.php
 ```
 
-两个容易踩的点：
+（第 7 层的 `ENTRYPOINT` 见 §5.1，不在本节重复。）
 
-- **必须保留 `--no-autoloader --no-scripts`**：执行 `composer install` 时 `app/`、`domain/`、
-  `infrastructure/`、`plugins/` 还没进镜像，此时做优化 autoload 会生成残缺 classmap，
-  `post-autoload-dump` 里的 `php think service:discover` / `php think vendor:publish` 也会因为
-  源码不存在而生成错误的 `vendor/services.php`。因此这两步推迟到 `COPY . .` 之后。
+三个容易踩的点：
+
+- **`composer install` 必须带 `--no-autoloader --no-scripts`**：执行时 `app/`、`domain/`、
+  `infrastructure/`、`plugins/` 还没进镜像，此时做优化 autoload 会生成残缺 classmap。
+- **`composer dump-autoload` 也必须带 `--no-scripts`（RV-12）**：源码就位后 classmap 是对的，
+  但 `post-autoload-dump` 里的 `@php think service:discover` 会把整个应用引导起来，
+  进而触发 `app/provider/RedisHealthCheckService` 的 Redis 读写自检；而
+  `config/session.php` 恒为 `type = cache` + `store = redis`，**这条自检在任何环境都不会跳过**。
+  构建期没有 `.env`、也解析不到只存在于 compose 网络里的 `redis` 主机名 → 自检抛异常
+  → 修复前 `docker build` **必然**失败（不是环境相关的偶发；RV-12 的原始失败日志即此路径）。
+  所以 `vendor/services.php` 改由容器启动时生成：`docker/docker-entrypoint.sh` 在它
+  缺失/为空时执行一次 `php think service:discover`，已有可用文件时跳过（幂等，不重复引导应用）。
+  镜像里只**预创建这一个文件**（内容 `return [];`）并 chown 给运行期用户 ——
+  覆盖已存在的文件只需要该文件的写权限，因此不必把整份 `vendor/` 交给运行期用户。
+  不能预置 0 字节文件：框架的 `array_merge($services, include $file)` 会拿到 `int 1` 而 TypeError。
 - **不需要拷 `plugins/workflow-engine/composer.json`**：根 `composer.json` 从未 `require`
   这个包，只把它做了 PSR-4 映射（`Alkaid\Workflow\Engine\` → `plugins/workflow-engine/src/`），
   插件自己的依赖不参与根依赖解析，拷进来也只会是无效层。
@@ -146,15 +165,23 @@ docs/ 44M   .git/ 38M   node_modules/ 37M   graphify-out/ 19M   tests/ 1.7M
 实测佐证：运行中容器的 **PID 1 就是 `php think swoole`（Swoole manager），而不是 supervisord**，
 `/var/run/supervisord.pid` 不存在。所以 `USER alkaid` 不改变启动形态，只改变属主。
 
+**RV-12 起，上面这条链路的前半段换成了本仓库自己的脚本**：Dockerfile 第 7 层把
+`ENTRYPOINT` 设为 `/usr/local/bin/docker-entrypoint.sh`（启动时确保 `vendor/services.php`
+存在，见 §3.2）。它同样只需要普通用户权限，也以 `exec "$@"` 收尾，所以
+「`USER alkaid` 不影响启动形态」这一结论不变（PID 1 仍是 `php think swoole`）。
+代价是基础镜像的 `/usr/local/boot/*.sh` 不再执行 —— 那些脚本只在 `SERVICE` 模式
+（CMD 为空）或设置了 `AUTORELOAD_PROGRAMS` / `DISABLE_DEFAULT_SERVER` / `BLACKFIRE_*`
+时才做事（见 §5.4）；若将来需要它们，把 entrypoint 最后一行改成
+`exec /entrypoint.sh "$@"` 委托回基础镜像即可。
+
 Swoole 监听 8080（>1024），非 root 绑定无特权端口限制。
 
 ### 5.2 `runtime/` 必须可写
 
-`runtime/` 被 `.dockerignore` 排除，镜像里没有这个目录，Dockerfile 里显式重建并授权：
-
-```dockerfile
-RUN mkdir -p runtime && chown -R "${UID}:${GID}" runtime
-```
+`runtime/` 被 `.dockerignore` 排除，镜像里没有这个目录，所以第 5 层那条 `RUN` 在
+`dump-autoload` 之后串上了 `&& mkdir -p runtime && chown -R "${UID}:${GID}" runtime`
+（完整命令见 §3.2）。它是**同一条 `RUN` 的续行**，不单独占一层。
+缺了这一步 Swoole 启动时会因写不了缓存而报错；验证见 §11 第 4 步的 `is_writable()`。
 
 ### 5.3 bind mount 的属主问题（开发环境最需要注意）
 
@@ -182,6 +209,10 @@ TASK 模式下 boot 脚本里有一个 `enable-blackfire-agent.sh`，它在检�
 **结论：非 root 镜像不接受 `AUTORELOAD_PROGRAMS`、`BLACKFIRE_*` 这几个变量。**
 热重载请用 `config/swoole.php` 自带的 `hot_update`（它由 `APP_DEBUG=true` 驱动，
 不依赖基础镜像的 autoreload）。
+
+RV-12 把 `ENTRYPOINT` 换成了本仓库的 `docker/docker-entrypoint.sh`（见 §5.1），基础镜像的
+boot 脚本不再执行，因此上面这几个变量现在是**被忽略**（空操作）而不是「报错」。
+结论不变：不要用它们 —— 被静默忽略比报错更容易误判成「功能没生效」。
 
 ---
 
@@ -482,6 +513,13 @@ docker history <image> --no-trunc | grep -i -E "password|secret" || echo "OK: no
 
 第 4 步的 `ps` 是本次改造最需要人工确认的一项：`service_healthy` 的依赖关系、
 健康探针、非 root 权限**只有真正起一次才知道对不对**。
+
+**RV-12 的验证状态（截至 2026-11-03 晚）**：第 3 步 `docker compose build backend`
+**尚未实跑过**（当时 Docker Hub 元数据请求失败，且依赖升级在并行进行）。
+因此「构建期不再引导应用、`vendor/services.php` 由 entrypoint 在启动时生成」目前只有
+源码级依据，**不等于镜像已构建/启动通过**。第 3、4 步必须在允许重建的环境里补跑，
+其结果才能作为
+[整改实施评审报告](../../report/remediation-implementation-review-2026-11-03.md) RV-12 的验收证据。
 
 ---
 

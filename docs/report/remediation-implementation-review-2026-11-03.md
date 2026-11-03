@@ -159,6 +159,37 @@
 
 **要求与验收**：构建期不访问运行依赖；完整处理服务发现和发布资源在构建/启动中的归属，不能只删脚本后遗漏生成物。从干净检出构建镜像，再用外置配置启动、检查平台依赖和业务冒烟。runner PHP job 的成功不能代替镜像验收。
 
+> ⚠️ **2026-11-03 晚 追记（原文保留，勿据此判断现状）**
+>
+> 本问题**已修复**（2026-11-03 晚随本轮修复提交），四处改动全在构建/启动期，不碰业务代码：
+>
+> 1. **第 5 层**的 `RUN composer dump-autoload --optimize --no-dev --no-interaction` 补上
+>    `--no-scripts`。源码此时已就位，classmap 是完整的；被跳过的只有 `post-autoload-dump`
+>    里的 `@php think service:discover` 与 `@php think vendor:publish` —— 构建期这两条都不能跑
+>    （前者会引导应用并触发 Redis 自检；后者在本仓库是空操作，三份配置都已随源码入库）。
+> 2. **新增 `docker/docker-entrypoint.sh`**：容器启动时若 `vendor/services.php` 不可用
+>    （缺失、为空、或 include 出来不是非空数组）就执行一次 `php think service:discover`，
+>    可用则跳过（幂等，不重复引导应用）；生成后自检（只信退出码会漏掉 `installed.json`
+>    缺失却 exit 0 的情况），任一步失败即非 0 退出；末行 `exec "$@"` 透传 CMD 与 compose 的 `command:`。
+> 3. **新增第 6 层**：预创建 `vendor/services.php`（内容 `<?php return [];`）并**只** chown 这一个
+>    文件给运行期用户。不 chown 整份 `vendor/` —— 那样运行期进程能改写任何依赖代码，镜像的
+>    可重现性直接作废；也不能预置 0 字节文件 —— 框架的 `array_merge($services, include $file)`
+>    会拿到 `int 1` 而 TypeError，连 `service:discover` 自己都起不来。
+> 4. **新增第 7 层**：`COPY --chmod=755 docker/docker-entrypoint.sh /usr/local/bin/` 加
+>    `ENTRYPOINT`，位置在 `USER alkaid` 之前（`/usr/local/bin` 归 root）。它取代基础镜像的
+>    `/entrypoint.sh`：TASK 模式（CMD 非空）下两者等价，都以 `exec "$@"` 收尾，差别是基础镜像的
+>    `/usr/local/boot/*.sh` 不再执行；若要回退，把末行改成 `exec /entrypoint.sh "$@"` 即可。
+>
+> **与原文「要求与验收」的差距必须说清楚：原文要求的镜像验收没有做。** 本轮取得的只是源码级结论
+> —— 层号、命令、`ENTRYPOINT` 行为可逐行比对，且这几处改动不在测试路径上，全量
+> **812 tests / 4780 assertions / 0 errors / 0 failures** 与基线一致（不能拿它当镜像证据）。
+> **真实 `docker build` 尚未执行**（当时 Docker Hub 元数据请求失败，且依赖升级在并行进行），
+> 所以「干净检出可构建、可启动、平台依赖与业务冒烟通过」仍是**未取得的证据**；
+> 不要把这轮修改读成「镜像已验证通过」。验收命令见
+> [镜像与编排的生产要求](../technical-specs/deployment/image-and-orchestration-production-requirements.md) §11。
+>
+> 本条注记由后续修复追加，**RV-12 原文一字未改**。
+
 ### RV-13：生产 env_file 的外部依赖地址被继承配置覆盖（P1，本轮生产编排缺陷）
 
 **[源码/实测]** [基础 compose](../../docker-compose.yml#L155) 在 backend.environment 写死 `mysql/redis/rabbitmq`；[生产 overlay](../../docker-compose.prod.yml#L92) 增加 env_file，仅覆盖 APP_ENV/DEBUG。Compose 的 environment 优先于 env_file。
@@ -194,6 +225,52 @@
 公告命中不等于应用已可利用；需要检查真实调用、部署平台和输入可信性。主门禁未阻断该风险；[PR 安全扫描](../../.github/workflows/branch-protection.yml#L368) 对 audit 失败只警告。
 
 **要求与验收**：先恢复锁文件一致性，再分批修补生产依赖并回归；每条例外记录可达性、缓解、负责人和到期日，不能全局忽略。插件依赖与第三方许可证来源另行核对；本次不作法律结论。
+
+> ⚠️ **2026-11-03 晚 追记（原文保留，勿据此判断现状）**
+>
+> 本问题**已修复**（2026-11-03 晚随本轮修复提交）。本节开头那两个命令的结果都已翻转：
+>
+> - `composer validate --no-check-publish --no-interaction`：**exit 2 → exit 0**（lock 与 json 重新同步；
+>   这是与公告无关的既有缺陷）；
+> - `composer audit --locked --no-dev`：**exit 1 → exit 0**，活跃公告 **24 → 0**；
+> - `phpunit/phpunit` 同步升到 11.5.57（require-dev，不在 `--no-dev` 那 24 条的口径内）。
+>
+> 实际升级（锁定版本前后对照）：
+>
+> | 包 | 原锁定版本 | 现锁定版本 | 原命中公告 |
+> | --- | --- | --- | --- |
+> | predis/predis | v3.2.0 | v3.7.0 | 1（Critical，CVE-2026-84372，Redis 命令注入） |
+> | guzzlehttp/guzzle | 7.10.0 | 7.16.1 | 9 |
+> | guzzlehttp/psr7 | 2.8.0 | 2.13.2 | 4 |
+> | phpseclib/phpseclib | 3.0.47 | 3.0.58 | 5 |
+> | league/flysystem | 3.30.2 | 3.36.0 | 1（Low） |
+> | symfony/process | v7.3.4 | v7.4.22 | 1 |
+> | symfony/cache | v7.3.6 | v7.4.22 | 1 |
+> | symfony/expression-language | v7.3.2 | v7.4.21 | 1（CVE-2026-109449） |
+>
+> **事实修正（原文「9 个生产包共 24 条公告」的统计本身没错，错的是当时的归因）**：上一轮把
+> `symfony/process` 与 `phpunit` 判成「无修复版本」，实际原因是 Composer 的
+> `audit.block-insecure` 把它们的升级一并拒绝了，而「拒绝」被读成了「没得升」。
+> 实测两者都有修复版本：`symfony/process` 的受影响区间有上界（`<= 7.3.11` / `<= 7.4.5`），
+> `phpunit` 的受影响上界是 11.5.50 —— 升过去即可，**这两个包没有加任何豁免**。
+>
+> **仍保留的唯一一条豁免**：`firebase/php-jwt` 的 `PKSA-y2cr-5h3j-g3ys`（CVE-2025-45769，Low）。
+> 唯一修复版本 7.0.0 是破坏性 major，强制 HS256 密钥 ≥32 字节；本仓库 `.env` 的
+> `JWT_SECRET=CHANGE_THIS_IN_PRODUCTION` 只有 25 字节、`tests/Unit/Auth/JwtServiceTest`
+> 用的是 16 字节的 `unit_test_secret`，升级会直接打断鉴权链路与测试。生产侧已由
+> `Infrastructure\Auth\JwtService::assertProductionSecretIsSecure()` 强制 ≥32 字节并拒绝公开占位符，
+> 故该公告**在生产不可利用**，影响面限于 dev/test 的弱密钥。
+> 豁免按 Composer 原生格式落地：`composer.json` 的 `config.audit.ignore`（**精确公告 ID**，
+> 不是包名通配、也不是全局关闭审计）加 `extra.audit-rationale`（`id => 理由`）。
+> 边界有两条要说清：① 它**没有到期日** —— 原文要求的「例外记录到期日」这一项仍未满足，
+> 后续要么把密钥轮换到 ≥32 字节后升到 `^7.0` 并删除该条，要么明确接受；
+> ② 许可证来源与 SBOM 核对仍未做，本节不构成供应链结论。
+>
+> 回归证据：全量 **812 tests / 4780 assertions / 0 errors / 0 failures**，与升级前基线一致
+> （`composer audit` 只回答「公告在不在」，测试只回答「现有行为有没有变」，两者都不能证明
+> 已被公告命中的调用路径在生产里不可达）。
+>
+> 本条注记由后续修复追加，**RV-15 原文一字未改**。
 
 ### RV-16：主前端会话和权限路由契约仍不一致（P1，原问题未处理）
 
@@ -257,8 +334,8 @@
 | ER-14 前端协议 | 未处理核心问题 | RV-16，站点持久化和权限编辑局部修复不代表会话闭环 |
 | ER-15 测试资源隔离 | 主要实现，扩大验收 | DB/子进程隔离与守卫已实现；需独立账号、DDL/Redis/队列/文件资源的并发隔离证据 |
 | ER-16 CI 信号 | 主要修复，发布覆盖不足 | 当前远端确实成功；RV-17，尚未覆盖完整交付 |
-| ER-17 依赖与供应链 | 部分 | vendor 出库有效；RV-15，lock 和公告未处理，许可证仍待核实 |
-| ER-18 生产产物 | 部分 | 基础加固有效；RV-12/13/14 阻断 |
+| ER-17 依赖与供应链 | 部分 | vendor 出库有效；RV-15，lock 和公告未处理，许可证仍待核实（追记 2026-11-03 晚：lock 已一致、活跃公告 24 → 0，见 RV-15 节；许可证仍未核实） |
+| ER-18 生产产物 | 部分 | 基础加固有效；RV-12/13/14 阻断（追记 2026-11-03 晚：RV-12 已修但 `docker build` 未实跑，RV-13/14 未处理） |
 | ER-19 运维证明 | 部分建设，无生产验收 | 探针已实现；RV-18、恢复/容量/故障演练缺证据 |
 | ER-20 能力台账 | 未完成统一闭环 | 旧 open-items 是实施备忘，不能代替完整能力台账；本表提供当前起点 |
 
@@ -292,6 +369,10 @@
 | `php scripts/check-rawsql-safety.php --strict` | exit 1，154 文本命中 | 人工审查清单，连注释也命中；不能把 154 当作 154 个 SQL/越租户漏洞 |
 
 原始本地日志、公告 JSON、探针与远端快照暂存于 `/tmp/alkaid-remediation-review-2026-11-03/`，该路径会被清理，不能充当长期版本证据。关键结果已写入本文；后续实施应将脱敏验收结果随对应 PR 保存。
+
+> **追记（2026-11-03 晚）**：上表是评审当时的快照，其中两行 composer 结果**已被后续修复改变** ——
+> `composer validate` 现为 exit 0、`composer audit --locked --no-dev` 现为 exit 0（活跃公告 24 → 0）。
+> 见 RV-15 小节的追记；其余各行仍是当时结果，未重测。
 
 ### 5.2 真实 CI 和仓库设置
 
