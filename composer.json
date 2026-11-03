@@ -78,6 +78,9 @@
     "extra": {
         "audit-rationale": {
             "PKSA-y2cr-5h3j-g3ys": "firebase/php-jwt < 7.0.0（PHP-JWT 密钥长度未校验 / 弱加密，low）。唯一修复版本 7.0.0 是破坏性 major：它强制 HS256 密钥长度 >= 32 字节（实测 16 字节与 25 字节密钥在 encode/decode 时抛 DomainException: Provided key is too short）。本仓库当前 .env 的 JWT_SECRET 为 CHANGE_THIS_IN_PRODUCTION（25 字节），tests/Unit/Auth/JwtServiceTest 使用 unit_test_secret（16 字节），升级会直接打断鉴权链路与测试。生产环境已由 Infrastructure\\Auth\\JwtService::assertProductionSecretIsSecure 强制 >= 32 字节且拒绝公开占位符，因此本公告在生产不可利用（影响面仅限 dev/test 的弱密钥）。处置：暂留 6.11，待轮换 .env 密钥并同步测试密钥后再升级到 ^7.0，届时必须删除本条 ignore。"
+        },
+        "audit-review-by": {
+            "PKSA-y2cr-5h3j-g3ys": "2027-03-31"
         }
     },
     "scripts": {

@@ -41,7 +41,7 @@ final class AgentsDocFactsGuardTest extends TestCase
     private const PHPUNIT_XML = 'phpunit.xml';
 
     /**
-     * A1：门禁表里**必须存在**的 7 行（check 名称 => [工作流文件, job id]）。
+     * A1：门禁表里**必须存在**的 8 行（check 名称 => [工作流文件, job id]）。
      *
      * 新增门禁不必改这里；但**重命名** check 会同时牵动三处：
      * GitHub 分支保护里勾选的 required check、AGENTS.md 的门禁表格、以及这份清单。
@@ -55,6 +55,7 @@ final class AgentsDocFactsGuardTest extends TestCase
         'Language Pack Consistency Check (i18n)' => ['.github/workflows/backend-php-cs-fixer.yml', 'lang-check'],
         'Migration Safety Check' => ['.github/workflows/migrations-check.yml', 'migrations-check'],
         'Migration Data Consistency Check' => ['.github/workflows/migrations-check.yml', 'migration-data-check'],
+        'Dependency Audit' => ['.github/workflows/backend-php-cs-fixer.yml', 'dependency-audit'],
         'PHPUnit Tests' => ['.github/workflows/backend-php-cs-fixer.yml', 'phpunit'],
     ];
 
@@ -196,7 +197,7 @@ final class AgentsDocFactsGuardTest extends TestCase
             }
         }
 
-        // 2) 钉死的 7 个 check：workflow 侧必须真的是这个名字（不依赖 AGENTS.md 写对）
+        // 2) 钉死的 8 个 check：workflow 侧必须真的是这个名字（不依赖 AGENTS.md 写对）
         foreach (self::REQUIRED_GATES as $checkName => [$workflowPath, $jobId]) {
             $yaml = self::readProjectFile($projectRoot, $workflowPath, $violations, 'A1 门禁表');
             if ($yaml === null) {
@@ -231,7 +232,7 @@ final class AgentsDocFactsGuardTest extends TestCase
             }
         }
 
-        // 3) 钉死的 7 个 check 必须在表格里出现且指向同一个 job（表格被删行就等于没人知道要勾它）
+        // 3) 钉死的 8 个 check 必须在表格里出现且指向同一个 job（表格被删行就等于没人知道要勾它）
         $documented = [];
         foreach ($rows as $row) {
             $documented[$row['checkName']] = $row;

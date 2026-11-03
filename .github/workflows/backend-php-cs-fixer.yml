@@ -405,3 +405,145 @@ jobs:
           path: |
             runtime/log/
           retention-days: 7
+
+  # ============================================================================
+  # Job 4: Dependency Audit（生产依赖公告门禁）
+  # ============================================================================
+  # 本 job 取代 `.github/workflows/branch-protection.yml` 里那段 warn-only 的
+  # `if composer audit; then ... else echo "不阻止构建，仅警告"; fi`：
+  # 那段写法**发现了也不红**，等于没有门禁。这里改成 fail-closed，并以
+  # `Dependency Audit` 这个名字作为（建议设 required 的）check 名称。
+  #
+  # 【刻意不写 needs —— 请勿"优化"回去】
+  #   required 的语义是「必须出现且为 success」。一旦挂了 needs，上游 job
+  #   （php-cs-fixer 当前恒红、lang-check / phpunit 要起 service）一失败，本 job
+  #   就被判 skipped → check 永久 pending → PR 永远合不进去。这与 R40 修掉的
+  #   「带 paths 过滤的 required check 永久 Expected」是同一类故障。
+  #   依赖公告与代码风格、语言包、业务测试全都正交，并行跑、各自结论。
+  #
+  # 【刻意不写 paths: —— 请勿"优化"回去】
+  #   带 `paths:` 的 required check 在未命中路径的 PR 上**根本不会触发**，
+  #   GitHub 会一直显示 `Expected — Waiting for status to be reported`。
+  #   本 job 只要 20 秒，没必要为省这点分钟数换一个永久 pending。
+  #
+  # 【为什么**不**跑 composer install】
+  #   `--locked` 只读 `composer.lock` 里的包与版本，公告比对完全在 Composer 进程内
+  #   完成，不需要 vendor/ 里真的存在这些包。装依赖纯属浪费（分钟级、依赖外网），
+  #   而且会额外引入失败面：本仓库的 post-autoload-dump 是
+  #   `@php think service:discover` + `@php think vendor:publish`，`composer install`
+  #   会**启动应用**（Redis 自检在无 .env 的 runner 上必然抛异常，见 php-cs-fixer job 注释）。
+  #   少一步 install，就少一类与本门禁无关的假红。
+  #
+  # 【为什么这条门禁不能像 env-check 那样脱离 packagist】
+  #   env-check 之所以能做成「零依赖、秒级」，是因为它校验的事实全在**仓库里**
+  #   （`.env.example` / `.env.production` / `EnvRequirementCatalog`），不查则已，查则自足。
+  #   依赖公告没有这个性质：公告库（packagist security-advisories API）本身就是
+  #   **外部数据**，仓库里没有它的副本。要让本门禁「不依赖网络」，就只能
+  #   a) 在仓库里存一份公告快照（会过期，比不查更危险：离线快照说「没有公告」
+  #      不等于今天没有公告），或 b) 只在依赖变更时才查（那就不再是门禁，
+  #      0-day 公告出现时锁文件一个字节都没变）。
+  #   两者都会把门禁变成「看起来有、实际答不了问题」，所以本 job 明确依赖网络，
+  #   并把「拿不到公告库」当成**失败**而不是**放行**（见下）。
+  #
+  # 【为什么 fail-closed 而不是 fail-open】
+  #   fail-open 的语义是「网络抖动 → 静默放行」。而这条门禁的全部价值就是
+  #   「拦住带已知公告的 lock」，一旦失败路径放行，攻击者/马虎的升级只需要让
+  #   audit 拿不到公告库（断网、代理、限流、甚至只是 packagist 5xx）即可绕过 ——
+  #   门禁退化成装饰。反过来，fail-closed 的代价是「基础设施抖动时红一次，
+  #   重跑即可恢复」，且报错信息会明确写「无法评估」而不是「发现漏洞」，
+  #   维护者不会把基础设施问题误读成自己的包有毒。代价明显更小。
+  #   为了让这个代价尽量小：加了 3 次重试（间隔 5s / 15s），
+  #   并且**只对「无法评估」重试** —— 已经拿到「有公告」的结论时立刻失败，
+  #   重试不会让公告消失，只会让人多等 20 秒。
+  #
+  # 【退出码语义：本机实测，不是凭记忆】
+  #   实测环境 Composer 2.9.1 / PHP 8.2.29（setup-php 装的也是 Composer 2.x，
+  #   本 job 显式用 `tools: composer:v2` 钉住大版本，避免 Composer 3 改语义）：
+  #     0   —— 没有未豁免的生产依赖公告（本仓库当前状态：1 条 low 已按 ID 豁免）
+  #     1   —— 发现公告，打印公告清单
+  #     100 —— 拿不到公告库 / 其它 Composer 未捕获异常
+  #            （实测 `COMPOSER_DISABLE_NETWORK=1 composer audit --locked --no-dev`
+  #             报 `HttpDownloader.php line 329: Network disabled, request canceled:
+  #             https://packagist.org/api/security-advisories/`，退出码 100）
+  #   ⚠️ 因此**绝不能**给 composer audit 加 `--ignore-unreachable`：
+  #      那个参数的语义正是「拿不到公告库就当没问题」，与本 job 的设计相反。
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    if: github.repository == 'Bensonlam168/AlkaidSYS-tp'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          # 不装任何扩展：composer audit 只读 composer.lock + 调公告 API，
+          # 不需要 pdo_mysql / redis / bcmath（对比 phpunit job 的扩展清单）。
+          coverage: none
+          # 钉住 Composer 大版本：下面的退出码语义是按 2.x 实测的，
+          # 大版本升级必须重新实测（0 / 1 / 100 的分工不能靠记忆）。
+          tools: composer:v2
+
+      # 只读 composer.lock，不 install（理由见 job 头部注释）。
+      - name: Audit production dependencies (fail-closed)
+        run: |
+          set -u
+
+          ATTEMPTS=3
+          DELAYS=(5 15)   # 第 1 次失败后等 5s，第 2 次失败后等 15s
+          attempt=1
+
+          while [ "$attempt" -le "$ATTEMPTS" ]; do
+            echo "::group::composer audit --locked --no-dev（第 ${attempt}/${ATTEMPTS} 次）"
+            # 必须临时关掉 -e：要拿 composer 的退出码，而不是让 shell 立刻退出。
+            # （GitHub Actions 的 bash 默认带 -e，不关的话第一行失败就跳出循环。）
+            set +e
+            audit_output=$(composer audit --locked --no-dev --no-interaction 2>&1)
+            audit_status=$?
+            set -e
+            printf '%s\n' "$audit_output"
+            echo "::endgroup::"
+
+            if [ "$audit_status" -eq 0 ]; then
+              echo "✅ 生产依赖没有未豁免的安全公告（composer audit exit=0）"
+              exit 0
+            fi
+
+            if [ "$audit_status" -eq 1 ]; then
+              # 这一个分支是「真的发现了问题」，不是基础设施故障 —— 不重试，直接红。
+              echo "❌ 发现依赖公告（composer audit exit=1），门禁不通过：清单见上面的表格。"
+              echo "   处置方式二选一："
+              echo "     1) 升级受影响的包（首选）；"
+              echo "     2) 确需暂留：写进 composer.json 的 config.audit.ignore，"
+              echo "        并在 extra.audit-rationale 写理由、extra.audit-review-by 写到期日"
+              echo "        （缺任一项 tests/Legacy/ComposerAuditConfigGuardTest 会红）。"
+              exit 1
+            fi
+
+            # 既不是 0 也不是 1 = 「无法评估」：拿不到公告库（DNS / 超时 / 代理 / 证书 /
+            # packagist 5xx）、Composer 自身异常等。
+            echo "⚠️ 无法评估依赖公告：composer audit 以 exit=${audit_status} 结束（既不是 0 也不是 1）。"
+            echo "   这**不是**「发现了漏洞」，而是「拿不到公告库，本轮什么都没评估」——"
+            echo "   例如网络 / 代理 / 防火墙故障、packagist 5xx、Composer 自身异常。"
+
+            if [ "$attempt" -lt "$ATTEMPTS" ]; then
+              delay=${DELAYS[$((attempt - 1))]}
+              echo "   ${delay}s 后重试（第 ${attempt}/${ATTEMPTS} 次已失败）..."
+              sleep "$delay"
+            fi
+
+            attempt=$((attempt + 1))
+          done
+
+          # fail-closed：重试仍拿不到公告库也必须红。
+          echo "❌ 依赖公告门禁**无法评估**（已重试 ${ATTEMPTS} 次，间隔 5s / 15s）："
+          echo "   拿不到 packagist 公告库，本轮没有评估生产依赖是否安全 —— 按 fail-closed 判红。"
+          echo "   这是基础设施问题，不是发现了漏洞；但「不知道」不能当成「没问题」，"
+          echo "   否则只要让 audit 断网就能绕过整条门禁。"
+          echo "   建议：确认本机 / CI 能访问 https://packagist.org/api/security-advisories/ ，恢复后重跑本 job。"
+          echo "   确需紧急合并：请在 PR 里留痕说明原因，并临时把 required 里的"
+          echo "   Dependency Audit 这个 check 去掉（本 job 内部**不会**自动放行）。"
+          exit 1

@@ -76,7 +76,34 @@ Frontend:
 | 语言包一致性 | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `lang-check` | **Language Pack Consistency Check (i18n)** | `php think lang:check` |
 | 迁移安全（**仅静态**） | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migrations-check` | **Migration Safety Check** | `php scripts/check-migrations.php --strict --no-db`（只跑 A/C，见下） |
 | 迁移数据一致性 | `.github/workflows/migrations-check.yml` | `Migrations Check` | `migration-data-check` | **Migration Data Consistency Check** | 起 MySQL + Redis service → `php think migrate:run` → `php scripts/check-migration-data.php --strict`（**不带** `--no-db`，见下） |
+| 依赖公告（**新增，建议设为 required**） | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `dependency-audit` | **Dependency Audit** | `composer audit --locked --no-dev --no-interaction`（**不装依赖**：`--locked` 只读 `composer.lock`；**无 service**；**fail-closed**：拿不到公告库也红，见下） |
 | **测试套件（建议设为 required）** | `.github/workflows/backend-php-cs-fixer.yml` | `Backend CI` | `phpunit` | **PHPUnit Tests** | `migrate:run` → `seed:run -s TestPlatformSeed` → `--testsuite=Unit` / `Feature` / `Legacy` → `route:verify`（**无 `needs`**，因此不会被上游跳过；见下） |
+
+**`Dependency Audit`（`dependency-audit`）：为什么是 fail-closed，为什么删不掉网络依赖**
+
+它只做一件事：`composer audit --locked --no-dev`，并在**退出码非 0** 时让门禁变红。
+三个设计点必须记住，别「优化」掉：
+
+- **不跑 `composer install`**：`--locked` 只读 `composer.lock` 里的包与版本，公告比对在 Composer 进程内完成，
+  不需要 `vendor/` 里真有这些包。装依赖纯属浪费，还会额外引入与本门禁无关的失败面
+  （本仓库的 `post-autoload-dump` 是 `php think service:discover` + `php think vendor:publish`，
+  `composer install` 会**启动应用**，无 `.env` 的 runner 上 Redis 自检必然抛异常 —— 详见该 workflow 的注释）。
+- **它不能像 `env-check` 那样「零依赖、秒级」**：`env-check` 校验的事实全在仓库里（模板 + catalog），查则自足；
+  依赖公告的**数据源本身就是 packagist 的 security-advisories API**，仓库里没有副本。
+  要么存一份会过期的快照（离线快照说「没有公告」不等于今天没有公告），要么只在依赖变更时才查
+  （0-day 公告出现时 `composer.lock` 一个字节都没变）—— 两者都会让门禁「看起来有、实际答不了问题」。
+  所以它明确依赖网络，并把「拿不到公告库」当成**失败**。
+- **fail-closed，不是 fail-open**：失败即放行的门禁，绕过方式就是断网 / 代理 / 等 packagist 5xx。
+  实测退出码语义（Composer 2.9.1 / PHP 8.2.29）：`0` = 无未豁免公告，`1` = 发现公告，
+  `100` = 拿不到公告库或其它 Composer 异常（`COMPOSER_DISABLE_NETWORK=1` 实测为 100）。
+  因此 job 内 3 次重试（间隔 5s / 15s），**只对 100 重试**；重试耗尽仍失败则 exit 1，
+  并把信息写成「无法评估」（基础设施问题）而不是「发现漏洞」（真的有毒）。
+  ⚠️ 绝不要给它加 `--ignore-unreachable` —— 那个参数的语义正是「拿不到公告库就当没问题」。
+
+防退化由 `tests/Legacy/ComposerAuditConfigGuardTest.php`（Legacy 套件，C1~C4）守住：
+`config.audit.block-insecure` 必须为 `true`；每条 `config.audit.ignore` 必须在 `extra.audit-rationale` 有非空理由、
+在 `extra.audit-review-by` 有未过期的 `YYYY-MM-DD` 到期日；`extra` 里不允许留 `ignore` 之外的孤儿条目。
+`branch-protection.yml` 里那段 warn-only 的 `composer audit`（发现也不红）已删除，避免出现两个语义冲突的来源。
 
 `check-migrations`（`scripts/check-migrations.php`）**已有工作流**（R41），但**CI 的静态 job 只跑 A/C**：
 `check A` 迁移版本唯一性、`check C` 的 up()/down() 与 change() 规则 —— 这两项与环境无关。
@@ -113,8 +140,9 @@ docker exec alkaid-backend php scripts/check-migration-data.php --strict  # 不�
 ```
 Settings → Branches → Branch protection rule（或 Rulesets）
   → Require status checks to pass before merging
-  → 搜索并勾选上表 6 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E/F 已被守住；
-    `Migration Data Consistency Check` 只覆盖「全新库」里的迁移数据一致性，不等于既有库的账本没漂移）
+  → 搜索并勾选上表 7 个名称（`Migration Safety Check` 只覆盖静态检查 A/C，勾选它不等于 B/D/E/F 已被守住；
+    `Migration Data Consistency Check` 只覆盖「全新库」里的迁移数据一致性，不等于既有库的账本没漂移；
+    `Dependency Audit` 只比对生产依赖的公告清单，且拿不到公告库时会以「无法评估」判红，不是发现了漏洞）
 ```
 
 ✅ **`paths:` 过滤与 required 的冲突已解决（R40）**：上表三个配置类工作流
@@ -155,7 +183,8 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 
 #### 把 `PHPUnit Tests` 设为 required（步骤）
 
-**为什么需要它**：上表的门禁全是**静态**检查，没有一条真正跑业务测试。具体到这个仓库最近修的一类问题——
+**为什么需要它**：上表其余门禁都是**静态或轻量**检查（文档链接、XML 配置、`.env` 模板、语言包、迁移脚本、
+依赖公告比对），没有一条真正跑业务测试。具体到这个仓库最近修的一类问题——
 `EnvRequirementCatalog::template_required` 的键集合**被换成另外 N 个键**（数量不变、键名不同）——
 脚本层的检查 D 与 D0 下限断言都看不见（下限只约束数量），只有
 `tests/Unit/Scripts/EnvExampleTemplateRequiredConsistencyTest` 里「钉死 6 键与顺序」那条能抓，
@@ -187,7 +216,7 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 4. 在搜索框里按**准确的 check 名称**搜索并勾选：**`PHPUnit Tests`**
    （名称取自 `.github/workflows/backend-php-cs-fixer.yml` 的 `jobs.phpunit.name`；
    不是 YAML 文件名，也不是 job id `phpunit`）。
-5. 同时把上表另外六个名称一并勾上（若尚未勾选）。
+5. 同时把上表另外七个名称一并勾上（若尚未勾选）。
 6. 保存后**实测一次**：开一个只改 `app/` 一个字（或加一行注释）的 PR，确认
    ① `PHPUnit Tests` 出现在 checks 列表里、② 它**不是** `Expected` 而是真的在跑、
    ③ 把它手动标红时合并按钮确实被禁用。
@@ -197,6 +226,7 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 - 该 job 带 `if: github.repository == 'Bensonlam168/AlkaidSYS-tp'`。**来自 fork 的 PR 不会触发它**
   → 对 fork PR 而言它永远是「缺失」，会被判为 pending。当前是单仓库开发、无 fork PR 流，
   所以不构成问题；**若将来接收 fork PR，必须先把这条 `if:` 去掉**（代价是 fork PR 会消耗本仓库 CI 分钟数）。
+  同一条边界也适用于 `dependency-audit`（`Dependency Audit`）：它有同样的 `if:`，同样要对 fork PR 先去掉。
 - 该 job 会跑 `migrate:run` + `seed:run -s TestPlatformSeed`，比静态门禁慢一个数量级（分钟级）。
   这是它的价值所在，不要为了省时间把它改成 `--testsuite=Unit` 单套件。
 
@@ -204,7 +234,7 @@ R41 新增的 `migrations-check.yml` 自建立起就不带 `paths:`，与上述�
 
 - [ ] `develop` 与 `main` **都**建了 branch protection rule（或 ruleset），不只默认分支
 - [ ] 已勾选 `Require status checks to pass before merging`
-- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`、`Migration Data Consistency Check`（后两者分别只覆盖「静态 A/C」与「全新库的数据一致性」，见上文 ⚠️）
+- [ ] 已勾选：`Documentation Consistency`、`PHPUnit Config Consistency`、`Env Example Consistency`、`Language Pack Consistency Check (i18n)`、`Migration Safety Check`、`Migration Data Consistency Check`、`Dependency Audit`（前两个迁移类分别只覆盖「静态 A/C」与「全新库的数据一致性」；`Dependency Audit` 是 fail-closed 的公告门禁，见上文 ⚠️）
 - [ ] 已确认 `PHPUnit Tests` **先在真实 CI 上跑绿**，再按上文「把 `PHPUnit Tests` 设为 required」的步骤勾选（红的 check 设为 required = 锁死仓库）
 - [ ] 已确认四份工作流（上表前三个 + `migrations-check.yml`）**不再有** `paths:`（R40 已完成；`grep -cE '^[[:space:]]*paths:' .github/workflows/docs-check.yml .github/workflows/phpunit-config-check.yml .github/workflows/env-check.yml .github/workflows/migrations-check.yml` 均应为 `0`，注释里提到 `paths:` 不算），不会出现永久 `Expected`
 - [ ] 已勾选 `Require review from Code Owners`，且已排除「owner 本人无法合并」的单人瓶颈

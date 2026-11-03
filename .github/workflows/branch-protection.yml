@@ -357,20 +357,10 @@ jobs:
         with:
           php-version: ${{ env.PHP_VERSION }}
 
-      - name: 扫描PHP依赖漏洞
-        run: |
-          echo "🔍 扫描PHP依赖漏洞..."
-          
-          # 安装audit工具
-          composer global require enlightn/security-checker
-          
-          # 检查依赖漏洞
-          if composer audit; then
-            echo "✅ PHP依赖安全检查通过"
-          else
-            echo "⚠️ 发现PHP依赖安全问题，请检查"
-            # 不阻止构建，仅警告
-          fi
+      # PHP 依赖公告已由 Backend CI 的 Dependency Audit 门禁负责
+      # （.github/workflows/backend-php-cs-fixer.yml 的 jobs.dependency-audit，fail-closed）。
+      # 这里原本有一段 `composer global require enlightn/security-checker` + `if composer audit; then ... else 仅警告; fi`，
+      # 它的语义是「发现了也不红」，与新门禁直接冲突，且会让「PHP 依赖到底谁在管」出现两个来源 —— 故删除。
 
       - name: 扫描前端依赖漏洞（如果存在）
         run: |
