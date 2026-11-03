@@ -14,17 +14,17 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\interface\IActionInterface;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\processor\handler\CreateTaskHandler;
-use madong\ingenious\processor\handler\StartSubProcessHandler;
+use Alkaid\Workflow\Engine\interface\IActionInterface;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\processor\handler\CreateTaskHandler;
+use Alkaid\Workflow\Engine\processor\handler\StartSubProcessHandler;
 
 /**
  * @method getTarget()
  * @method setName($getId)
  * @method setTo($getTargetNodeId)
- * @method setSource(\madong\ingenious\model\NodeModel $nodeModel)
+ * @method setSource(\Alkaid\Workflow\Engine\model\NodeModel $nodeModel)
  * @method setExpr($getStr)
  * @method setTarget(mixed $nodeModel)
  * @method setEnabled(true $true)
@@ -43,7 +43,7 @@ class TransitionModel extends BaseModel implements IActionInterface
     private bool $enabled = false; // 是否可执行
 
     /**
-     * @param \madong\ingenious\interface\IExecution $execution
+     * @param \Alkaid\Workflow\Engine\interface\IExecution $execution
      *
      * @throws \ReflectionException
      */

@@ -14,8 +14,8 @@
 
 namespace Alkaid\Workflow\Engine\model\logicflow;
 
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\model\BaseModel;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\model\BaseModel;
 
 class LfModel extends BaseModel
 {

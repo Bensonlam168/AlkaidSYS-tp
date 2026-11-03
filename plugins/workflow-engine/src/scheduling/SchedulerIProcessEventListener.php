@@ -14,10 +14,10 @@
 
 namespace Alkaid\Workflow\Engine\scheduling;
 
-use madong\ingenious\event\IProcessEventListener;
-use madong\ingenious\event\ProcessEvent;
-use madong\ingenious\core\ServiceContext;
-use madong\ingenious\enums\ProcessEventTypeEnum;
+use Alkaid\Workflow\Engine\event\IProcessEventListener;
+use Alkaid\Workflow\Engine\event\ProcessEvent;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
+use Alkaid\Workflow\Engine\enums\ProcessEventTypeEnum;
 use madong\helper\Dict;
 
 class SchedulerIProcessEventListener implements IProcessEventListener

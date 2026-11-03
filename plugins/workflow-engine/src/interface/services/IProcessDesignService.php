@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessDesign;
+use Alkaid\Workflow\Engine\interface\model\IProcessDesign;
 
 interface IProcessDesignService
 {

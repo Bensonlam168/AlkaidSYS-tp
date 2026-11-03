@@ -12,25 +12,25 @@
  * Official Website: https://madong.tech
  */
 
-namespace Alkaid\Workflow\Engine\core;
+namespace Alkaid\Workflow\Engine\Core;
 
-use madong\ingenious\cfg\Configuration;
-use madong\ingenious\ex\LFlowException;
+use Alkaid\Workflow\Engine\cfg\Configuration;
+use Alkaid\Workflow\Engine\ex\LFlowException;
 use madong\interface\IDict;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\IProcessEngines;
-use madong\ingenious\interface\model\IProcessInstance;
-use madong\ingenious\libs\traits\ProcessServiceTrait;
-use madong\ingenious\libs\utils\ProcessFlowUtils;
-use madong\ingenious\libs\utils\StringHelper;
-use madong\ingenious\model\EndModel;
-use madong\ingenious\model\TaskModel;
-use madong\ingenious\model\TransitionModel;
-use madong\ingenious\parser\ModelParser;
-use madong\ingenious\enums\err\LfErrEnum;
-use madong\ingenious\enums\ProcessConstEnum;
-use madong\ingenious\enums\ProcessInstanceStateEnum;
-use madong\ingenious\enums\ProcessTaskStateEnum;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\IProcessEngines;
+use Alkaid\Workflow\Engine\interface\model\IProcessInstance;
+use Alkaid\Workflow\Engine\libs\traits\ProcessServiceTrait;
+use Alkaid\Workflow\Engine\libs\utils\ProcessFlowUtils;
+use Alkaid\Workflow\Engine\libs\utils\StringHelper;
+use Alkaid\Workflow\Engine\model\EndModel;
+use Alkaid\Workflow\Engine\model\TaskModel;
+use Alkaid\Workflow\Engine\model\TransitionModel;
+use Alkaid\Workflow\Engine\parser\ModelParser;
+use Alkaid\Workflow\Engine\enums\err\LfErrEnum;
+use Alkaid\Workflow\Engine\enums\ProcessConstEnum;
+use Alkaid\Workflow\Engine\enums\ProcessInstanceStateEnum;
+use Alkaid\Workflow\Engine\enums\ProcessTaskStateEnum;
 
 class ProcessEngines implements IProcessEngines
 {

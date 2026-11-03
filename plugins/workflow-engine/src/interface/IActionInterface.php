@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\core\Execution;
+use Alkaid\Workflow\Engine\Core\Execution;
 
 /**
  * 模型行为

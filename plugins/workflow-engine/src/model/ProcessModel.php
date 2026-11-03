@@ -14,13 +14,13 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\core\ServiceContext;
-use madong\ingenious\ex\LFlowException;
-use madong\ingenious\interface\ICandidateHandler;
-use madong\ingenious\interface\nodes\IProcessModel;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\libs\utils\InstanceFactory;
-use madong\ingenious\libs\utils\StringHelper;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
+use Alkaid\Workflow\Engine\ex\LFlowException;
+use Alkaid\Workflow\Engine\interface\ICandidateHandler;
+use Alkaid\Workflow\Engine\interface\nodes\IProcessModel;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\libs\utils\InstanceFactory;
+use Alkaid\Workflow\Engine\libs\utils\StringHelper;
 
 /**
  * @method setName($getName)
@@ -58,7 +58,7 @@ class ProcessModel extends BaseModel implements IProcessModel
     /**
      * 获取开始节点
      *
-     * @return \madong\ingenious\model\StartModel|null
+     * @return \Alkaid\Workflow\Engine\model\StartModel|null
      */
     public function getStart(): ?StartModel
     {
@@ -77,7 +77,7 @@ class ProcessModel extends BaseModel implements IProcessModel
      *
      * @param string $nodeName
      *
-     * @return \madong\ingenious\model\NodeModel|null
+     * @return \Alkaid\Workflow\Engine\model\NodeModel|null
      */
     public function getNode(string $nodeName): ?NodeModel
     {
@@ -143,7 +143,7 @@ class ProcessModel extends BaseModel implements IProcessModel
     /**
      * 根据任务模型获取候选人
      *
-     * @param \madong\ingenious\model\TaskModel $taskModel
+     * @param \Alkaid\Workflow\Engine\model\TaskModel $taskModel
      *
      * @return array
      */

@@ -14,8 +14,8 @@
 
 namespace Alkaid\Workflow\Engine\domain;
 
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\IProcessInterceptor;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\IProcessInterceptor;
 
 /**
  * 任务拦截器-处理代理人

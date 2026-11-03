@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\libs\utils;
 
-use madong\ingenious\interface\IExpression;
+use Alkaid\Workflow\Engine\interface\IExpression;
 use InvalidArgumentException;
 use ParseError;
 use Throwable;

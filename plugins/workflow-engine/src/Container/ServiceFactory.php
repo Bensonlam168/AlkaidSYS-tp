@@ -77,7 +77,7 @@ class ServiceFactory
         $defaultConfig = [
             'service_dependencies' => [
                 // 核心服务
-                'processEngines' => \Alkaid\Workflow\Engine\core\ProcessEngines::class,
+                'processEngines' => \Alkaid\Workflow\Engine\Core\ProcessEngines::class,
                 'configuration' => Configuration::class,
 
                 // 节点解析器

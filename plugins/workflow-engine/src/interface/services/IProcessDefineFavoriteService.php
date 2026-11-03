@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessDefineFavorite;
+use Alkaid\Workflow\Engine\interface\model\IProcessDefineFavorite;
 
 /**
  * 流程定义收藏服务

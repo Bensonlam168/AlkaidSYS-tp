@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessCcInstance;
+use Alkaid\Workflow\Engine\interface\model\IProcessCcInstance;
 
 /**
  * 流程实例抄送-服务类
@@ -29,7 +29,7 @@ interface IProcessCcInstanceService
     //     *
     //     * @param object $param
     //     *
-    //     * @return \madong\ingenious\interface\model\IProcessCcInstance|null
+    //     * @return \Alkaid\Workflow\Engine\interface\model\IProcessCcInstance|null
     //     */
     //    public function created(object $param): ?IProcessCcInstance;
     //
@@ -38,7 +38,7 @@ interface IProcessCcInstanceService
     //     *
     //     * @param object $param
     //     *
-    //     * @return \madong\ingenious\interface\model\IProcessCcInstance|null
+    //     * @return \Alkaid\Workflow\Engine\interface\model\IProcessCcInstance|null
     //     */
     //    public function updated(object $param): ?IProcessCcInstance;
     //
@@ -47,7 +47,7 @@ interface IProcessCcInstanceService
     //     *
     //     * @param string $id
     //     *
-    //     * @return \madong\ingenious\interface\model\IProcessCcInstance|null
+    //     * @return \Alkaid\Workflow\Engine\interface\model\IProcessCcInstance|null
     //     */
     //    public function findById(string $id): ?IProcessCcInstance;
     //

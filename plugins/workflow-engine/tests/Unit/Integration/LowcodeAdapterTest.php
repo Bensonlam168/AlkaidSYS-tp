@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Alkaid\Workflow\Tests\Unit\Integration;
+namespace Alkaid\Workflow\Engine\Tests\Unit\Integration;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\Test;
@@ -13,7 +13,7 @@ use Alkaid\Workflow\Engine\Multitenant\Exception\TenantIsolationException;
 /**
  * LowcodeAdapter Unit Tests | 低代码适配器单元测试
  *
- * @package Alkaid\Workflow\Tests\Unit\Integration
+ * @package Alkaid\Workflow\Engine\Tests\Unit\Integration
  */
 class LowcodeAdapterTest extends TestCase
 {

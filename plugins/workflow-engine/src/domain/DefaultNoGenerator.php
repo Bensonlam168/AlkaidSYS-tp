@@ -15,8 +15,8 @@
 namespace Alkaid\Workflow\Engine\domain;
 
 use DateTime;
-use madong\ingenious\interface\INoGenerator;
-use madong\ingenious\model\ProcessModel;
+use Alkaid\Workflow\Engine\interface\INoGenerator;
+use Alkaid\Workflow\Engine\model\ProcessModel;
 
 /**
  * 默认的流程实例编号生成器

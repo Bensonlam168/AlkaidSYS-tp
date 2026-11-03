@@ -14,9 +14,9 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\processor\IHandler;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\processor\IHandler;
 
 class BaseModel
 {
@@ -35,8 +35,8 @@ class BaseModel
     /**
      * 将执行对象execution交给具体的处理器处理
      *
-     * @param \madong\ingenious\processor\IHandler   $handler
-     * @param \madong\ingenious\interface\IExecution $execution
+     * @param \Alkaid\Workflow\Engine\processor\IHandler   $handler
+     * @param \Alkaid\Workflow\Engine\interface\IExecution $execution
      */
     protected function fire(IHandler $handler, IExecution $execution): void
     {

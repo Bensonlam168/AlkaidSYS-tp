@@ -15,7 +15,7 @@
 namespace Alkaid\Workflow\Engine\libs\utils;
 
 use ArrayObject;
-use madong\ingenious\interface\IDict;
+use Alkaid\Workflow\Engine\interface\IDict;
 
 class Dict extends ArrayObject implements IDict
 {

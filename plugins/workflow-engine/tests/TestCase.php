@@ -69,7 +69,7 @@ abstract class TestCase extends PHPUnitTestCase
     {
         $this->testConfig = [
             'service_dependencies' => [
-                'processEngines' => \Alkaid\Workflow\Engine\core\ProcessEngines::class,
+                'processEngines' => \Alkaid\Workflow\Engine\Core\ProcessEngines::class,
                 'configuration' => \Alkaid\Workflow\Engine\cfg\Configuration::class,
 
                 // 节点解析器

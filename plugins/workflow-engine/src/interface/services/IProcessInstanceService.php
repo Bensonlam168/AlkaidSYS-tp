@@ -15,10 +15,10 @@
 namespace Alkaid\Workflow\Engine\interface\services;
 
 use madong\interface\IDict;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\model\IProcessDefine;
-use madong\ingenious\interface\model\IProcessInstance;
-use madong\ingenious\model\TaskModel;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\model\IProcessDefine;
+use Alkaid\Workflow\Engine\interface\model\IProcessInstance;
+use Alkaid\Workflow\Engine\model\TaskModel;
 
 /**
  * 流程实例服务类

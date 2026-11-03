@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\model\logicflow;
 
-use madong\ingenious\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
 use madong\interface\IDict;
 
 /**

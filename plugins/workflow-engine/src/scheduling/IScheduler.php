@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\scheduling;
 
-use madong\ingenious\interface\IDict;
+use Alkaid\Workflow\Engine\interface\IDict;
 
 /**
  * 调度器接口，与具体的定时调度框架无关
@@ -30,7 +30,7 @@ interface IScheduler
     /**
      * 添加作用调度器
      * @param string                                   $jobId
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      */
     public function addJob(string $jobId, IDict $args): void;
 

@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\core\Execution;
+use Alkaid\Workflow\Engine\Core\Execution;
 
 /**
  * 任务拦截器对产生的任务进行拦截
@@ -27,7 +27,7 @@ interface IProcessInterceptor
     /**
      * 拦截方法，参数为执行对象
      *
-     * @param \madong\ingenious\core\Execution $execution 执行对象。可从中获取执行的数据
+     * @param \Alkaid\Workflow\Engine\Core\Execution $execution 执行对象。可从中获取执行的数据
      */
     public function intercept(Execution $execution): void;
 

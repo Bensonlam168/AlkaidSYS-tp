@@ -14,10 +14,10 @@
 
 namespace Alkaid\Workflow\Engine\parser\handler;
 
-use madong\ingenious\model\EndModel;
-use madong\ingenious\model\logicflow\LfNode;
-use madong\ingenious\model\NodeModel;
-use madong\ingenious\parser\AbstractINodeParser;
+use Alkaid\Workflow\Engine\model\EndModel;
+use Alkaid\Workflow\Engine\model\logicflow\LfNode;
+use Alkaid\Workflow\Engine\model\NodeModel;
+use Alkaid\Workflow\Engine\parser\AbstractINodeParser;
 
 class EndParser extends AbstractINodeParser
 {

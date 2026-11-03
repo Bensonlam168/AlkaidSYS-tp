@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Alkaid\Workflow\Tests\Unit\Monitor;
+namespace Alkaid\Workflow\Engine\Tests\Unit\Monitor;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\Test;
@@ -12,7 +12,7 @@ use Alkaid\Workflow\Engine\Multitenant\TenantContext;
 /**
  * WorkflowMonitor 单元测试
  *
- * @package Alkaid\Workflow\Tests\Unit\Monitor
+ * @package Alkaid\Workflow\Engine\Tests\Unit\Monitor
  */
 class WorkflowMonitorTest extends TestCase
 {

@@ -14,12 +14,12 @@
 
 namespace Alkaid\Workflow\Engine\parser\handler;
 
-use madong\ingenious\model\CustomModel;
-use madong\ingenious\model\logicflow\LfNode;
-use madong\ingenious\model\NodeModel;
-use madong\ingenious\parser\AbstractINodeParser;
-use madong\ingenious\parser\INodeParser;
-use madong\ingenious\enums\ProcessConstEnum;
+use Alkaid\Workflow\Engine\model\CustomModel;
+use Alkaid\Workflow\Engine\model\logicflow\LfNode;
+use Alkaid\Workflow\Engine\model\NodeModel;
+use Alkaid\Workflow\Engine\parser\AbstractINodeParser;
+use Alkaid\Workflow\Engine\parser\INodeParser;
+use Alkaid\Workflow\Engine\enums\ProcessConstEnum;
 
 class CustomParser extends AbstractINodeParser
 {

@@ -14,9 +14,9 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\nodes\IForkModel;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\nodes\IForkModel;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
 
 /**
  * 分支定义-元素

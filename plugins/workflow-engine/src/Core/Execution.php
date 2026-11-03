@@ -12,26 +12,26 @@
  * Official Website: https://madong.tech
  */
 
-namespace Alkaid\Workflow\Engine\core;
+namespace Alkaid\Workflow\Engine\Core;
 
 use madong\interface\IDict;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\IProcessEngines;
-use madong\ingenious\interface\model\IProcessInstance;
-use madong\ingenious\interface\model\IProcessTask;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\model\NodeModel;
-use madong\ingenious\model\ProcessModel;
-use madong\ingenious\enums\ProcessTaskStateEnum;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\IProcessEngines;
+use Alkaid\Workflow\Engine\interface\model\IProcessInstance;
+use Alkaid\Workflow\Engine\interface\model\IProcessTask;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\model\NodeModel;
+use Alkaid\Workflow\Engine\model\ProcessModel;
+use Alkaid\Workflow\Engine\enums\ProcessTaskStateEnum;
 
 /**
- * @method setNodeModel(\madong\ingenious\model\NodeModel $param)
+ * @method setNodeModel(\Alkaid\Workflow\Engine\model\NodeModel $param)
  * @method setEngine($getEngine)
  * @method setProcessModel($pm)
  * @method setProcessInstance($parentInstance)
  * @method setProcessInstanceId($getData)
  * @method getProcessTaskList()
- * @method setProcessTask(\madong\ingenious\interface\model\IProcessTask $processTask)
+ * @method setProcessTask(\Alkaid\Workflow\Engine\interface\model\IProcessTask $processTask)
  * @method setProcessTaskId(string $processTaskId)
  * @method setOperator(string $operator)
  */
@@ -52,7 +52,7 @@ class Execution implements IExecution
     /**
      * 执行对象扩展参数
      *
-     * @var \madong\ingenious\interface\IDict|null
+     * @var \Alkaid\Workflow\Engine\interface\IDict|null
      */
     private ?IDict $args;
 
@@ -67,7 +67,7 @@ class Execution implements IExecution
     private ?IProcessTask $processTask;
 
     /**
-     * @var \madong\ingenious\interface\model\IProcessInstance|null
+     * @var \Alkaid\Workflow\Engine\interface\model\IProcessInstance|null
      */
     private ?IProcessInstance $processInstance; //当前流程实例
 
@@ -82,7 +82,7 @@ class Execution implements IExecution
     private bool $isMerged;
 
     /**
-     * @var \madong\ingenious\interface\IProcessEngines|null  引擎实例
+     * @var \Alkaid\Workflow\Engine\interface\IProcessEngines|null  引擎实例
      */
     private ?IProcessEngines $engine;
 
@@ -92,7 +92,7 @@ class Execution implements IExecution
     private ?string $operator;
 
     /**
-     * @var \madong\ingenious\model\NodeModel|null  当前任务节点
+     * @var \Alkaid\Workflow\Engine\model\NodeModel|null  当前任务节点
      */
     private ?NodeModel $nodeModel;
 

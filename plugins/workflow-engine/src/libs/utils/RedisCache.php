@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\libs\utils;
 
-use madong\ingenious\core\ServiceContext;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
 use Redis;
 
 class RedisCache

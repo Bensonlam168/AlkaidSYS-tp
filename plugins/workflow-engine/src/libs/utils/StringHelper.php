@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\libs\utils;
 
-use madong\ingenious\ex\LFlowException;
+use Alkaid\Workflow\Engine\ex\LFlowException;
 
 class StringHelper
 {

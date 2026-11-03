@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\model\TaskModel;
+use Alkaid\Workflow\Engine\model\TaskModel;
 
 /**
  * 候选人处理接口
@@ -27,7 +27,7 @@ interface ICandidateHandler
     /**
      * 根据任务模型参数获取候选人信息
      *
-     * @param \madong\ingenious\model\TaskModel $model
+     * @param \Alkaid\Workflow\Engine\model\TaskModel $model
      *
      * @return array
      */

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Alkaid\Workflow\Tests\Unit\Monitor;
+namespace Alkaid\Workflow\Engine\Tests\Unit\Monitor;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\Test;
@@ -11,7 +11,7 @@ use Alkaid\Workflow\Engine\Monitor\ExecutionLogEntry;
 /**
  * ExecutionLogEntry 单元测试
  *
- * @package Alkaid\Workflow\Tests\Unit\Monitor
+ * @package Alkaid\Workflow\Engine\Tests\Unit\Monitor
  */
 class ExecutionLogEntryTest extends TestCase
 {

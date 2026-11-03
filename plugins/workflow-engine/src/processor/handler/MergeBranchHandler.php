@@ -14,15 +14,15 @@
 
 namespace Alkaid\Workflow\Engine\processor\handler;
 
-use madong\ingenious\core\ServiceContext;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\services\IProcessTaskService;
-use madong\ingenious\libs\utils\StringBuilder;
-use madong\ingenious\model\ForkModel;
-use madong\ingenious\model\JoinModel;
-use madong\ingenious\model\NodeModel;
-use madong\ingenious\model\TaskModel;
-use madong\ingenious\processor\IHandler;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\services\IProcessTaskService;
+use Alkaid\Workflow\Engine\libs\utils\StringBuilder;
+use Alkaid\Workflow\Engine\model\ForkModel;
+use Alkaid\Workflow\Engine\model\JoinModel;
+use Alkaid\Workflow\Engine\model\NodeModel;
+use Alkaid\Workflow\Engine\model\TaskModel;
+use Alkaid\Workflow\Engine\processor\IHandler;
 
 /**
  * 合并分支操作处理器
@@ -64,7 +64,7 @@ class MergeBranchHandler implements IHandler
     /**
      * 对join节点的所有输入变迁进行递归，查找join至fork节点的所有中间task元素
      *
-     * @param \madong\ingenious\model\NodeModel $node
+     * @param \Alkaid\Workflow\Engine\model\NodeModel $node
      * @param                            $buffer
      */
     public static function findForkTaskNames(NodeModel $node, &$buffer)
@@ -86,7 +86,7 @@ class MergeBranchHandler implements IHandler
      * 判断流程是否可合并
      *
      * @param string|int                               $processInstanceId
-     * @param \madong\ingenious\model\NodeModel $nodeModel
+     * @param \Alkaid\Workflow\Engine\model\NodeModel $nodeModel
      *
      * @return bool
      */

@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\model\TaskModel;
+use Alkaid\Workflow\Engine\model\TaskModel;
 
 interface IAssignment
 {

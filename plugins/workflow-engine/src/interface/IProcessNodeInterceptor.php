@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\core\Execution;
+use Alkaid\Workflow\Engine\Core\Execution;
 
 /**
  * 流程节点-拦截器
@@ -27,7 +27,7 @@ interface IProcessNodeInterceptor
     /**
      * 拦截方法，参数为执行对象
      *
-     * @param \madong\ingenious\core\Execution $execution
+     * @param \Alkaid\Workflow\Engine\Core\Execution $execution
      */
     public function intercept(Execution $execution);
 }

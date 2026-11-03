@@ -14,15 +14,15 @@
 
 namespace Alkaid\Workflow\Engine\parser;
 
-use madong\ingenious\core\ServiceContext;
-use madong\ingenious\libs\utils\ArrayHelper;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
+use Alkaid\Workflow\Engine\libs\utils\ArrayHelper;
 use madong\helper\Dict;
-use madong\ingenious\libs\utils\PropertyCopier;
-use madong\ingenious\model\logicflow\LfEdge;
-use madong\ingenious\model\logicflow\LfModel;
-use madong\ingenious\model\logicflow\LfNode;
-use madong\ingenious\model\ProcessModel;
-use madong\ingenious\model\TaskModel;
+use Alkaid\Workflow\Engine\libs\utils\PropertyCopier;
+use Alkaid\Workflow\Engine\model\logicflow\LfEdge;
+use Alkaid\Workflow\Engine\model\logicflow\LfModel;
+use Alkaid\Workflow\Engine\model\logicflow\LfNode;
+use Alkaid\Workflow\Engine\model\ProcessModel;
+use Alkaid\Workflow\Engine\model\TaskModel;
 
 class ModelParser
 {
@@ -38,7 +38,7 @@ class ModelParser
      *
      * @param $inputStream
      *
-     * @return \madong\ingenious\model\ProcessModel
+     * @return \Alkaid\Workflow\Engine\model\ProcessModel
      * @throws \ReflectionException
      */
     public static function parse($inputStream): ProcessModel

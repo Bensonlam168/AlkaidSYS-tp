@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessType;
+use Alkaid\Workflow\Engine\interface\model\IProcessType;
 
 /**
  * 流程类型服务类

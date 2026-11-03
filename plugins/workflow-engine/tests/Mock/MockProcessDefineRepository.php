@@ -129,6 +129,22 @@ class MockProcessDefineRepository extends ProcessDefineRepository
                 return $this;
             }
 
+            /**
+             * 设置单个属性
+             *
+             * 仓库层 save() 会用 set('id', $id) 回填主键，匿名替身必须提供同名方法，
+             * 否则运行期抛 "Call to undefined method ...::set()"。此处委托 setData()，
+             * 保持与 setData 一致的语义与返回（$this，可链式）。
+             *
+             * @param string|array $key   属性名；传数组时等价于 setData() 的批量合并
+             * @param mixed        $value 属性值
+             * @return $this
+             */
+            public function set($key, $value = null)
+            {
+                return $this->setData($key, $value);
+            }
+
             public function toArray(): array
             {
                 return $this->data;

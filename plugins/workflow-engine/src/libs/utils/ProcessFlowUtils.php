@@ -18,11 +18,11 @@ use DateTime;
 use Exception;
 use madong\interface\IDict;
 use madong\helper\Dict;
-use madong\ingenious\core\ServiceContext;
-use madong\ingenious\ex\LFlowException;
-use madong\ingenious\interface\IProcessUser;
-use madong\ingenious\model\ProcessModel;
-use madong\ingenious\enums\ProcessConstEnum;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
+use Alkaid\Workflow\Engine\ex\LFlowException;
+use Alkaid\Workflow\Engine\interface\IProcessUser;
+use Alkaid\Workflow\Engine\model\ProcessModel;
+use Alkaid\Workflow\Engine\enums\ProcessConstEnum;
 
 class ProcessFlowUtils
 {
@@ -34,7 +34,7 @@ class ProcessFlowUtils
      * 将用户信息添加到参数中
      *
      * @param string                                   $operator
-     * @param \madong\ingenious\libs\utils\Dict $args
+     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args
      */
     public static function addUserInfoToArgs(string $operator, IDict &$args): void
     {
@@ -55,7 +55,7 @@ class ProcessFlowUtils
      * 添加自动生成标题
      *
      * @param string                                   $processDefineDisplayName
-     * @param \madong\ingenious\libs\utils\Dict $args
+     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args
      */
     public static function addAutoGenTitle(string $processDefineDisplayName, IDict &$args): void
     {
@@ -78,7 +78,7 @@ class ProcessFlowUtils
      * 将参数转换为字典
      * @param object|array|string $variable
      *
-     * @return \madong\ingenious\interface\IDict|null
+     * @return \Alkaid\Workflow\Engine\interface\IDict|null
      */
     public static function variableToDict(object|array|string $variable): ?IDict
     {
@@ -102,7 +102,7 @@ class ProcessFlowUtils
     /**
      * 判断是否为第一个任务节点
      *
-     * @param madong\ingenious\model\ProcessModel $processModel
+     * @param Alkaid\Workflow\Engine\model\ProcessModel $processModel
      * @param string                        $taskName
      *
      * @return bool
@@ -155,7 +155,7 @@ class ProcessFlowUtils
      * 解析时间
      *
      * @param string|int                               $expireTime
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      *
      * @return \DateTime|null
      * @throws \Exception

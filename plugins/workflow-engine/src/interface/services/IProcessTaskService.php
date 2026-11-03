@@ -15,12 +15,12 @@
 namespace Alkaid\Workflow\Engine\interface\services;
 
 use madong\interface\IDict;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\model\IProcessTask;
-use madong\ingenious\interface\model\IProcessTaskActor;
-use madong\ingenious\model\CustomModel;
-use madong\ingenious\model\ProcessModel;
-use madong\ingenious\model\TaskModel;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\model\IProcessTask;
+use Alkaid\Workflow\Engine\interface\model\IProcessTaskActor;
+use Alkaid\Workflow\Engine\model\CustomModel;
+use Alkaid\Workflow\Engine\model\ProcessModel;
+use Alkaid\Workflow\Engine\model\TaskModel;
 
 interface IProcessTaskService
 {

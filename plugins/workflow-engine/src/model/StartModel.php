@@ -14,12 +14,12 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\event\ProcessEventService;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\nodes\IStartModel;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\libs\utils\Logger;
-use madong\ingenious\enums\ProcessEventTypeEnum;
+use Alkaid\Workflow\Engine\event\ProcessEventService;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\nodes\IStartModel;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\libs\utils\Logger;
+use Alkaid\Workflow\Engine\enums\ProcessEventTypeEnum;
 
 /**
  * 开始-模型

@@ -15,12 +15,12 @@
 namespace Alkaid\Workflow\Engine\parser;
 
 use madong\helper\Dict;
-use madong\ingenious\libs\utils\ProcessFlowUtils;
-use madong\ingenious\libs\utils\StringHelper;
-use madong\ingenious\model\logicflow\LfEdge;
-use madong\ingenious\model\logicflow\LfNode;
-use madong\ingenious\model\NodeModel;
-use madong\ingenious\model\TransitionModel;
+use Alkaid\Workflow\Engine\libs\utils\ProcessFlowUtils;
+use Alkaid\Workflow\Engine\libs\utils\StringHelper;
+use Alkaid\Workflow\Engine\model\logicflow\LfEdge;
+use Alkaid\Workflow\Engine\model\logicflow\LfNode;
+use Alkaid\Workflow\Engine\model\NodeModel;
+use Alkaid\Workflow\Engine\model\TransitionModel;
 
 abstract class AbstractINodeParser implements INodeParser
 {
@@ -93,14 +93,14 @@ abstract class AbstractINodeParser implements INodeParser
     /**
      * 子类实现此类完成特定解析
      *
-     * @param \madong\ingenious\model\logicflow\LfNode $lfNode
+     * @param \Alkaid\Workflow\Engine\model\logicflow\LfNode $lfNode
      */
     abstract public function parseNode(LfNode $lfNode): void;
 
     /**
      * 由子类各自创建节点模型对象
      *
-     * @return \madong\ingenious\model\NodeModel
+     * @return \Alkaid\Workflow\Engine\model\NodeModel
      */
     abstract public function newModel(): NodeModel;
 

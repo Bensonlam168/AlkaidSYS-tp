@@ -14,8 +14,8 @@
 
 namespace Alkaid\Workflow\Engine\enums;
 
-use madong\ingenious\interface\IEnum;
-use madong\ingenious\libs\traits\EnumTrait;
+use Alkaid\Workflow\Engine\interface\IEnum;
+use Alkaid\Workflow\Engine\libs\traits\EnumTrait;
 
 enum ProcessTaskTypeEnum: int implements IEnum
 {

@@ -73,13 +73,13 @@ interface IProcessInstanceHistoryService
     //    /**
     //     * 根据流程、操作人员、父流程实例ID创建流程实例
     //     *
-    //     * @param \madong\plugin\wf\model\ProcessDefine    $processDefine 流程定义对象
+    //     * @param \Alkaid\Workflow\Engine\model\ProcessDefine    $processDefine 流程定义对象
     //     * @param String                                   $operator      操作人员ID
-    //     * @param \madong\ingenious\libs\utils\Dict $args          参数列表
+    //     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args          参数列表
     //     * @param string                                   $parentId
     //     * @param string                                   $parentNodeName
     //     *
-    //     * @return \madong\plugin\wf\model\ProcessInstance|null 活动流程实例对象
+    //     * @return \Alkaid\Workflow\Engine\model\ProcessInstance|null 活动流程实例对象
     //     */
     //    public function createProcessInstance(ProcessDefine $processDefine, string $operator, Dict $args, string $parentId, string $parentNodeName): ?ProcessInstance;
     //
@@ -87,7 +87,7 @@ interface IProcessInstanceHistoryService
     //     * 向指定实例id添加全局变量数据
     //     *
     //     * @param string                                   $processInstanceId
-    //     * @param \madong\ingenious\libs\utils\Dict $args 变量数据
+    //     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args 变量数据
     //     *
     //     * @return void
     //     */
@@ -104,7 +104,7 @@ interface IProcessInstanceHistoryService
     //    /***
     //     * 保存流程实例
     //     *
-    //     * @param \madong\plugin\wf\model\ProcessInstance $processInstance 流程实例对象
+    //     * @param \Alkaid\Workflow\Engine\model\ProcessInstance $processInstance 流程实例对象
     //     */
     //    public function saveProcessInstance(ProcessInstance $processInstance): ?ProcessInstance;
     //
@@ -143,7 +143,7 @@ interface IProcessInstanceHistoryService
     //    /**
     //     * 更新流程实例
     //     *
-    //     * @param \madong\plugin\wf\model\ProcessInstance $processInstance 流程实例对象
+    //     * @param \Alkaid\Workflow\Engine\model\ProcessInstance $processInstance 流程实例对象
     //     */
     //    public function updateProcessInstance(ProcessInstance $processInstance): void;
     //
@@ -152,7 +152,7 @@ interface IProcessInstanceHistoryService
     //     *
     //     * @param string $id
     //     *
-    //     * @return \madong\plugin\wf\model\ProcessInstance|null
+    //     * @return \Alkaid\Workflow\Engine\model\ProcessInstance|null
     //     */
     //    public function getById(string $id): ?ProcessInstance;
     //
@@ -160,7 +160,7 @@ interface IProcessInstanceHistoryService
     //     * 启动且执行流程（自动执行第一个节点）
     //     *
     //     * @param string                                   $processDefineId
-    //     * @param \madong\ingenious\libs\utils\Dict $args
+    //     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args
     //     */
     //    public function startAndExecute(string $processDefineId, Dict $args): void;
     //
@@ -193,8 +193,8 @@ interface IProcessInstanceHistoryService
     //    /**
     //     * 更新会签变量
     //     *
-    //     * @param \madong\ingenious\model\TaskModel $taskModel
-    //     * @param \madong\ingenious\core\Execution  $execution
+    //     * @param \Alkaid\Workflow\Engine\model\TaskModel $taskModel
+    //     * @param \Alkaid\Workflow\Engine\Core\Execution  $execution
     //     * @param array                                    $taskActors
     //     */
     //    public function updateCountersignVariable(TaskModel $taskModel, Execution $execution, array $taskActors): void;

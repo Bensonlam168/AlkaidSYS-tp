@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Alkaid\Workflow\Tests\Unit\Multitenant;
+namespace Alkaid\Workflow\Engine\Tests\Unit\Multitenant;
 
 use PHPUnit\Framework\TestCase;
 use PHPUnit\Framework\Attributes\Test;

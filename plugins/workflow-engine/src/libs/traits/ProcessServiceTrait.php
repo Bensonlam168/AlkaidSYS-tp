@@ -14,15 +14,15 @@
 
 namespace Alkaid\Workflow\Engine\libs\traits;
 
-use madong\ingenious\core\ServiceContext;
-use madong\ingenious\interface\services\IProcessCcInstanceService;
-use madong\ingenious\interface\services\IProcessDefineService;
-use madong\ingenious\interface\services\IProcessDesignService;
-use madong\ingenious\interface\services\IProcessInstanceHistoryService;
-use madong\ingenious\interface\services\IProcessInstanceService;
-use madong\ingenious\interface\services\IProcessTaskHistoryService;
-use madong\ingenious\interface\services\IProcessTaskService;
-use madong\ingenious\interface\services\IProcessTypeService;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
+use Alkaid\Workflow\Engine\interface\services\IProcessCcInstanceService;
+use Alkaid\Workflow\Engine\interface\services\IProcessDefineService;
+use Alkaid\Workflow\Engine\interface\services\IProcessDesignService;
+use Alkaid\Workflow\Engine\interface\services\IProcessInstanceHistoryService;
+use Alkaid\Workflow\Engine\interface\services\IProcessInstanceService;
+use Alkaid\Workflow\Engine\interface\services\IProcessTaskHistoryService;
+use Alkaid\Workflow\Engine\interface\services\IProcessTaskService;
+use Alkaid\Workflow\Engine\interface\services\IProcessTypeService;
 
 trait ProcessServiceTrait
 {

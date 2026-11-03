@@ -14,9 +14,9 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\nodes\ISubProcessModel;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\nodes\ISubProcessModel;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
 
 /**
  * 子流程模型

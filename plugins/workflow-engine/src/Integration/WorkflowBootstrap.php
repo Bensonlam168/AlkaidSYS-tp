@@ -53,13 +53,15 @@ class WorkflowBootstrap
             // 设置已初始化标志
             self::$initialized = true;
 
-            // 记录日志
-            Log::channel('workflow')->info('工作流引擎初始化成功');
+            // 记录日志（守卫式：插件独立运行时没有宿主日志，降级到 error_log，绝不因此中断引导）
+            self::logWorkflow('info', '工作流引擎初始化成功');
 
             return self::$adapter;
 
         } catch (\Throwable $e) {
-            Log::channel('workflow')->error('工作流引擎初始化失败: ' . $e->getMessage(), [
+            // 注意：本行位于 catch 内，若日志本身再抛异常，会把真实根因吞掉并逃逸出 initialize()，
+            // 因此同样必须走守卫式日志。
+            self::logWorkflow('error', '工作流引擎初始化失败: ' . $e->getMessage(), [
                 'exception' => $e,
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -84,13 +86,109 @@ class WorkflowBootstrap
         $defaultConfig = [];
 
         // 加载配置文件
-        $configFile = app()->getAppPath() . 'config/workflow.php';
-        if (file_exists($configFile)) {
+        // 守卫式：app() 是 ThinkPHP 的**全局助手函数**，插件独立运行时有两种缺失可能：
+        //  1）该函数根本没被载入 —— topthink/framework 的 helper.php 不在本插件 vendor 的
+        //     composer "files" 里，实测 function_exists('app') === false；
+        //  2）函数在、但应用容器没启动，getAppPath() 拿不到路径。
+        // 两种情况都应退化成「没有宿主配置文件」，而不是抛 Error 中断整个引导。
+        $configFile = self::hostConfigFile();
+        if ($configFile !== null && file_exists($configFile)) {
             $defaultConfig = include $configFile;
         }
 
         // 合并配置
         return array_merge($defaultConfig, $config);
+    }
+
+    /**
+     * 解析宿主侧的 workflow.php 配置文件路径
+     *
+     * @return string|null 宿主应用存在时返回配置路径，否则 null
+     */
+    private static function hostConfigFile(): ?string
+    {
+        if (!function_exists('app')) {
+            return null;
+        }
+
+        try {
+            $app = app();
+            if (!is_object($app) || !method_exists($app, 'getAppPath')) {
+                return null;
+            }
+
+            return $app->getAppPath() . 'config/workflow.php';
+        } catch (\Throwable) {
+            // 应用未启动或路径不可得：按「无宿主配置」处理
+            return null;
+        }
+    }
+
+    /**
+     * 探测宿主是否提供了 ThinkPHP 日志能力
+     *
+     * ThinkPHP 的 Log 门面（think\facade\Log）并不直接是一个可用的日志器：
+     * 它的 getFacadeClass() 返回容器标识 'log'，任何静态调用都会走到
+     * think\Container::make('log')。插件被独立运行（单元测试、CLI 脚本）时
+     * 应用容器没有启动，容器里没有 'log' 这个绑定，make() 于是抛
+     * think\exception\ClassNotFoundException: class not exists: log。
+     *
+     * 因此这里做两级探测，而不是直接调用门面：
+     * 1）class_exists —— 宿主可能压根没装 topthink/framework；
+     * 2）Container::has('log') —— has() 只查绑定表（bound()），不会抛异常，
+     *    可以安全地用来判断应用容器是否已把日志服务准备好。
+     *
+     * @return bool 宿主是否可安全使用 ThinkPHP 日志
+     */
+    private static function hostLogAvailable(): bool
+    {
+        if (!class_exists(Log::class)) {
+            return false;
+        }
+
+        try {
+            return \think\Container::getInstance()->has('log');
+        } catch (\Throwable) {
+            // 容器本身不可用（例如框架版本差异）：按「无宿主日志」处理
+            return false;
+        }
+    }
+
+    /**
+     * 守卫式记录工作流日志
+     *
+     * 有宿主日志就走 ThinkPHP 日志通道 'workflow'；没有就降级为 PHP 原生 error_log()。
+     * 之所以连「有宿主日志」的分支也用 try/catch 包住：日志属于旁路能力，
+     * 任何写入失败都不应该改变引导流程的结果（尤其不能覆盖 initialize() catch 里的真实根因）。
+     *
+     * 未引入新依赖：降级目标选 error_log() 而不是 PSR-3 的 NullLogger ——
+     * psr/log 只是 topthink/framework 的传递依赖，直接依赖它会在宿主换版本时变脆。
+     *
+     * 待定项：降级路径只保证「不抛异常、信息不丢失到进程外」，
+     * 是否真正落盘取决于宿主的 error_log 配置，不做额外保证。
+     *
+     * @param string $level   日志级别（info/error/warning...）
+     * @param string $message 日志内容
+     * @param array  $context 附加上下文
+     * @return void
+     */
+    private static function logWorkflow(string $level, string $message, array $context = []): void
+    {
+        if (self::hostLogAvailable()) {
+            try {
+                Log::channel('workflow')->{$level}($message, $context);
+                return;
+            } catch (\Throwable) {
+                // 落不到宿主日志就继续走下面的降级分支，绝不上抛
+            }
+        }
+
+        error_log(sprintf(
+            '[workflow-engine][%s] %s%s',
+            strtoupper($level),
+            $message,
+            $context === [] ? '' : ' ' . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR)
+        ));
     }
 
     /**
@@ -168,7 +266,7 @@ class WorkflowBootstrap
     public static function startWorkflow(string $definitionId, array $params, int $operator): \Alkaid\Workflow\Engine\interface\model\IProcessInstance
     {
         $engine = self::getEngine();
-        $args = new \madong\ingenious\libs\utils\Dict($params);
+        $args = new \Alkaid\Workflow\Engine\libs\utils\Dict($params);
 
         return $engine->startProcessInstanceById($definitionId, (string)$operator, $args);
     }
@@ -184,7 +282,7 @@ class WorkflowBootstrap
     public static function executeTask(string $taskId, array $params, int $operator): array
     {
         $engine = self::getEngine();
-        $args = new \madong\ingenious\libs\utils\Dict($params);
+        $args = new \Alkaid\Workflow\Engine\libs\utils\Dict($params);
 
         return $engine->executeProcessTask($taskId, (string)$operator, $args);
     }
@@ -238,7 +336,8 @@ class WorkflowBootstrap
 
         self::$initialized = false;
 
-        Log::channel('workflow')->info('工作流引擎已重置');
+        // 记录日志（同为守卫式：reset() 常被 tearDown 调用，不能因宿主无日志而抛异常）
+        self::logWorkflow('info', '工作流引擎已重置');
     }
 
     /**

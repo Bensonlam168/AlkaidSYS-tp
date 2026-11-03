@@ -15,7 +15,7 @@
 namespace Alkaid\Workflow\Engine\libs\utils;
 
 use InvalidArgumentException;
-use madong\ingenious\ex\LFlowException;
+use Alkaid\Workflow\Engine\ex\LFlowException;
 use ReflectionClass;
 use stdClass;
 

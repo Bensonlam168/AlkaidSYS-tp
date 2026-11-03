@@ -14,8 +14,8 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessDefine;
-use madong\ingenious\model\ProcessModel;
+use Alkaid\Workflow\Engine\interface\model\IProcessDefine;
+use Alkaid\Workflow\Engine\model\ProcessModel;
 
 interface IProcessDefineService
 {

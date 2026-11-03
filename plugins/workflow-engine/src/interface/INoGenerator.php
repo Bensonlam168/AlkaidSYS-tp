@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\model\ProcessModel;
+use Alkaid\Workflow\Engine\model\ProcessModel;
 
 /**
  * 编号生成器接口
@@ -28,7 +28,7 @@ interface INoGenerator
     /**
      *  生成器方法
      *
-     * @param \madong\ingenious\model\ProcessModel $model
+     * @param \Alkaid\Workflow\Engine\model\ProcessModel $model
      *
      * @return string  编号
      */

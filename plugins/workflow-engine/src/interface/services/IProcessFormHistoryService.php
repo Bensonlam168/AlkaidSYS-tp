@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessFormHistory;
+use Alkaid\Workflow\Engine\interface\model\IProcessFormHistory;
 
 interface IProcessFormHistoryService
 {

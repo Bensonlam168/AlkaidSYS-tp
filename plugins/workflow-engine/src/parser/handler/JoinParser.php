@@ -14,10 +14,10 @@
 
 namespace Alkaid\Workflow\Engine\parser\handler;
 
-use madong\ingenious\model\JoinModel;
-use madong\ingenious\model\logicflow\LfNode;
-use madong\ingenious\model\NodeModel;
-use madong\ingenious\parser\AbstractINodeParser;
+use Alkaid\Workflow\Engine\model\JoinModel;
+use Alkaid\Workflow\Engine\model\logicflow\LfNode;
+use Alkaid\Workflow\Engine\model\NodeModel;
+use Alkaid\Workflow\Engine\parser\AbstractINodeParser;
 
 class JoinParser extends AbstractINodeParser
 {

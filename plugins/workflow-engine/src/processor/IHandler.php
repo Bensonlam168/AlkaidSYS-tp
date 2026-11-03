@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\processor;
 
-use madong\ingenious\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\IExecution;
 
 /**
  * 流程各模型操控处理接口
@@ -26,7 +26,7 @@ interface IHandler
 {
     /**
      * 子类需要实现的方法，来处理具体的操作
-     * @param \madong\ingenious\interface\IExecution $execution
+     * @param \Alkaid\Workflow\Engine\interface\IExecution $execution
      */
     public function handle(IExecution $execution): void;
 }

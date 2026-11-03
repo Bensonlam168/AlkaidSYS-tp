@@ -14,12 +14,12 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\ex\LFlowException;
-use madong\ingenious\interface\IActionInterface;
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\libs\utils\InstanceFactory;
-use madong\ingenious\libs\utils\Logger;
+use Alkaid\Workflow\Engine\ex\LFlowException;
+use Alkaid\Workflow\Engine\interface\IActionInterface;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\libs\utils\InstanceFactory;
+use Alkaid\Workflow\Engine\libs\utils\Logger;
 use ReflectionClass;
 
 /**
@@ -71,7 +71,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
 
     /**
      * 由子类自定义执行方法
-     * @param \madong\ingenious\interface\IExecution $execution
+     * @param \Alkaid\Workflow\Engine\interface\IExecution $execution
      *
      * @return mixed
      */
@@ -95,7 +95,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
     /**
      * 执行输出边
      *
-     * @param \madong\ingenious\core\Execution $execution
+     * @param \Alkaid\Workflow\Engine\Core\Execution $execution
      */
     protected function runOutTransition(IExecution $execution): void
     {
@@ -109,7 +109,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
     /**
      * 执行节点前置拦截器
      *
-     * @param \madong\ingenious\core\Execution $execution
+     * @param \Alkaid\Workflow\Engine\Core\Execution $execution
      *
      * @throws \ReflectionException
      */
@@ -124,7 +124,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
     /**
      * 执行后置拦截器
      *
-     * @param \madong\ingenious\core\Execution $execution
+     * @param \Alkaid\Workflow\Engine\Core\Execution $execution
      *
      * @throws \ReflectionException
      */
@@ -140,7 +140,7 @@ abstract class NodeModel extends BaseModel implements IActionInterface
      * 执行节点拦截器
      *
      * @param string                                  $interceptors
-     * @param \madong\ingenious\core\Execution $execution
+     * @param \Alkaid\Workflow\Engine\Core\Execution $execution
      *
      * @throws \ReflectionException
      */
@@ -206,8 +206,8 @@ abstract class NodeModel extends BaseModel implements IActionInterface
      * 1、满足中间无fork、join、subprocess模型
      * 2、满足父节点模型如果为任务模型时，参与类型为any
      *
-     * @param \madong\ingenious\model\NodeModel $current
-     * @param \madong\ingenious\model\NodeModel $parent
+     * @param \Alkaid\Workflow\Engine\model\NodeModel $current
+     * @param \Alkaid\Workflow\Engine\model\NodeModel $parent
      *
      * @return bool
      */

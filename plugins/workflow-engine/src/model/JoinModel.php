@@ -14,10 +14,10 @@
 
 namespace Alkaid\Workflow\Engine\model;
 
-use madong\ingenious\interface\IExecution;
-use madong\ingenious\interface\nodes\IJoinModel;
-use madong\ingenious\libs\traits\DynamicPropsTrait;
-use madong\ingenious\processor\handler\MergeBranchHandler;
+use Alkaid\Workflow\Engine\interface\IExecution;
+use Alkaid\Workflow\Engine\interface\nodes\IJoinModel;
+use Alkaid\Workflow\Engine\libs\traits\DynamicPropsTrait;
+use Alkaid\Workflow\Engine\processor\handler\MergeBranchHandler;
 
 /**
  * 合并模型

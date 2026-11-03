@@ -15,10 +15,10 @@
 namespace Alkaid\Workflow\Engine\interface;
 
 use madong\interface\IDict;
-use madong\ingenious\interface\model\IProcessInstance;
-use madong\ingenious\interface\services\IProcessDefineService;
-use madong\ingenious\interface\services\IProcessInstanceService;
-use madong\ingenious\interface\services\IProcessTaskService;
+use Alkaid\Workflow\Engine\interface\model\IProcessInstance;
+use Alkaid\Workflow\Engine\interface\services\IProcessDefineService;
+use Alkaid\Workflow\Engine\interface\services\IProcessInstanceService;
+use Alkaid\Workflow\Engine\interface\services\IProcessTaskService;
 
 /**
  * @author Mr.April
@@ -29,21 +29,21 @@ interface IProcessEngines
     /**
      * 获取流程定义服务
      *
-     * @return \madong\ingenious\interface\services\IProcessDefineService|null
+     * @return \Alkaid\Workflow\Engine\interface\services\IProcessDefineService|null
      */
     public function processDefineService(): ?IProcessDefineService;
 
     /**
      * 获取流程实例服务
      *
-     * @return \madong\ingenious\interface\services\IProcessInstanceService|null
+     * @return \Alkaid\Workflow\Engine\interface\services\IProcessInstanceService|null
      */
     public function processInstanceService(): ?IProcessInstanceService;
 
     /**
      * 获取流程任务服务
      *
-     * @return \madong\ingenious\interface\services\IProcessTaskService|null
+     * @return \Alkaid\Workflow\Engine\interface\services\IProcessTaskService|null
      */
     public function processTaskService(): ?IProcessTaskService;
 
@@ -52,11 +52,11 @@ interface IProcessEngines
      *
      * @param string                                   $id
      * @param string                                   $operator
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      * @param string|null                              $parentId
      * @param string|null                              $parentNodeName
      *
-     * @return \madong\ingenious\interface\model\IProcessInstance|null 流程实例
+     * @return \Alkaid\Workflow\Engine\interface\model\IProcessInstance|null 流程实例
      */
     public function startProcessInstanceById(string $id, string $operator, IDict $args, string|null $parentId = null, string|null $parentNodeName = null): ?IProcessInstance;
 
@@ -65,7 +65,7 @@ interface IProcessEngines
      *
      * @param string                                   $processTaskId
      * @param string                                   $operator
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      *
      * @return array
      */
@@ -76,7 +76,7 @@ interface IProcessEngines
      *
      * @param string                                   $processTaskId
      * @param string                                   $operator
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      * @param string                                   $nodeName
      *
      * @return array
@@ -88,7 +88,7 @@ interface IProcessEngines
      *
      * @param string                                   $processTaskId
      * @param string                                   $operator
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      *
      * @return array
      */
@@ -99,7 +99,7 @@ interface IProcessEngines
      *
      * @param string                                   $processTaskId
      * @param string                                   $operator
-     * @param \madong\ingenious\interface\IDict $args
+     * @param \Alkaid\Workflow\Engine\interface\IDict $args
      *
      * @return array
      */

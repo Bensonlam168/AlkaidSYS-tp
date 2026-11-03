@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface;
 
-use madong\ingenious\interface\model\IProcessTask;
+use Alkaid\Workflow\Engine\interface\model\IProcessTask;
 
 /**
  * @method getProcessInstanceId()

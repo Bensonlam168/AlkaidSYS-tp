@@ -14,7 +14,7 @@
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
-use madong\ingenious\interface\model\IProcessTaskActorHistory;
+use Alkaid\Workflow\Engine\interface\model\IProcessTaskActorHistory;
 
 /**
  * 流程任务和参与人服务类

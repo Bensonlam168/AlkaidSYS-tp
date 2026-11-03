@@ -14,9 +14,9 @@
 
 namespace Alkaid\Workflow\Engine\parser;
 
-use madong\ingenious\model\logicflow\LfEdge;
-use madong\ingenious\model\logicflow\LfNode;
-use madong\ingenious\model\NodeModel;
+use Alkaid\Workflow\Engine\model\logicflow\LfEdge;
+use Alkaid\Workflow\Engine\model\logicflow\LfNode;
+use Alkaid\Workflow\Engine\model\NodeModel;
 
 interface INodeParser
 {
@@ -55,8 +55,8 @@ interface INodeParser
     /**
      * 节点属性解析方法，由解析类完成解析
      *
-     * @param \madong\ingenious\model\logicflow\LfNode       $lfNode LogicFlow节点对象
-     * @param \madong\ingenious\model\logicflow\LfEdge|array $edges  所有边对象
+     * @param \Alkaid\Workflow\Engine\model\logicflow\LfNode       $lfNode LogicFlow节点对象
+     * @param \Alkaid\Workflow\Engine\model\logicflow\LfEdge|array $edges  所有边对象
      */
     public function parse(LfNode $lfNode, LfEdge|array $edges): void;
 
