@@ -56,12 +56,11 @@ Thumbs.db
 # /.settings
 /.buildpath
 # /.project
-# Serena MCP
-# /.serena
-# Augment
-# /.augment
 # zed
 /.zed
+# 注：原先在此处「刻意关闭」的 /.serena（Serena MCP）与 /.augment（Augment）
+#     已随「开发过程产物移出版本库」升级为**真正生效**的规则，
+#     统一收进下方「开发过程产物」分组，这里不再重复（见头部「同一模式只保留一条」约定）。
 
 # ---------------------------------------------------------------------------
 # 日志与运行时
@@ -75,8 +74,8 @@ Thumbs.db
 # ---------------------------------------------------------------------------
 # 缓存文件
 # ---------------------------------------------------------------------------
-# Serena 工具缓存（体积大，不入库）
-/.serena/cache/
+# 注：原先单列的 /.serena/cache/ 已被下方「开发过程产物」分组里的 /.serena 覆盖
+#     （前者是后者的子集），按头部维护约定只保留范围更广的那条。
 
 .php-cs-fixer.cache
 .phpunit.cache
@@ -140,14 +139,13 @@ docker-compose.override.local.yml
 # 其中 AGENTS.local.md 已由 *.local.md 覆盖，按本文件头部维护约定（一条包含另一条时
 # 只保留范围更广的那条）不再单列，避免同一意图写两遍、改一处漏一处。
 *.local.md
-# 例外：README.local.md 是**入库文档**（git 已跟踪），且它被登记在
-#       scripts/check-docs.php 的 SCAN_FILES 里 —— 该文件的「检查 0」要求
-#       SCAN_FILES 中登记的文件**必须存在**。
-#       若让它被 *.local.md 忽略并取消跟踪：本地因已跟踪不受影响，但 CI 干净检出里
-#       这个文件直接不存在 → Documentation Consistency 会红。
-#       所以这里必须开例外。顺序不可颠倒：`!` 例外必须排在 *.local.md 之后，
-#       放在前面会被后面的 *.local.md 覆盖回去，例外即失效。
-!README.local.md
+# 历史说明：这里曾有一条 `!README.local.md` 例外，原因是 README.local.md 当时**已入库**，
+# 且被登记在 scripts/check-docs.php 的 SCAN_FILES 里（检查 0 要求登记项必须存在），
+# 若让它被 *.local.md 忽略，CI 干净检出里就会缺文件 → Documentation Consistency 变红。
+# 现状：README.local.md 已移出版本库（`git rm --cached`，磁盘保留），并改为登记在
+# SCAN_FILES_EXEMPT（豁免不校验存在性）—— 因此那条 `!` 例外失去意义，已删除，
+# 让 *.local.md 正常忽略它。**不要**再把例外加回来：文件已不入库，例外只会让它
+# 在 git status 里重新冒出来。
 
 # ---------------------------------------------------------------------------
 # 工具产物
@@ -161,15 +159,73 @@ docker-compose.override.local.yml
 graphify-out/
 
 # ---------------------------------------------------------------------------
-# 文档目录
+# 开发过程产物：设计文档 / 过程报告 / 代理配置 —— 只留本地，不随仓库交付
+#
+# 定位：本仓库对外交付的是「产品」（源码 + 使用者真正需要的文档）。design/、过程报告、
+# AI 代理配置属于**开发过程产物**，会随开发不断变化、给读者造成心智负担，已用
+# `git rm -r --cached` 移出版本库，但**磁盘文件全部保留** —— 本地开发链条
+# （含 tests/Legacy 的本地守卫）照常使用，不是删除。
+#
+# 锚定语义：下列规则全部以 / 开头 = 只匹配**仓库根**下的同名条目。
+# 刻意不写裸 `docs/`（那会匹配任意层级，误伤 plugins/**/docs 之类的真实文档）。
+#
+# ⚠️ 改本段时必须同步 scripts/check-docs.php 的 EXCLUDE_PATTERNS：
+#    这些目录在本地仍然存在，而 check-docs 是递归扫 docs/ 的。若只从索引移出、
+#    不在那里排除，门禁就会去校验「已经不发货的文档」，本地与 CI 的扫描范围分叉。
+# ---------------------------------------------------------------------------
+/design
+/docs/PROJECT-OVERVIEW.md
+/docs/report
+/docs/report_archive
+/docs/todo
+/docs/superpowers
+/docs/casbin
+/docs/other-docs
+# technical-specs 分两类，**只有过程产物才移出**：
+#   入库（对外技术规范，使用者真正要读）：README.md / api / code-style / database /
+#     deployment / git / git-workflow.md / lowcode / multi-tenant / performance /
+#     plugin / security / testing
+#   移出（过程产物，只留本地）：adr/（架构决策记录）
+# performance/ 曾被误判为「内部性能基线」而移出，实为 MUST/SHOULD 条款的权威规范
+# （performance-guidelines.md §1 自称 "the authoritative reference"），已恢复入库。
+# 写法上刻意**不**用「先忽略整目录 + 逐条 `!` 放行」：那种写法的例外必须严格排在通配
+# 规则之后，多一个子目录就多一行、顺序一乱例外即静默失效（上一轮就是这样把 12 个
+# 对外子目录一起带出去的）。现在只点名要忽略的目录，新增子目录默认入库、无需改这里。
+/docs/technical-specs/adr
+# 测试报告属**过程产物**（记录某一次执行的结果，随环境变化、无长期参考价值），只留本地。
+# 用 `*test-report*` 而不是整目录：同目录的 git-workflow-guidelines（工作流规范）、
+# pr-review-checklist（评审清单）、branch-protection-guidelines（保护分支规范）都是
+# **要交付的规范**，绝不能被这条规则带走。
+/docs/technical-specs/git/*test-report*.md
+
+# AI 代理 / 开发工具配置（各工具自己的工作区，私有不入库）
+/.augment
+/.kilocode
+/.agent
+/.serena
+/.spec-workflow
+
+# AI 指令文档：AGENTS.md 是本地强制规则，CLAUDE.md 是 Claude Code 指令。
+# 二者均为「给本机代理看的开发约定」，不属于交付物。
+# CLAUDE.md 在根、app/、domain/、infrastructure/、frontend/ 下**各有一份**，
+# 只写 `/CLAUDE.md` 只能挡住仓库根那一份（源码目录里的 4 份会照常入库），
+# 因此这条**刻意不带前导 /**：裸模式在 gitignore 里等价于「任意层级」。
+# AGENTS.md 目前只在仓库根存在，仍保持根锚定；将来若下沉到子目录，同样去掉前导 /。
+/AGENTS.md
+CLAUDE.md
+
+# 本地守卫用例：守护 AGENTS.md 的散文事实（A1~A7）。
+# AGENTS.md 已移出版本库，CI 干净检出里没有守护对象，故该用例一并移出；
+# 本地保留，继续守护本地的 AGENTS.md。
+/tests/Legacy/AgentsDocFactsGuardTest.php
+
+# ---------------------------------------------------------------------------
+# 文档目录（仍有意保留的开关）
 # 下方以 # 开头的行是刻意关闭的开关，保留以示「这里曾经考虑过忽略」，请勿删除。
 # ---------------------------------------------------------------------------
 # # dev-docs
 # /docs/mcp_docs
-# /docs/other-docs
-# /docs/report
-# /docs/report_archive
-# /docs/todo
 /docs/Example
-# # design
-# /design
+# 注：原先在此处的 `# /design`、`# /docs/report`、`# /docs/report_archive`、
+#     `# /docs/todo`、`# /docs/other-docs` 等关闭开关，已随「开发过程产物」分组
+#     升级为真正生效的规则，此处不再重复。

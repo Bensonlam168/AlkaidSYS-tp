@@ -71,7 +71,8 @@ This directory contains the technical specifications and guidelines for the Alka
 
 ### Related Documentation
 
-- [Deployment Guide](../other-docs/deployment-guide.md)
+- `docs/other-docs/deployment-guide.md`（该目录属开发过程产物，已移出版本库，仅保留在本地；
+  部署规范见 [Deployment & Ops Guidelines](./deployment/deployment-guidelines.md)）
 
 ---
 
@@ -140,4 +141,5 @@ This directory contains the technical specifications and guidelines for the Alka
 
 ### 相关文档
 
-- [部署指南](../other-docs/deployment-guide.zh-CN.md)
+- `docs/other-docs/deployment-guide.zh-CN.md`（该目录属开发过程产物，已移出版本库，仅保留在本地；
+  部署规范见 [部署与运维规范](./deployment/deployment-guidelines.zh-CN.md)）

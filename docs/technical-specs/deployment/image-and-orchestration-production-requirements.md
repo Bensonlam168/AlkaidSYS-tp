@@ -518,8 +518,8 @@ docker history <image> --no-trunc | grep -i -E "password|secret" || echo "OK: no
 **尚未实跑过**（当时 Docker Hub 元数据请求失败，且依赖升级在并行进行）。
 因此「构建期不再引导应用、`vendor/services.php` 由 entrypoint 在启动时生成」目前只有
 源码级依据，**不等于镜像已构建/启动通过**。第 3、4 步必须在允许重建的环境里补跑，
-其结果才能作为
-[整改实施评审报告](../../report/remediation-implementation-review-2026-11-03.md) RV-12 的验收证据。
+其结果才能作为 `docs/report/remediation-implementation-review-2026-11-03.md` RV-12 的验收证据
+（该报告属开发过程产物，已移出版本库，仅保留在本地）。
 
 ---
 

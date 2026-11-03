@@ -2,8 +2,9 @@ name: Docs Check
 
 # 文档一致性门禁 | Documentation consistency gate
 #
-# 检查 design/ 与 docs/ 下的 Markdown，**以及 SCAN_FILES 登记的根目录文档**
-# （AGENTS.md / CLAUDE.md / README.md / README.local.md）：
+# 检查 docs/ 下的 Markdown，**以及 SCAN_FILES 登记的根目录文档**
+# （目前只有 README.md；AGENTS.md / CLAUDE.md / README.local.md 已移出版本库，
+#  改登记在 SCAN_FILES_EXEMPT 里，不参与扫描）：
 #   0. 扫描范围完整性（根目录 md 既未纳入扫描也未豁免 → 报错）
 #   1. 链接失效：目标是**任意非协议路径** —— `.md`、代码文件（`.php` / `.sh` 等）、
 #      `composer.json` 这类配置、以及**目录**都同等校验；一律按**所在文件所在目录**解析，

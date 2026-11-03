@@ -786,11 +786,11 @@ $field = FieldFactory::create('string', 'name', [
 
 ## 八、相关文档
 
-- [低代码架构设计文档](../../../design/01-architecture-design/08-low-code-design.md)
-- [多租户设计文档](../../../design/01-architecture-design/04-multi-tenant-design.md)
+- 低代码架构设计文档：`design/01-architecture-design/08-low-code-design.md`（`design/` 属开发过程产物，已移出版本库，仅保留在本地）
+- 多租户设计文档：`design/01-architecture-design/04-multi-tenant-design.md`（同上，已移出版本库）
 - [性能基准测试计划](./performance-benchmark-plan.md)
-- [Legacy 迁移报告](../../report/arch-01-legacy-migration-plan-2025-12-18.md)
-- [T-118 任务审查报告](../../report/t118-lowcode-legacy-migration-audit-2025-12-18.md)
+- Legacy 迁移报告：`docs/report/arch-01-legacy-migration-plan-2025-12-18.md`（`docs/report/` 属开发过程产物，已移出版本库）
+- T-118 任务审查报告：`docs/report/t118-lowcode-legacy-migration-audit-2025-12-18.md`（同上，已移出版本库）
 
 ---
 

@@ -6,8 +6,8 @@ declare(strict_types=1);
 /**
  * Documentation Consistency Check | 文档一致性检查
  *
- * 检查 design/ 与 docs/ 下的 Markdown 文档，**以及 `SCAN_FILES` 登记的根目录文档**
- * （目前是 AGENTS.md / CLAUDE.md / README.md / README.local.md），覆盖四类问题：
+ * 检查 `docs/` 下的 Markdown 文档，**以及 `SCAN_FILES` 登记的根目录文档**
+ * （目前是 README.md / CONTRIBUTING.md），覆盖四类问题：
  *   0. 扫描范围不完整（登记项不存在、根目录 md 既未纳入也未豁免）
  *   1. 链接失效 + 本机绝对路径
  *      （相对链接——`.md` / 目录 / 非 .md 文件——解析后不存在；
@@ -15,9 +15,13 @@ declare(strict_types=1);
  *   2. 代码围栏不配平（奇数个 ``` 会导致后续内容被吞入代码块）
  *   3. 示例代码引用了不存在的类（设计阶段命名 vs 实际实现）
  *
- * 为什么要扫根目录：`AGENTS.md` 是 AI 助手的强制指令文件，此前因为落在扫描范围之外
+ * 扫描范围为什么只剩 `docs/`：`design/` 已作为「开发过程产物」移出版本库
+ * （`git rm -r --cached`，磁盘保留），不再随仓库交付，因此也不再是本门禁的扫描根。
+ *
+ * 为什么要扫根目录：`AGENTS.md` 曾经是 AI 助手的强制指令文件，当初因为落在扫描范围之外
  * 从**不被任何机器校验**，先后写下过两条过期事实。检查 0 保证「新加的根目录 md
  * 不会静默漏扫」—— 要么纳入 `SCAN_FILES`，要么写进 `SCAN_FILES_EXEMPT` 并说明原因。
+ * 现状：AGENTS.md / CLAUDE.md / README.local.md 均已移出版本库，改由豁免清单压掉报错。
  *
  * ⚠️ 覆盖边界（已知盲区，不要误以为「绿了=内容正确」）：
  *   本脚本只校验**结构**（链接目标存在、围栏成对、示例类存在），**不校验散文事实**。
@@ -49,9 +53,12 @@ declare(strict_types=1);
 
 /**
  * 扫描根目录（相对仓库根）
- * report_archive/ 为历史归档，其链接天然失效，默认排除。
+ *
+ * 只保留 `docs`：`design/` 已作为开发过程产物移出版本库，不再交付、也不再校验。
+ * `docs/` 内部被移出的子目录（report / todo / superpowers ...）由
+ * `EXCLUDE_PATTERNS` 排除 —— 它们在本机磁盘上仍然存在，不排除就会与 CI 结论分叉。
  */
-const SCAN_ROOTS = ['design', 'docs'];
+const SCAN_ROOTS = ['docs'];
 
 /**
  * 额外扫描的**单文件**（相对仓库根）
@@ -64,12 +71,11 @@ const SCAN_ROOTS = ['design', 'docs'];
  * 一并扫进来（既慢又会产生大量与项目无关的失效链接）。
  *
  * 新增根目录 md 时请显式加入本清单；忘记加会被「检查 0」点名（见 SCAN_FILES_EXEMPT）。
+ * 目前是 `README.md`（仓库门面）与 `CONTRIBUTING.md`（贡献指南）：两者都是交付物。
  */
 const SCAN_FILES = [
-    'AGENTS.md',
-    'CLAUDE.md',
     'README.md',
-    'README.local.md',
+    'CONTRIBUTING.md',
 ];
 
 /**
@@ -83,12 +89,52 @@ const SCAN_FILES = [
  * 不校验存在性 —— 否则 CI 会误红。
  */
 const SCAN_FILES_EXEMPT = [
+    // 本地强制规则与代理指令，已移出版本库（见 .gitignore），不属于交付物
+    'AGENTS.md' => '已移出版本库（见 .gitignore），本地 AI 代理强制规则，非交付文档',
+    'CLAUDE.md' => '已移出版本库（见 .gitignore），本地 Claude Code 指令，非交付文档',
+    'README.local.md' => '已移出版本库（见 .gitignore），本机个人说明，非交付文档',
     // 本地合并备份，已被 .gitignore 忽略，不属于项目文档，内容会随本地合并变化
     'README.local-merge-backup.md' => '未纳入 git（见 .gitignore），本地人工合并备份，非项目文档',
 ];
 
-/** 排除的路径片段 */
-const EXCLUDE_PATTERNS = ['/docs/report_archive/', '/node_modules/', '/vendor/'];
+/**
+ * 排除的路径片段
+ *
+ * 判定方式见 `isExcluded()`：把待检路径规范成 `/xxx/yyy.md` 后做**子串**匹配，
+ * 因此每条都应带上首尾斜杠、并足以唯一定位目录（`/docs/report/` 不会误伤
+ * `/docs/report_archive/`，因为后者该位置是下划线而不是斜杠）。
+ *
+ * 第一组是与项目无关的产物 / 第三方目录；
+ * 第二组是**已移出版本库的开发过程产物**（`git rm -r --cached`，本机磁盘仍保留）。
+ * 第二组必须排除：本脚本是递归扫 `docs/` 的，那些文件在本机还在，
+ * 不排除就会去校验「已经不发货的文档」，与 CI 干净检出的结论分叉。
+ *
+ * ⚠️ 维护约定：第二组必须与 .gitignore 的「开发过程产物」分组保持一致。
+ */
+const EXCLUDE_PATTERNS = [
+    '/node_modules/',
+    '/vendor/',
+    // --- 已移出版本库的开发过程产物（本机仍在磁盘上） ---
+    '/docs/PROJECT-OVERVIEW.md',
+    '/docs/report/',
+    '/docs/report_archive/',
+    '/docs/todo/',
+    '/docs/superpowers/',
+    '/docs/casbin/',
+    '/docs/other-docs/',
+    // technical-specs 是对外技术规范，整体仍属交付物（api / code-style / database / deployment /
+    // git / lowcode / multi-tenant / performance / plugin / security / testing 全部参与扫描）；
+    // 只有下面两类是过程产物，已移出版本库、本机磁盘仍保留 → 必须排除，
+    // 否则本地会去校验「不发货的文档」，与 CI 干净检出结论分叉。
+    '/docs/technical-specs/adr/',
+    // 测试报告：记录某一次执行的结果，随环境变化、无长期参考价值。
+    // 只排除 *test-report*，同目录的 git-workflow-guidelines / pr-review-checklist /
+    // branch-protection-guidelines 都是要交付的规范，必须继续参与扫描。
+    '/docs/technical-specs/git/git-workflow-automation-test-report',
+    // 注意：performance/ 不在排除清单里。它曾被误判为「内部性能基线」而移出，实际是
+    // MUST/SHOULD 条款的权威规范（performance-guidelines.md §1 自称 authoritative reference），
+    // 已恢复交付，因此必须参与扫描，否则等于少查一个发货目录。
+];
 
 /**
  * 命名空间 → 目录映射（设计阶段命名 → 实际路径）
@@ -207,7 +253,7 @@ function collectMarkdownFiles(array $roots, array $files = [], array &$errors = 
  *   2. 根目录的 md **必须**出现在两者之一里（覆盖缺口）。
  *
  * 第 2 条是为了让「将来新增根目录 md（如 CONTRIBUTING.md）」不会静默漏扫 ——
- * 若不做这件事，本清单会悄悄过期，门禁再次变成只覆盖 design/ + docs/。
+ * 若不做这件事，本清单会悄悄过期，门禁再次变成只覆盖 `docs/` 这一条扫描根。
  *
  * @return string[]
  */
@@ -318,23 +364,14 @@ function readLines(string $path): array
  *   `](file:///.../security-guidelines.md)` **只报一次 `file://` 错误，不再被算作失效链接**
  *   —— 否则同一条问题记两遍，报错账目对不上。
  *
- * ## `docs/report` 策略：**不豁免**（决策记录，改动前请先读这段）
- *   检查 3（示例类引用）确实豁免了 `docs/report/`，但**检查 1 不跟进豁免**：
- *   1. 失效的 6 条裸链接里，目标文件**全部真实存在** —— 这是「路径写法错误」，不是
- *      「历史快照失真」；加一层 `../` 就修好，属于**能被修的问题**，不该被豁免成看不见；
- *   2. `docs/report/` 是裸链接最密集的目录（实测 32 条），一刀切豁免等于让本仓库
- *      最大的文档目录**永久失明**，与本仓库近年反复治理「假绿检查」的方向相反；
- *   3. 检查 3 的豁免理由是「审计报告会引用**不存在的类**作为证据」，与「链接指向的文件
- *      是否存在」是两码事 —— 前者按定义必然不存在，后者不该不存在。
- *   4. **扩到非 .md 目标后，这条理由更强，不是更弱**：上一轮 `.md` 口径下该目录只有 6 条
- *      坏链（全是「少写 `../`」），扩到目录/`.php` 后变成 45 条，其中 **43 条目标真实存在**
- *      （11 条目录链接缺 `../../`；32 条是 `path:行号` 形态且目标存在，其中 5 条此前被
- *      「伪协议」正则当成 `composer.json:` 这类 scheme 吞掉、从未进过检查），**只有 2 条**
- *      指向 `15aa2af` 已删除的 legacy 类。也就是说 45 条里 43 条**都能靠改前缀修好** ——
- *      豁免它就等于把「可修」当「不可修」。
- *   若将来真出现「指向已删除文件的归档链接」，处置方式是**把链接降级为行内代码**
+ * ## `docs/report` 策略：**不豁免**（决策记录）
+ *   该目录曾是裸链接最密集处（实测 45 条坏链，其中 43 条目标真实存在、只是少了 `../`），
+ *   属于「能被修的问题」，所以检查 1 当年刻意不按目录豁免它，而是逐条修正；
+ *   检查 3 则豁免它 —— 审计报告会**故意引用不存在的类**作为证据。
+ *   现状：`docs/report/` 已作为开发过程产物移出版本库（见 `EXCLUDE_PATTERNS`），
+ *   整个目录不再参与扫描，检查 3 的对应豁免常量 `REF_CHECK_EXCLUDE` 也随之删除。
+ *   通用处置方式仍然有效：指向已移出 / 已删除文件的链接**降级为行内代码**
  *   （`` `docs/xxx.md` ``：保留原文陈述、退出链接校验），而不是按目录一刀切豁免。
- *   本轮的 2 条 legacy 链接正是按这条策略处置的（见该报告 §1.2 的「Legacy架构」小节）。
  *
  * ## 代码剥离（避免把「说明文字」当成真链接）
  *   扫描前先剥离两类代码，否则描述正则本身的文字会被误报
@@ -526,20 +563,15 @@ function checkFences(array $files): array
 }
 
 /**
- * 检查 3 的额外排除：审计报告类文档
- *
- * `docs/report/` 下的审查/分析报告会**引用有问题的代码片段作为证据**，
- * 这些引用本来就不应存在，属正常，故排除在本项检查之外。
- */
-const REF_CHECK_EXCLUDE = ['/docs/report/'];
-
-/**
  * 检查 3：示例代码引用的类是否存在
  *
  * **豁免规则**：
  *   1. 文档头部若已包含「命名空间声明」或「待实施方案」横幅 → 不参与本项检查
  *      （不匹配已被显式声明，不会误导读者）
- *   2. `docs/report/` 下的审计报告 → 不参与（它们引用错误示例作为证据）
+ *
+ * 历史：曾有第 2 条「`docs/report/` 下的审计报告不参与本项检查」（它们故意引用
+ * 不存在的类作为证据）。该目录已移出版本库并写进 `EXCLUDE_PATTERNS`，根本不会进入
+ * `$files`，那条豁免已无作用，故连同 `REF_CHECK_EXCLUDE` 常量一并删除。
  *
  * 该豁免**只对已声明的文档生效**，用于防止新增未声明文档再次引入错误引用。
  *
@@ -550,12 +582,6 @@ function checkExampleClassRefs(array $files): array
 {
     $issues = [];
     foreach ($files as $file) {
-        $normalized = '/' . str_replace('\\', '/', $file);
-        foreach (REF_CHECK_EXCLUDE as $pattern) {
-            if (str_contains($normalized, $pattern)) {
-                continue 2;
-            }
-        }
         if (hasDeclarationBanner($file)) {
             continue;
         }

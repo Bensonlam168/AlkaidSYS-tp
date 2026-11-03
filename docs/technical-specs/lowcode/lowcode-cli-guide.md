@@ -678,10 +678,10 @@ jobs:
 
 ## 相关文档
 
-- [低代码框架设计文档](../../../design/09-lowcode-framework/40-lowcode-framework-architecture.md)
+- 低代码框架设计文档：`design/09-lowcode-framework/40-lowcode-framework-architecture.md`（`design/` 属开发过程产物，已移出版本库，仅保留在本地）
 - [API 规范](../api/api-specification.zh-CN.md)
 - [数据库设计指南](../database/database-guidelines.zh-CN.md)
-- [多租户数据模型规范](../../../design/03-data-layer/12-multi-tenant-data-model-spec.md)
+- 多租户数据模型规范：`design/03-data-layer/12-multi-tenant-data-model-spec.md`（同上，已移出版本库）
 
 ---
 
