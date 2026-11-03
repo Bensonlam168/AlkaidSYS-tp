@@ -114,7 +114,24 @@ describe('dateUtils', () => {
     it('should return a valid IANA timezone string', () => {
       const tz = getSystemTimezone();
       expect(typeof tz).toBe('string');
-      expect(tz).toMatch(/^[A-Z]+\/[A-Z_]+/i);
+      expect(tz).toBeTruthy();
+      // 语义断言：交给 Intl 判定 —— 构造不抛异常即说明这是被认可的时区标识。
+      // 不能用 /^[A-Z]+\/[A-Z_]+/ 这类「字符形态」去猜：'UTC'、'GMT' 都是合法 IANA
+      // 时区却没有斜杠，而 CI runner 的默认时区正是 UTC，旧断言会把通过的用例判红。
+      expect(
+        () => new Intl.DateTimeFormat('en-US', { timeZone: tz }),
+      ).not.toThrow();
+      // getSystemTimezone() 即 dayjs.tz.guess()，该实现直接返回
+      // Intl.DateTimeFormat().resolvedOptions().timeZone，故两者必须一致。
+      expect(tz).toBe(new Intl.DateTimeFormat().resolvedOptions().timeZone);
+      // 顺带钉住「不带斜杠也是合法时区」这一事实：'UTC' / 'GMT' 都是合法 IANA 时区，
+      // 且 'UTC' 正是 CI runner 上 getSystemTimezone() 的返回值，本地（Asia/Shanghai）
+      // 永远走不到这条分支，所以在此显式覆盖，防止断言又退回按字符形态匹配。
+      for (const slashlessTz of ['UTC', 'GMT']) {
+        expect(
+          () => new Intl.DateTimeFormat('en-US', { timeZone: slashlessTz }),
+        ).not.toThrow();
+      }
     });
   });
 

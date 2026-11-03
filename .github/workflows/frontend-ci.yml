@@ -34,8 +34,7 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # 顺序不能反：setup-node 的 cache: 'pnpm' 内部要执行 pnpm store path 去定位缓存目录，
-      # 此时 pnpm 必须已经装好并在 PATH 上。
+      # 顺序不能反：pnpm 必须先于 setup-node 就位，后面的 pnpm install 同样依赖它。
       #
       # 这里只给 package_json_file、**不给 version**，原因：本仓库根 package.json 的
       # packageManager 是 pnpm@9.15.5，而 frontend/package.json 是 pnpm@10.14.0。
@@ -50,17 +49,34 @@ jobs:
       # 原来这里写的是 cache: 'npm' —— 本仓库是 pnpm monorepo，只有 frontend/pnpm-lock.yaml，
       # 于是 setup-node 报 "Dependencies lock file is not found ... Supported file patterns:
       # package-lock.json, npm-shrinkwrap.json, yarn.lock" 直接失败（本次修的正是它）。
+      #
+      # ⚠️ 也**不再启用** setup-node 的 pnpm 缓存（cache: 'pnpm' 与 cache-dependency-path 已删除），
+      #    根因：setup-node v4 定位 pnpm 缓存目录的方式是「在**仓库根**（GITHUB_WORKSPACE，
+      #    不是 job 的 working-directory）执行 `pnpm store path --silent`」，而本仓库
+      #    根 package.json 的 packageManager 钉的是 pnpm@9.15.5、frontend/package.json 才是
+      #    pnpm@10.14.0。于是两处口径分裂：
+      #      · 缓存路径算出来是 pnpm 9 的 store：~/.local/share/pnpm/store/v3
+      #      · 真正跑 install 的是 frontend/ 下的 pnpm 10，写入的是 …/store/v10
+      #    干净 runner 上 v3 目录从不产生，Post 步骤 actions/cache 保存时就报
+      #    "Path Validation Error: Path(s) ... do(es) not exist, hence no cache is being saved."
+      #    把已经全绿的 job 判红（本地 macOS 之所以不复现，是因为本机早就存在 v3 目录）。
+      #    取舍：宁可每次多跑一次约 40 秒的 pnpm install，也要确定性为绿 —— 一个
+      #    「装得快但偶发把绿 job 判红」的缓存比「慢 40 秒但确定绿」差。
+      #
+      #    将来要恢复缓存，别退回 cache: 'pnpm'（上面那条路径口径问题依旧），改成显式两步：
+      #      1) 在 working-directory frontend 内执行 `pnpm store path --silent`，结果写进 $GITHUB_ENV；
+      #      2) 用 actions/cache 缓存该路径，key 带 frontend/pnpm-lock.yaml 的 hash，
+      #         restore-keys 用 pnpm-store-${{ runner.os }}-
+      #    并且必须先在真实 runner 上验证 Post 步骤不再出现 Path Validation Error，才算数。
       - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
-      # 原「缓存pnpm依赖」那段 actions/cache（~/.pnpm-store + frontend/node_modules）已删除：
-      # ① cache: 'pnpm' 已在 setup-node 里缓存 pnpm store，手工再缓存一遍没有收益；
-      # ② 缓存 node_modules 在 pnpm workspace 里是反模式 —— 里面是指向 store 的软链接，
-      #    跨机器恢复后软链悬空，比不缓存更糟。
+      # 手工 actions/cache 缓存依赖（~/.pnpm-store + frontend/node_modules）同样不启用：
+      # ① pnpm workspace 的 node_modules 里全是指向 store 的软链接，跨机器恢复后软链悬空，
+      #    比不缓存更糟；
+      # ② 要做对就得缓存 store 而不是 node_modules，做法见上方注释末尾的两步方案。
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
@@ -96,12 +112,11 @@ jobs:
         with:
           package_json_file: frontend/package.json
 
+      # 不加 setup-node 的 cache: 'pnpm'（原配置已删除），原因见 frontend-quality 的注释
       - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       # 原「缓存pnpm依赖」的 actions/cache 已删除，理由同 frontend-quality
 
@@ -151,12 +166,11 @@ jobs:
         with:
           package_json_file: frontend/package.json
 
+      # 不加 setup-node 的 cache: 'pnpm'（原配置已删除），原因见 frontend-quality 的注释
       - name: 设置 Node.js 环境
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       # 原「缓存pnpm依赖」的 actions/cache 已删除，理由同 frontend-quality
 
