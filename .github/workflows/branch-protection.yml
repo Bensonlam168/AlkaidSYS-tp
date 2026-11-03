@@ -344,19 +344,11 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置PHP缓存
-        uses: actions/cache@v4
-        with:
-          path: ~/.composer/cache
-          key: ${{ runner.os }}-composer-audit-${{ env.CACHE_VERSION }}
-          restore-keys: |
-            ${{ runner.os }}-composer-audit-
-
-      - name: 设置PHP环境
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ env.PHP_VERSION }}
-
+      # 注意：本 job 原本还有两步「设置PHP缓存」+「设置PHP环境」，已随下面的 PHP 公告检查一并删除。
+      # 删它们的理由：这两步只为那段 PHP 依赖公告检查准备工具链，检查删掉后它们没有任何消费者；
+      # 剩下的「扫描前端依赖漏洞」只读 frontend/ 的 lockfile（pnpm audit / npm audit），
+      # 既不需要 PHP，也不需要 ~/.composer/cache。**不要以为是漏删，又加回来。**
+      #
       # PHP 依赖公告已由 Backend CI 的 Dependency Audit 门禁负责
       # （.github/workflows/backend-php-cs-fixer.yml 的 jobs.dependency-audit，fail-closed）。
       # 这里原本有一段 `composer global require enlightn/security-checker` + `if composer audit; then ... else 仅警告; fi`，

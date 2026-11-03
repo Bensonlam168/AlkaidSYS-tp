@@ -23,7 +23,7 @@ use PHPUnit\Framework\TestCase;
  *   A3 `SCAN_FILES` 名单双向一致（AGENTS.md ↔ scripts/check-docs.php）
  *   A4 phpunit 套件名单（AGENTS.md ↔ phpunit.xml，Legacy 必须在其中）
  *   A5 `failOnEmptyTestSuite="true"`
- *   A6 `phpunit` job 没有 `needs:`
+ *   A6 8 个 required check 的 job 都没有 `needs:`（不是只钉 `phpunit`）
  *   A7 `TEMPLATE_REQUIRED_MIN_KEYS` 的「6」两处一致
  *
  * 约束：
@@ -93,14 +93,14 @@ final class AgentsDocFactsGuardTest extends TestCase
             $this->checkScanFilesList($projectRoot, $agentsDoc),
             $this->checkPhpunitSuites($projectRoot, $agentsDoc),
             $this->checkFailOnEmptyTestSuite($projectRoot),
-            $this->checkPhpunitJobHasNoNeeds($projectRoot),
+            $this->checkRequiredGatesHaveNoNeeds($projectRoot),
             $this->checkTemplateMinKeys($projectRoot, $agentsDoc)
         );
 
         $summary = "AGENTS.md 里有「转述上游文件内部事实」的陈述已与实际文件不一致。\n"
             . "这类事实没有任何其他机器校验覆盖（check-docs 只校验结构，看不见散文），所以必须在这里修好：\n"
             . "  · 若上游文件（workflow / phpunit.xml / scripts/*.php）的改动是**合规**的 → 同步修正 AGENTS.md；\n"
-            . '  · 若上游文件被改**错了**（例如 phpunit job 被加回 needs、paths 过滤被加回）→ 改回上游文件，'
+            . '  · 若上游文件被改**错了**（例如某个 required check 的 job 被加回 needs、paths 过滤被加回）→ 改回上游文件，'
             . "不要为了让守卫变绿而修改 AGENTS.md 的描述。\n"
             . '共 ' . count($violations) . ' 条：';
 
@@ -693,50 +693,81 @@ final class AgentsDocFactsGuardTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
-    // A6：`phpunit` job 无 `needs`
+    // A6：required check 对应的 job 一律没有 `needs`
     // -----------------------------------------------------------------------
 
     /**
-     * A6：AGENTS.md 明确写「**无 `needs`**，因此不会被上游跳过」。
+     * A6：AGENTS.md 写「该 job **没有 `needs:`**（因此不会被上游跳过）」—— 这条要求对
+     * **每一个** required check 都成立，不只是 `phpunit`。
      *
-     * 历史上这里是 `needs: [php-cs-fixer, lang-check]`：风格检查恒红 → phpunit 被判 skipped
-     * → 测试信号整段丢失，且 required check 永久 pending。
+     * 为什么：required 的语义是「必须出现且 success」。一挂 `needs`，上游 job 一失败/被跳过，
+     * 本 job 就变成 skipped —— 而 skipped 不等于 success，于是该 check 永久 pending，PR 永远合不进去。
+     * 这与 R40 修掉的「带 `paths:` 的 required check 永久 `Expected`」是同一类故障。
+     *
+     * 历史：`phpunit` 曾是 `needs: [php-cs-fixer, lang-check]`，而风格检查恒红 → phpunit 被判 skipped
+     * → 测试信号整段丢失。此前本守卫只钉 `phpunit` 这一个 job，于是 `dependency-audit` 这类新门禁
+     * 被加上 `needs:` 时没有任何测试会红；现在改成遍历 REQUIRED_GATES 的 8 条，逐条给出独立违规。
      *
      * @return array<int, string>
      */
-    private function checkPhpunitJobHasNoNeeds(string $projectRoot): array
+    private function checkRequiredGatesHaveNoNeeds(string $projectRoot): array
     {
         $violations = [];
-        $workflowPath = '.github/workflows/backend-php-cs-fixer.yml';
-        $jobId = 'phpunit';
 
-        $yaml = self::readProjectFile($projectRoot, $workflowPath, $violations, 'A6 phpunit job 的 needs');
-        if ($yaml === null) {
-            return $violations;
-        }
+        // 按 workflow 缓存文本：backend-php-cs-fixer.yml 有 3 个 required job、migrations-check.yml 有 2 个，
+        // 同一份文件不必读三遍。
+        /** @var array<string, string|null> $yamlCache */
+        $yamlCache = [];
 
-        $jobBlock = self::yamlJobBlock($yaml, $jobId);
-        if ($jobBlock === null) {
+        foreach (self::REQUIRED_GATES as $checkName => [$workflowPath, $jobId]) {
+            if (!array_key_exists($workflowPath, $yamlCache)) {
+                $yamlCache[$workflowPath] = self::readProjectFile(
+                    $projectRoot,
+                    $workflowPath,
+                    $violations,
+                    'A6 required check 的 needs'
+                );
+            }
+
+            $yaml = $yamlCache[$workflowPath];
+            if ($yaml === null) {
+                continue;
+            }
+
+            $jobBlock = self::yamlJobBlock($yaml, $jobId);
+            if ($jobBlock === null) {
+                // 定位不到 job 时**不许静默跳过**：解析不出区块就核对不了 needs，静默通过等于「非空即通过」。
+                // A1 也会报同一条（那里同样给出 check 名称），这里再报一次是为了让「A6 到底守住了没有」自成一体。
+                $violations[] = sprintf(
+                    'A6 required check 的 needs：%s 的 `jobs:` 下找不到 job id「%s」（该 job 的 check 名称应为「%s」，现有 job：%s）—— '
+                    . 'job 被改名/删除（或被写成本守卫识别不了的形态）时，这里就核对不了它有没有 `needs:`。'
+                    . '请恢复 job 或同步更新本测试的 REQUIRED_GATES；不要靠删掉这条断言来变绿。',
+                    $workflowPath,
+                    $jobId,
+                    $checkName,
+                    implode(' / ', self::yamlJobIds($yaml))
+                );
+                continue;
+            }
+
+            $count = self::yamlJobKeyCount($jobBlock, 'needs');
+            if ($count === 0) {
+                continue;
+            }
+
             $violations[] = sprintf(
-                'A6 phpunit job 的 needs：%s 的 `jobs:` 下找不到 job id `%s`（现有 job：%s）—— '
-                . 'job 被改名/删除后「测试是否真的跑过」就无从核对，请恢复该 job 或同步更新本测试与 AGENTS.md。',
+                'A6 required check 的 needs：「%s」这个 required check 对应的 %s 的 jobs.%s 区块里有 %d 处 job 级 `needs:` —— '
+                . 'required 的语义是「必须出现且 success」：一挂 needs，上游 job 一失败/被跳过，jobs.%s 就变 skipped，'
+                . '而 skipped 不等于 success，于是该 check 永久停在 pending，PR 永远合不进去'
+                . '（与 R40 修掉的「带 `paths:` 的 required check 永久 `Expected`」是同一类故障）。'
+                . '改哪里：改回 workflow —— 删掉 jobs.%s 的 needs；需要「都通过才放行」请用分支保护的 required status checks 表达，'
+                . '不要用 job 之间的依赖链。不要改本测试来放宽断言。',
+                $checkName,
                 $workflowPath,
                 $jobId,
-                implode(' / ', self::yamlJobIds($yaml))
-            );
-            return $violations;
-        }
-
-        $count = self::yamlJobKeyCount($jobBlock, 'needs');
-        if ($count !== 0) {
-            $violations[] = sprintf(
-                'A6 phpunit job 出现了 needs：%s 的 jobs.%s 区块里有 %d 处 job 级 `needs:`，'
-                . '但 AGENTS.md「它为什么不会被「跳过」」要求为 0 —— 一旦挂上 needs，前置 job 失败就会让 phpunit 被判 skipped：'
-                . '测试信号整段丢失，且被设为 required 时永久 pending（PR 永远合不进去）。'
-                . '请删掉 needs；需要「都通过才能合并」请用分支保护的 required status checks 表达，而不是 job 之间的依赖链。',
-                $workflowPath,
+                $count,
                 $jobId,
-                $count
+                $jobId
             );
         }
 
