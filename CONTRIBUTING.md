@@ -174,4 +174,10 @@ echo "feat(api): 新增用户查询接口" | pnpm exec commitlint
 
 ## 📄 许可证
 
-本项目采用 [MIT 许可证](LICENSE.txt)，提交即表示同意以同一许可证授权你的贡献。
+本项目采用 [Apache License 2.0](LICENSE.txt)（SPDX：`Apache-2.0`），提交即表示同意以同一许可证授权你的贡献。
+
+提交贡献前请注意：
+
+- 本项目整体为 Apache-2.0，但 `frontend/` 派生自 Vue Vben Admin（**MIT**）、`plugins/workflow-engine/` 派生自 Ingenious（**Apache-2.0**），这些目录的许可证字段**不要**改成 Apache-2.0；
+- 不要删除 `plugins/workflow-engine/` 下源自上游的版权头（Apache-2.0 第 4(c) 条要求保留）；
+- 第三方归属与修改说明统一登记在 [NOTICE](NOTICE)，新增第三方代码时请同步更新该文件。

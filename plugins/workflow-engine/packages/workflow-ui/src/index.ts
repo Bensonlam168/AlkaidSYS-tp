@@ -73,7 +73,7 @@ export const packageInfo = {
   description: 'AlkaidSYS工作流设计器UI组件包',
   keywords: ['workflow', 'bpmn', 'designer', 'vue3', 'logicflow'],
   author: 'AlkaidSYS Team',
-  license: 'MIT'
+  license: 'Apache-2.0'
 }
 
 // 默认导出

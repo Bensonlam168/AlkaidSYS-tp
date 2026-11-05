@@ -45,9 +45,30 @@ composer install
 
 详细使用说明请参考 [docs/](docs/) 目录。
 
-## 许可证
+## License & Attribution（许可证与归属）
 
-本项目基于 [LICENSE](LICENSE) 许可证开源。
+本插件以 **Apache License, Version 2.0** 授权，许可证全文见 [LICENSE](LICENSE)。
+
+**本插件是 [Ingenious](https://gitcode.com/motion-code) 工作流引擎的修改版（MODIFIED）。**
+按 Apache License 2.0 第 4(b) 条要求声明如下：
+
+| 项 | 内容 |
+|---|---|
+| 上游作品 | Ingenious 工作流引擎 |
+| 上游版权 | Copyright (c) https://gitcode.com/motion-code  All rights reserved. |
+| 上游作者 | Mr. April (405784684@qq.com) |
+| 软著登记号 | 2024SR0694589 |
+| 官方站点 | https://madong.tech |
+| 上游仓库 | https://gitcode.com/motion-code |
+| 许可证 | Apache License, Version 2.0 |
+
+主要修改：命名空间由 `madong\ingenious` 改为 `Alkaid\Workflow\Engine`；
+新增多租户适配、与 AlkaidSYS 的框架集成、Swoole 协程支持、依赖注入容器与
+表达式引擎等能力。完整的第三方归属与修改清单见仓库根目录的
+[NOTICE](../../NOTICE)。
+
+`src/` 下 131 个源自上游的源文件保留了上游版权头（按 Apache License 2.0
+第 4(c) 条要求，未作删改）。
 
 ## 贡献
 

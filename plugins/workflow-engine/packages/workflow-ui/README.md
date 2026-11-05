@@ -360,7 +360,11 @@ src/
 
 ## 许可证
 
-MIT
+Apache License 2.0 —— 见插件根目录的 [LICENSE](../../LICENSE)。
+
+本包是 AlkaidSYS Workflow Engine 插件的组成部分，该插件为
+[Ingenious](https://gitcode.com/motion-code) 工作流引擎的修改版。
+第三方归属与修改说明见仓库根目录的 [NOTICE](../../../../NOTICE)。
 
 ## 贡献指南
 
