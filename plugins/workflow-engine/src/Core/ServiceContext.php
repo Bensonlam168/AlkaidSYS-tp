@@ -39,10 +39,48 @@ class ServiceContext implements IServiceContext
         }
 
         $builder = new \DI\ContainerBuilder();
-        $builder->addDefinitions($context);
+        $builder->addDefinitions(self::normalizeDefinitions($context));
         $builder->useAutowiring(true);
         //        $builder->useAnnotations(false); 7.x开始废弃默认开启
         self::$container = $builder->build();
+    }
+
+    /**
+     * 把「名字 => 类名」归一化为「名字 => DI\create(类名)」
+     *
+     * 为什么必须在建容器之前做这一步（本仓库已踩过的事故）：
+     * `setContext()` 的入参是 `名字 => 值` 的映射，而 `WorkflowContainer::buildCoreServices()`
+     * 与 `Configuration` 的 `service_dependencies` 里写的都是**类名字符串**。
+     * 这些字符串若原样交给 PHP-DI，走的是 `DefinitionNormalizer::normalizeRootDefinition()`：
+     * 只要不是 DefinitionHelper / 数组 / 闭包，就被包成 `ValueDefinition`（**字面值**），
+     * 于是 `find('processEngines')` 取回的仍是类名字符串，而不是对象。
+     * 后果是调用方按接口接收返回值时抛 TypeError
+     * （`WorkflowContainer::getProcessEngines(): Return value must be of type IProcessEngines, string returned`）。
+     *
+     * 归一化口径与 `register()` 保持一致：**「存在的类」才包装成 DI\create**。
+     * - 接口 / 抽象类不满足 `class_exists()`，保持原样（仍是字面值），
+     *   这样「宿主尚未提供实现」的条目行为与改造前完全一致，不会在解析时突然变成
+     *   「接口无法实例化」的硬失败；
+     * - 对象 / 标量 / null / 非类名字符串原样透传，仍由 PHP-DI 按字面值登记
+     *   （请求上下文那类值语义条目依赖这一点，见 register() 的第 3 类说明）。
+     *
+     * @param array $definitions 原始定义映射
+     * @return array 归一化后的定义映射
+     */
+    private static function normalizeDefinitions(array $definitions): array
+    {
+        $normalized = [];
+
+        foreach ($definitions as $name => $definition) {
+            if (is_string($definition) && class_exists($definition)) {
+                $normalized[$name] = \DI\create($definition);
+                continue;
+            }
+
+            $normalized[$name] = $definition;
+        }
+
+        return $normalized;
     }
 
     public static function hasContext(): bool
