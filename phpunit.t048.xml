@@ -144,6 +144,11 @@
         <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
+        <!-- 与基线 phpunit.xml 同步：token_bucket 的桶容量/补充速率必须可预期，
+             否则 CI 上 Feature 套件跑得快会把 100 的默认桶打空、随机触发 429。
+             门禁「检查 A 强制变量覆盖关系」要求变体不得缺少基线的强制变量。 -->
+        <env name="RATELIMIT_TB_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_TB_RATE" value="10000" force="true"/>
     </php>
     <coverage includeUncoveredFiles="true"/>
     <source>

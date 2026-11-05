@@ -219,6 +219,20 @@
         <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
+
+        <!-- RATELIMIT_TB_*：token_bucket 算法的桶容量与补充速率，同样必须可预期。
+             这一组是上面 RATELIMIT_SCOPE_* 之外**另一套**参数（config/ratelimit.php:90-91）：
+             scope 决定「阈值按什么口径算」，token_bucket 决定「桶多大、每秒补多少」。
+             此前只钉了 scope 没钉 TB，于是桶容量一直是配置默认的 100。
+             后果是 CI 上偶发的 429：Feature 套件在 runner 上跑得快，同一个 IP（0.0.0.0）
+             在补充速率追上之前就把 100 个令牌打空，WorkflowTenantStrictnessTest 这类
+             「根本没打算测限流」的用例被误伤成 429，而本地因为跑得慢、令牌来得及补回去而绿。
+             这类红会随机阻塞 required check，比缺一个断言更糟。
+             取远超用例实际请求数的值：只要求「打不空」，不模拟真实限流；
+             真需要造 429 的用例（RateLimitMiddlewareTest）靠 config() 覆盖内存配置，
+             不读这里的环境变量，所以不受影响。 -->
+        <env name="RATELIMIT_TB_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_TB_RATE" value="10000" force="true"/>
     </php>
     <coverage includeUncoveredFiles="true"/>
     <source>
