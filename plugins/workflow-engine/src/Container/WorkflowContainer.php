@@ -146,6 +146,17 @@ class WorkflowContainer
         $processInstanceService = $config['process_instance_service'] ?? ProcessInstanceService::class;
         $processTaskService = $config['process_task_service'] ?? ProcessTaskService::class;
 
+        // 两个历史服务的实现类：本仓库**还没有** —— 历史表尚未建立，
+        // 且 IProcessInstanceHistoryService 的方法声明全部被注释成了空接口，
+        // 所以「未配置」时必须登记 null，而不是照抄上面三行的 `?? 接口名`。
+        // 为什么不能登记接口名：ServiceContext::normalizeDefinitions() 只把**存在的类**
+        // 包成 DI\create()，接口名会作为字面值留在 PHP-DI 里，find() 于是返回一个**字符串**；
+        // 而 ProcessServiceTrait::processInstanceHistoryService() 的返回类型是
+        // ?IProcessInstanceHistoryService，字符串不匹配会直接抛 TypeError，
+        // 比「返回 null、由调用方守卫」更难排查（守卫见 ProcessEngines::startProcessInstanceById）。
+        $processInstanceHistoryService = $config['process_instance_history_service'] ?? null;
+        $processTaskHistoryService = $config['process_task_history_service'] ?? null;
+
         $this->coreConfig = $config;
 
         $this->coreServices = [
@@ -182,10 +193,15 @@ class WorkflowContainer
             'processTypeService' => $config['process_type_service'] ?? IProcessTypeService::class,
 
             // 工作流实例历史服务
-            'processInstanceHistoryService' => $config['process_instance_history_service'] ?? IProcessInstanceHistoryService::class,
+            'processInstanceHistoryService' => $processInstanceHistoryService,
+            // 按接口 FQCN 再登记一次：引擎侧 ProcessServiceTrait::processInstanceHistoryService()
+            // 查的是 `ServiceContext::find(IProcessInstanceHistoryService::class)`，
+            // 只登记短名会让引擎侧永远取到 null（历史记录被静默跳过）。
+            IProcessInstanceHistoryService::class => $processInstanceHistoryService,
 
             // 工作流任务历史服务
-            'processTaskHistoryService' => $config['process_task_history_service'] ?? IProcessTaskHistoryService::class,
+            'processTaskHistoryService' => $processTaskHistoryService,
+            IProcessTaskHistoryService::class => $processTaskHistoryService,
 
             // 节点解析器
             'startParser' => StartParser::class,
@@ -240,6 +256,17 @@ class WorkflowContainer
         $this->coreServices[IProcessDefineService::class] = $this->coreServices['processDefineService'];
         $this->coreServices[IProcessInstanceService::class] = $this->coreServices['processInstanceService'];
         $this->coreServices[IProcessTaskService::class] = $this->coreServices['processTaskService'];
+
+        // 历史服务的同步规则与上面三条不同：它**允许为 null**（当前没有实现类），
+        // 所以不能用「无条件赋值」，否则会把宿主按接口 FQCN 注入的实现覆盖回 null。
+        // 用 `??` 表达「两边谁有值就用谁」：宿主无论写短名还是写接口 FQCN，
+        // 引擎侧按接口 FQCN 取值都能拿到同一个服务。
+        $this->coreServices[IProcessInstanceHistoryService::class]
+            = $this->coreServices[IProcessInstanceHistoryService::class]
+            ?? $this->coreServices['processInstanceHistoryService'];
+        $this->coreServices[IProcessTaskHistoryService::class]
+            = $this->coreServices[IProcessTaskHistoryService::class]
+            ?? $this->coreServices['processTaskHistoryService'];
 
         // 引擎实现类：允许宿主通过 service_dependencies['processEngines'] 覆盖，默认用插件自带实现
         $engineCandidate = $this->coreServices['processEngines'] ?? ProcessEngines::class;

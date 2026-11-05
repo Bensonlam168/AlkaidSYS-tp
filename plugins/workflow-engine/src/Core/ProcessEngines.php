@@ -20,6 +20,7 @@ use madong\interface\IDict;
 use Alkaid\Workflow\Engine\interface\IExecution;
 use Alkaid\Workflow\Engine\interface\IProcessEngines;
 use Alkaid\Workflow\Engine\interface\model\IProcessInstance;
+use Alkaid\Workflow\Engine\interface\services\IProcessInstanceHistoryService;
 use Alkaid\Workflow\Engine\libs\traits\ProcessServiceTrait;
 use Alkaid\Workflow\Engine\libs\utils\ProcessFlowUtils;
 use Alkaid\Workflow\Engine\libs\utils\StringHelper;
@@ -69,7 +70,25 @@ class ProcessEngines implements IProcessEngines
         $processInstance = $this->processInstanceService()->createProcessInstance($processDefine, $operator, $args, $parentId, $parentNodeName);
 
         // 3.1根据返回实例创建历史流程实例
-        $this->processInstanceHistoryService()->createHistoryProcessInstance($processInstance);
+        //
+        // 守卫式调用，而不是 `$this->processInstanceHistoryService()->createHistoryProcessInstance(...)`：
+        // 历史表（workflow_instance_history）**尚未建立**，IProcessInstanceHistoryService 也还是
+        // 空接口（方法声明全被注释），插件没有它的实现类。这种情况下
+        // `processInstanceHistoryService()` 返回 null（或宿主未装配好时返回非对象），
+        // 无条件调用会抛 `Error: Call to a member function createHistoryProcessInstance() on null` ——
+        // 实例已经落库、状态 running，却连第一个任务都生成不出来，流程死在第一步。
+        //
+        // 口径：历史记录是**审计旁路**，缺服务时跳过、记一条日志，主流程照常推进。
+        // 将来补上真实实现（含建表迁移）后，这里无需改动即可自动恢复历史写入。
+        $processInstanceHistoryService = $this->processInstanceHistoryService();
+        if (
+            is_object($processInstanceHistoryService)
+            && method_exists($processInstanceHistoryService, 'createHistoryProcessInstance')
+        ) {
+            $processInstanceHistoryService->createHistoryProcessInstance($processInstance);
+        } else {
+            $this->logHistoryServiceSkipped(IProcessInstanceHistoryService::class, $processInstanceHistoryService);
+        }
 
         // 4. 构建执行参数对象
         $execution = new Execution();
@@ -84,9 +103,44 @@ class ProcessEngines implements IProcessEngines
         return $processInstance;
     }
 
+    /**
+     * 记录「历史服务缺失，已跳过历史记录」的日志（旁路能力，绝不影响主流程）
+     *
+     * 为什么不静默跳过：与静默崩溃一样，「这次没有历史记录」如果连一条日志都不留，
+     * 事后无法区分「本来就没配」与「配了但没生效」，排查成本极高。
+     *
+     * 为什么不用插件自带的 libs\utils\Logger：它硬依赖 monolog，而 monolog 不在插件的
+     * composer 依赖里（实测独立运行时报 `Class "Monolog\Logger" not found`），
+     * 且它读的 `logs_path` 从来没有被任何配置写入 —— 调用它会先 mkdir(null) 再 fatal。
+     * 用一个会崩的日志器去记录「跳过」，比不记录更糟。因此沿用
+     * WorkflowBootstrap::logWorkflow() 的两级口径：宿主 ThinkPHP 日志优先，否则降级 error_log()。
+     *
+     * @param string $interface 缺失的服务接口（日志里用于定位）
+     * @param mixed  $resolved  实际取到的值（null / 非对象 / 没有目标方法的对象）
+     * @return void
+     */
+    private function logHistoryServiceSkipped(string $interface, mixed $resolved): void
+    {
+        $message = sprintf(
+            '未配置工作流历史服务（%s，实际取到 %s），已跳过历史记录；流程继续推进',
+            $interface,
+            get_debug_type($resolved)
+        );
+
+        try {
+            if (class_exists(\think\facade\Log::class)) {
+                \think\facade\Log::channel('workflow')->info($message);
+                return;
+            }
+        } catch (\Throwable) {
+            // 宿主日志不可用（插件独立运行 / 未配置 log 通道）：继续走下面的降级分支
+        }
+
+        error_log('[workflow-engine][INFO] ' . $message);
+    }
+
     public function executeProcessTask(string|int $processTaskId, string|int $operator, IDict $args): array
     {
-
         $execution = $this->execute($processTaskId, $operator, $args);
 
         if ($execution == null) {
