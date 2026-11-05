@@ -266,9 +266,8 @@ class WorkflowBootstrap
     public static function startWorkflow(string $definitionId, array $params, int $operator): \Alkaid\Workflow\Engine\interface\model\IProcessInstance
     {
         $engine = self::getEngine();
-        $args = new \Alkaid\Workflow\Engine\libs\utils\Dict($params);
 
-        return $engine->startProcessInstanceById($definitionId, (string)$operator, $args);
+        return $engine->startProcessInstanceById($definitionId, (string)$operator, self::createEngineArgs($params));
     }
 
     /**
@@ -282,9 +281,40 @@ class WorkflowBootstrap
     public static function executeTask(string $taskId, array $params, int $operator): array
     {
         $engine = self::getEngine();
-        $args = new \Alkaid\Workflow\Engine\libs\utils\Dict($params);
 
-        return $engine->executeProcessTask($taskId, (string)$operator, $args);
+        return $engine->executeProcessTask($taskId, (string)$operator, self::createEngineArgs($params));
+    }
+
+    /**
+     * 构造引擎要的参数字典
+     *
+     * 为什么不能直接用 `src/libs/utils/Dict.php`：
+     * 引擎签名要求的是 `madong\interface\IDict`
+     * （例如 `IProcessEngines::startProcessInstanceById(string, string, IDict $args)`），
+     * 而插件自带的 `libs\utils\Dict` 实现的是**插件自己的** `interface\IDict`，
+     * 两者不是同一个接口 —— 传进去会直接抛
+     * `TypeError: Argument #3 ($args) must be of type madong\interface\IDict`。
+     * 这正是改造前 startWorkflow()/executeTask() 的真实失败原因
+     * （容器修好后它才暴露出来，之前被 TypeError: string returned 盖住了）。
+     *
+     * `madong\helper\Dict::__construct()` 不接收初始数据，参数必须用 putAll() 注入。
+     *
+     * @param array $params 参数
+     * @return \madong\interface\IDict
+     */
+    private static function createEngineArgs(array $params): object
+    {
+        if (!class_exists(\madong\helper\Dict::class)) {
+            throw new \RuntimeException(
+                '工作流引擎参数类型缺失：需要 madong/helper（提供 madong\interface\IDict）。'
+                . '宿主未安装该依赖或未加载插件的 vendor 目录，引擎无法被调用。'
+            );
+        }
+
+        $args = new \madong\helper\Dict();
+        $args->putAll($params);
+
+        return $args;
     }
 
     /**

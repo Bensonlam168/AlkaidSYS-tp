@@ -6,6 +6,7 @@ namespace Alkaid\Workflow\Engine\Integration;
 
 use Alkaid\Workflow\Engine\Container\ServiceFactory;
 use Alkaid\Workflow\Engine\Container\WorkflowContainer;
+use Alkaid\Workflow\Engine\Multitenant\TenantContext;
 use think\Container;
 use think\Model;
 
@@ -43,6 +44,11 @@ class ThinkPHPAdapter
      * @var array 服务绑定配置
      */
     private array $serviceBindings = [];
+
+    /**
+     * @var int|null 本适配器写入 TenantContext 的租户ID（cleanup 时按需撤销）
+     */
+    private ?int $appliedTenantId = null;
 
     /**
      * 初始化ThinkPHP集成
@@ -173,9 +179,12 @@ class ThinkPHPAdapter
      * 进而让整个 WorkflowBootstrap::initialize() 失败 ——
      * 表现为「生产上 CLI 侧一条工作流都跑不起来」，这不只是测试环境的问题。
      *
-     * 判定方式用 ThinkPHP 自己的容器查询（has() 查绑定表 / exists() 查实例表），
-     * 而不是 class_exists('request') 这类笔误式判断：容器查询回答的正是
-     * 「框架是否已经把请求准备好」这个真实问题，且不会触发实例构造。
+     * ⚠️ 判定必须用 `exists()`（实例表）而不是 `has()`（绑定表或实例表）：
+     * `think\App` 把 `'request' => Request::class` 登记进了**绑定表**（App::$bind），
+     * 所以引导过的应用里 `has('request')` **恒为 true**，`make('request')` 会现造一个空请求。
+     * 实测（容器内 `php -r` 引导 App 后）：`has('request') = true`、`exists('request') = false`。
+     * 用 has() 的后果是「CLI 降级分支永远走不到」：审计字段拿到的是空请求而不是 console 身份，
+     * 多租户上下文也就永远拿不到配置里的 tenant_id（本轮修复的正是这条路径）。
      *
      * @return \think\Request|null 有 HTTP 上下文返回请求对象，否则 null
      */
@@ -184,8 +193,8 @@ class ThinkPHPAdapter
         try {
             $thinkContainer = Container::getInstance();
 
-            // has()：绑定表或实例表命中；二者都没有就说明没有请求上下文
-            if (!$thinkContainer->has('request')) {
+            // 只有真实 HTTP 请求处理期间，框架才会把 request **实例**放进容器
+            if (!$thinkContainer->exists('request')) {
                 return null;
             }
 
@@ -244,20 +253,33 @@ class ThinkPHPAdapter
     /**
      * 设置多租户上下文
      *
+     * 改造前后差异（原实现是**空操作**）：
+     * 原代码是 `$this->container->getConfig('tenant_id', $tenantId);` —— 只读配置、返回值被丢弃，
+     * 租户信息从未写进任何地方，于是引擎侧 `TenantContext::getTenantId()` 永远是 null，
+     * TenantScopeManager 的任何租户作用域查询都会以「缺少租户上下文」失败。
+     * 现改为真正写入 `TenantContext`（协程安全，见 src/Multitenant/TenantContext.php），
+     * 与 TenantMiddleware 处理 HTTP 请求时的写入口径一致。
+     *
+     * 有 HTTP 请求就用请求里的租户；CLI（队列 worker / cron / php think）没有请求头可读，
+     * 退化为配置项 `extension_parameters.tenant_id`（与 setupRequestContext 同口径）。
+     *
      * @return void
      */
     private function setupTenantContext(): void
     {
-        // 有 HTTP 请求就从请求取；CLI 场景退化为配置值（与 setupRequestContext 同口径）
         $request = $this->resolveHttpRequest();
         $tenantId = $request === null
             ? $this->resolveCliTenantId()
             : $this->getCurrentTenantId($request);
 
-        if ($tenantId) {
-            // 设置租户上下文
-            $this->container->getConfig('tenant_id', $tenantId);
+        if ($tenantId === null || $tenantId <= 0) {
+            // 没有租户就**不写**上下文：宁可让后续作用域查询 fail-closed 报错，
+            // 也不要把 0 或猜测值写进去，那会让隔离形同虚设。
+            return;
         }
+
+        TenantContext::setTenantId($tenantId);
+        $this->appliedTenantId = $tenantId;
     }
 
     /**
@@ -480,10 +502,20 @@ class ThinkPHPAdapter
     /**
      * 清理资源
      *
+     * 租户上下文是**进程级静态状态**（TenantContext 按协程/默认槽位保存），
+     * 适配器初始化时写入的租户必须在清理时撤销，否则同一个 CLI 进程里
+     * 后续任务会继承上一个任务的租户 —— 那正是多租户最危险的串租路径。
+     * 只撤销「自己写进去的」值：宿主自己设置的上下文不归适配器管。
+     *
      * @return void
      */
     public function cleanup(): void
     {
+        if ($this->appliedTenantId !== null) {
+            TenantContext::clear();
+            $this->appliedTenantId = null;
+        }
+
         if ($this->container) {
             $this->container->reset();
             $this->container = null;
