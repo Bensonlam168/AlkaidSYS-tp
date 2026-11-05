@@ -70,7 +70,7 @@ async function checkForUpdates() {
     return;
   }
 
-  if (lastVersionTag.value !== versionTag && versionTag) {
+  if (lastVersionTag.value !== versionTag) {
     clearInterval(timer.value);
     handleNotice(versionTag);
   }

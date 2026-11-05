@@ -37,7 +37,7 @@ function useExtraMenu(useRootMenus?: ComputedRef<MenuRecordRaw[]>) {
     const hasChildren = _extraMenus.length > 0;
 
     if (!willOpenedByWindow(menu.path)) {
-      extraMenus.value = _extraMenus ?? [];
+      extraMenus.value = _extraMenus;
       extraActiveMenu.value = menu.parents?.[parentLevel.value] ?? menu.path;
       sidebarExtraVisible.value = hasChildren;
     }

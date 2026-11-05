@@ -96,7 +96,7 @@ const schema: VbenFormSchema[] = [
           if (meta?.icon) {
             coms.push(h(IconifyIcon, { class: 'size-4', icon: meta.icon }));
           }
-          coms.push(h('span', { class: '' }, $t(label || '')));
+          coms.push(h('span', { class: '' }, $t(label)));
           return h('div', { class: 'flex items-center gap-1' }, coms);
         },
       };

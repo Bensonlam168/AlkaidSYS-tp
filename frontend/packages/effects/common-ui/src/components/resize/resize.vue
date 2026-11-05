@@ -86,14 +86,14 @@ const props = defineProps({
   w: {
     type: [String, Number],
     default: 200,
-    validator(val: number) {
+    validator(val: number | string) {
       return typeof val === 'string' ? val === 'auto' : val >= 0;
     },
   },
   h: {
     type: [String, Number],
     default: 200,
-    validator(val: number) {
+    validator(val: number | string) {
       return typeof val === 'string' ? val === 'auto' : val >= 0;
     },
   },
@@ -128,7 +128,7 @@ const props = defineProps({
   z: {
     type: [String, Number],
     default: 'auto',
-    validator(val: number) {
+    validator(val: number | string) {
       return typeof val === 'string' ? val === 'auto' : val >= 0;
     },
   },
@@ -853,7 +853,7 @@ const bodyDown = (ev: MouseEvent & TouchEvent) => {
     active.value = true;
   }
 
-  if (button && button !== 0) {
+  if (button) {
     return;
   }
 

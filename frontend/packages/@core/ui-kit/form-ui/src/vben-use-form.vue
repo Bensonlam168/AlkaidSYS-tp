@@ -4,7 +4,7 @@ import type { Recordable } from '@vben-core/typings';
 import type { ExtendedFormApi, VbenFormProps } from './types';
 
 // import { toRaw, watch } from 'vue';
-import { nextTick, onMounted, watch } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, watch } from 'vue';
 
 import { useForwardPriorityValues } from '@vben-core/composables';
 import { cloneDeep, get, isEqual, set } from '@vben-core/shared/utils';
@@ -69,10 +69,15 @@ const handleValuesChangeDebounced = useDebounceFn(async () => {
 
 const valuesCache: Recordable<any> = {};
 
+// 保存 watch 的停止句柄：onMounted 是 async 钩子，Vue 在它第一个 await 处就同步
+// 还原了 currentInstance，恢复执行时已无组件实例上下文，watch 不会被收进组件的
+// effectScope，组件卸载时也就不会被自动停止。因此在卸载钩子里手工停止，避免监听泄漏。
+let stopWatch: (() => void) | undefined;
+
 onMounted(async () => {
   // 只在挂载后开始监听，form.values会有一个初始化的过程
   await nextTick();
-  watch(
+  stopWatch = watch(
     () => form.values,
     async (newVal) => {
       if (forward.value.handleValuesChange) {
@@ -105,6 +110,12 @@ onMounted(async () => {
     },
     { deep: true },
   );
+});
+
+// 组件卸载时停止监听，防止 watcher 泄漏到组件实例之外
+onBeforeUnmount(() => {
+  stopWatch?.();
+  stopWatch = undefined;
 });
 </script>
 

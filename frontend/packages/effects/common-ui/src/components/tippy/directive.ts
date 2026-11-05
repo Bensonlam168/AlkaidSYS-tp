@@ -90,9 +90,9 @@ export default function useTippyDirective(isDark: ComputedRef<boolean>) {
       }
 
       if (el.$tippy) {
-        el.$tippy.setProps(opts || {});
+        el.$tippy.setProps(opts);
       } else if (el._tippy) {
-        el._tippy.setProps(opts || {});
+        el._tippy.setProps(opts);
       }
     },
   };

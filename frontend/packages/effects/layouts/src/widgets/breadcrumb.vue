@@ -33,16 +33,15 @@ const breadcrumbs = computed((): IBreadcrumb[] => {
 
   for (const match of matched) {
     const { meta, path } = match;
-    const { hideChildrenInMenu, hideInBreadcrumb, icon, name, title } =
-      meta || {};
+    const { hideChildrenInMenu, hideInBreadcrumb, icon, title } = meta || {};
     if (hideInBreadcrumb || hideChildrenInMenu || !path) {
       continue;
     }
 
     resultBreadcrumb.push({
       icon,
-      path: path || route.path,
-      title: title ? $t((title || name) as string) : '',
+      path,
+      title: title ? $t(title as string) : '',
     });
   }
   if (props.showHome) {
