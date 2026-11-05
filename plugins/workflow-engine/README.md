@@ -8,7 +8,7 @@
 
 ## 特性
 
-- ✅ 基于 BPMN 2.0 标准
+- ✅ 支持 **BPMN 2.0 子集**导入/导出（`startEvent` / `endEvent` / `userTask` / `serviceTask` / `scriptTask` / `sendTask` / `exclusiveGateway` / `parallelGateway` / `sequenceFlow`，见 `src/Definition/BpmnConverter.php`；子集之外的元素导入时直接报错，不静默丢弃）
 - ✅ 支持 Swoole 协程执行
 - ✅ 多租户架构支持
 - ✅ 表达式引擎集成
