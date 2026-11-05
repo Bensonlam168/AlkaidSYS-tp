@@ -291,7 +291,39 @@ class WorkflowContainer
     public function getNodeParser(string $type): ?INodeParser
     {
         $parserKey = $type . 'Parser';
-        return $this->has($parserKey) ? $this->get($parserKey) : null;
+
+        if (!$this->has($parserKey)) {
+            return null;
+        }
+
+        $parser = $this->get($parserKey);
+
+        // 契约：本方法的返回类型就是 ?INodeParser，够格就直接返回
+        if ($parser instanceof INodeParser) {
+            return $parser;
+        }
+
+        // 为什么还要兜一层实例化：
+        // buildCoreServices() 登记的是「名字 => 类名」，而 ServiceContext::setContext()
+        // 把这份映射原样交给 PHP-DI；PHP-DI 的 DefinitionNormalizer 会把字符串
+        // 归一化成 **字面值**（ValueDefinition），于是 get() 取回的是类名字符串，
+        // 而不是解析器对象 —— 直接 return 会违反本方法的返回类型并抛 TypeError。
+        // 节点解析器都是无构造依赖的无状态对象（见 AbstractINodeParser），
+        // 按登记的类名实例化即可满足契约；实例化不出来就按「缺失」返回 null，
+        // 由调用方按既有的 null 口径（has()/get() 判空）处理。
+        if (is_string($parser) && class_exists($parser)) {
+            $reflection = new \ReflectionClass($parser);
+
+            if ($reflection->isInstantiable()) {
+                $instance = $reflection->newInstance();
+
+                if ($instance instanceof INodeParser) {
+                    return $instance;
+                }
+            }
+        }
+
+        return null;
     }
 
     /**

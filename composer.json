@@ -1,22 +1,21 @@
 {
-    "name": "topthink/think",
-    "description": "the new thinkphp framework",
+    "name": "alkaidsys/alkaidsys",
+    "description": "AlkaidSYS（瑶光系统）：强大、现代、低代码的企业级 SaaS 系统框架，基于 ThinkPHP 8 + Swoole + Vue 3",
     "type": "project",
     "keywords": [
-        "framework",
+        "alkaidsys",
+        "lowcode",
+        "saas",
         "thinkphp",
-        "ORM"
+        "swoole",
+        "multi-tenant"
     ],
-    "homepage": "https://www.thinkphp.cn/",
+    "homepage": "https://github.com/Bensonlam168/AlkaidSYS-tp",
     "license": "Apache-2.0",
     "authors": [
         {
-            "name": "liu21st",
-            "email": "liu21st@gmail.com"
-        },
-        {
-            "name": "yunwuxin",
-            "email": "448901948@qq.com"
+            "name": "AlkaidSYS",
+            "homepage": "https://github.com/Bensonlam168/AlkaidSYS-tp"
         }
     ],
     "require": {

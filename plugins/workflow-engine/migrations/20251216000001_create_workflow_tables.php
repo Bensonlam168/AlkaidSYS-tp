@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+// ⚠️ 历史留档，勿执行：权威定义见 database/migrations/20251216000001_create_workflow_tables.php
 use think\migration\Migrator;
 
 /**

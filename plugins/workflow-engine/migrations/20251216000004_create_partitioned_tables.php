@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+// ⚠️ 历史留档，勿执行：database/migrations 无对应文件；若要采纳分区表，先同步进 database/migrations
 use think\migration\Migrator;
 
 /**
