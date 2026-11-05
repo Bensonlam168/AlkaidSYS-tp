@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+// ⚠️ 历史留档，勿执行：权威定义见 database/migrations/20251216000002_add_foreign_keys.php
 use think\migration\Migrator;
 
 /**
