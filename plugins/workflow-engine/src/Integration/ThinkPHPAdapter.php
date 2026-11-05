@@ -7,7 +7,6 @@ namespace Alkaid\Workflow\Engine\Integration;
 use Alkaid\Workflow\Engine\Container\ServiceFactory;
 use Alkaid\Workflow\Engine\Container\WorkflowContainer;
 use think\Container;
-use think\facade\Request;
 use think\Model;
 
 /**
@@ -20,6 +19,21 @@ use think\Model;
  */
 class ThinkPHPAdapter
 {
+    /**
+     * CLI 场景（队列 worker / cron / 控制台命令）使用的系统身份标识
+     *
+     * 0 表示「非人类用户发起」，用于区分「真实终端用户」与「调度器/命令触发」。
+     */
+    private const CONSOLE_SYSTEM_USER_ID = 0;
+
+    /**
+     * CLI 场景下 IP / User-Agent 的显式标记
+     *
+     * 不用空串：空串与「真实请求但取值为空」无法区分，
+     * 标记为 cli 才能让审计侧一眼看出这条记录来自非 HTTP 来源。
+     */
+    private const CLI_CONTEXT_MARKER = 'cli';
+
     /**
      * @var WorkflowContainer|null 工作流容器实例
      */
@@ -113,16 +127,23 @@ class ThinkPHPAdapter
     /**
      * 设置请求上下文
      *
+     * 两条路径：有 HTTP 请求走原逻辑；没有 HTTP 请求（CLI）走降级逻辑。
+     * CLI 为什么必须能安全工作，见 resolveHttpRequest() 的注释。
+     *
      * @return void
      */
     private function setupRequestContext(): void
     {
-        if (!Request::instance()) {
+        $request = $this->resolveHttpRequest();
+
+        // ── CLI / 队列 worker / cron 分支：降级，不抛异常 ──────────────
+        if ($request === null) {
+            $this->applyCliRequestContext();
             return;
         }
 
+        // ── HTTP 分支：审计字段取值逻辑与改造前完全一致 ────────────────
         // 获取请求相关信息
-        $request = Request::instance();
         $userId = $this->getCurrentUserId($request);
         $tenantId = $this->getCurrentTenantId($request);
         $userAgent = $request->header('user-agent', '');
@@ -140,14 +161,98 @@ class ThinkPHPAdapter
     }
 
     /**
+     * 解析当前 HTTP 请求；没有 HTTP 请求上下文时返回 null
+     *
+     * 为什么不能直接 Request::instance()：
+     * think\facade\Request 的底层是容器标识 'request'，任何静态调用都会走到
+     * think\Container::make('request')。只有真正处理 HTTP 请求时，
+     * think\Http::runWithRequest() 才会执行 $app->instance('request', $request)
+     * 把请求对象放进容器。而在 **队列 worker（think-queue）、定时任务（cron）、
+     * php think 自定义命令** 里容器中没有 'request'，make() 会去反射一个名叫
+     * "request" 的类，抛 `ClassNotFoundException: class not exists: request`，
+     * 进而让整个 WorkflowBootstrap::initialize() 失败 ——
+     * 表现为「生产上 CLI 侧一条工作流都跑不起来」，这不只是测试环境的问题。
+     *
+     * 判定方式用 ThinkPHP 自己的容器查询（has() 查绑定表 / exists() 查实例表），
+     * 而不是 class_exists('request') 这类笔误式判断：容器查询回答的正是
+     * 「框架是否已经把请求准备好」这个真实问题，且不会触发实例构造。
+     *
+     * @return \think\Request|null 有 HTTP 上下文返回请求对象，否则 null
+     */
+    private function resolveHttpRequest(): ?\think\Request
+    {
+        try {
+            $thinkContainer = Container::getInstance();
+
+            // has()：绑定表或实例表命中；二者都没有就说明没有请求上下文
+            if (!$thinkContainer->has('request')) {
+                return null;
+            }
+
+            $request = $thinkContainer->make('request');
+
+            // 容器里可能存着不符合预期的绑定，按类型收口后再交给调用方
+            return $request instanceof \think\Request ? $request : null;
+        } catch (\Throwable) {
+            // 宿主容器未启动或框架版本差异：一律按「没有 HTTP 请求上下文」处理
+            return null;
+        }
+    }
+
+    /**
+     * 应用 CLI 场景的降级上下文
+     *
+     * 没有 HTTP 请求时，审计字段没有真实来源，因此显式降级而不是留空或抛异常：
+     * - 用户身份：CONSOLE_SYSTEM_USER_ID（0，系统/控制台身份，表示由调度器或命令触发）；
+     * - 租户：取容器配置（extension_parameters.tenant_id），CLI 场景没有请求头可读；
+     * - IP / User-Agent：CLI_CONTEXT_MARKER（'cli'），明确标记「非 HTTP 来源」，
+     *   避免被误读成「取值为空的真实请求」。
+     *
+     * @return void
+     */
+    private function applyCliRequestContext(): void
+    {
+        $this->container->registerBatch([
+            'current_user_id' => self::CONSOLE_SYSTEM_USER_ID,
+            'current_tenant_id' => $this->resolveCliTenantId(),
+            'request_user_agent' => self::CLI_CONTEXT_MARKER,
+            'request_ip_address' => self::CLI_CONTEXT_MARKER,
+            'request_id' => uniqid('wf_cli_', true),
+            'request_time' => time(),
+        ]);
+    }
+
+    /**
+     * 解析 CLI 场景的租户ID
+     *
+     * CLI 没有请求头/请求参数可读，只能取配置项 tenant_id
+     * （即 extension_parameters.tenant_id），取不到则为 null。
+     *
+     * @return int|null
+     */
+    private function resolveCliTenantId(): ?int
+    {
+        $tenantId = $this->container->getConfig('tenant_id');
+
+        if ($tenantId === null || $tenantId === '') {
+            return null;
+        }
+
+        return (int) $tenantId;
+    }
+
+    /**
      * 设置多租户上下文
      *
      * @return void
      */
     private function setupTenantContext(): void
     {
-        // 从请求中获取租户ID
-        $tenantId = $this->getCurrentTenantId();
+        // 有 HTTP 请求就从请求取；CLI 场景退化为配置值（与 setupRequestContext 同口径）
+        $request = $this->resolveHttpRequest();
+        $tenantId = $request === null
+            ? $this->resolveCliTenantId()
+            : $this->getCurrentTenantId($request);
 
         if ($tenantId) {
             // 设置租户上下文
@@ -216,7 +321,15 @@ class ThinkPHPAdapter
     private function getCurrentTenantId(?\think\Request $request = null): ?int
     {
         try {
-            $request = $request ?: Request::instance();
+            // CLI 安全：没有 HTTP 请求时不再走 Request::instance()（那会抛
+            // ClassNotFoundException: class not exists: request），
+            // 统一交给 resolveHttpRequest() 判空后返回 null，
+            // 由调用方（setupTenantContext）按配置兜底。
+            $request = $request ?: $this->resolveHttpRequest();
+
+            if ($request === null) {
+                return null;
+            }
 
             // 优先级1：从请求头获取租户ID
             $tenantId = $request->header('x-tenant-id');
