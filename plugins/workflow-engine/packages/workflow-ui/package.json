@@ -79,7 +79,7 @@
     "typescript"
   ],
   "author": "AlkaidSYS Team",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/alkaidsys/workflow-engine.git",

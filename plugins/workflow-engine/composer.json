@@ -2,7 +2,7 @@
     "name": "alkaidsys/workflow-engine",
     "description": "AlkaidSYS Workflow Engine Plugin - 基于 Ingenious 改造",
     "type": "library",
-    "license": "MIT",
+    "license": "Apache-2.0",
     "authors": [
         {
             "name": "AlkaidSYS Team",

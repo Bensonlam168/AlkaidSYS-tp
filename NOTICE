@@ -1,0 +1,141 @@
+AlkaidSYS（瑶光系统）
+Copyright 2025-2026 AlkaidSYS (Bensonlam168)
+
+本文件汇总本发行版（distribution）中属于本项目的版权声明，以及来自第三方
+组件的归属（attribution）信息，用于满足 Apache License 2.0 第 4(d) 条
+「保留 NOTICE」的要求。
+
+本文件仅供信息告知（informational only），不构成对 Apache License 2.0 的修改。
+发生冲突时，以各组件自带的许可证全文为准。
+
+===============================================================================
+一、本项目
+===============================================================================
+
+  名称      AlkaidSYS（瑶光系统），仓库 AlkaidSYS-tp
+  版权      Copyright 2025-2026 AlkaidSYS (Bensonlam168)
+  项目主页  https://github.com/Bensonlam168/AlkaidSYS-tp
+  许可证    Apache License, Version 2.0（全文见根目录 LICENSE.txt）
+
+除第二节列出的第三方组件外，本仓库的 app/、domain/、infrastructure/、
+config/、route/、database/、extend/、scripts/、tests/、docs/ 等目录，以及根
+目录的配置与脚本，均为本项目原创代码，按 Apache License 2.0 授权。
+
+===============================================================================
+二、第三方组件归属（Third-Party Attributions）
+===============================================================================
+
+以下逐条列出本发行版中包含或派生自的第三方组件，每条注明组件名、版权方、
+许可证，以及本仓库是否为该组件的修改版。
+
+---------------------------------------------------------------------------
+1) Ingenious 工作流引擎
+---------------------------------------------------------------------------
+  版权方      Copyright (c) https://gitcode.com/motion-code  All rights reserved.
+  作者        Mr. April (405784684@qq.com)
+  软著登记号  Software Registration Number: 2024SR0694589
+  官方站点    https://madong.tech
+  上游仓库    https://gitcode.com/motion-code
+              https://gitee.com/ingenstream/ingenious
+  许可证      Apache License, Version 2.0
+              全文见 plugins/workflow-engine/LICENSE
+  本仓库状态  MODIFIED —— 修改版，位于 plugins/workflow-engine/
+
+  该目录下 131 个源文件保留了上游版权头，内容为：
+
+      ingenious
+      Copyright (c) https://gitcode.com/motion-code  All rights reserved.
+      Author: Mr. April (405784684@qq.com)
+      Software Registration Number: 2024SR0694589
+      Official Website: https://madong.tech
+
+  上述版权头按 Apache License 2.0 第 4(c) 条要求原样保留，未作删除或改写。
+  具体修改内容见第三节。
+
+---------------------------------------------------------------------------
+2) Vue Vben Admin
+---------------------------------------------------------------------------
+  版权方      Copyright (c) 2024-present, Vben
+  项目主页    https://github.com/vbenjs/vue-vben-admin
+  许可证      MIT License
+              全文见 frontend/LICENSE
+  本仓库状态  MODIFIED —— 修改版，位于 frontend/
+
+  frontend/ 是 Vue Vben Admin 的派生版（monorepo 名 vben-admin-monorepo，
+  版本 5.5.9，homepage 指向 vbenjs/vue-vben-admin）。按 MIT 许可证「保留版权
+  与许可声明」的要求，frontend/LICENSE 与 frontend/ 下各 package.json 中的
+  "license": "MIT" 声明均原样保留，未改为本项目的 Apache-2.0。
+
+---------------------------------------------------------------------------
+3) ThinkPHP 框架及 Composer 依赖
+---------------------------------------------------------------------------
+  版权方      各包作者/权利人（见 vendor/<vendor>/<pkg>/LICENSE）
+  许可证      本项目直接依赖均为 Apache License 2.0，例如：
+                topthink/framework     v8.1.3
+                topthink/think-orm     v4.0.50
+                topthink/think-swoole  v4.1.2
+              其余间接依赖的许可证逐包不同，随 vendor/ 分发。
+  本仓库状态  UNMODIFIED —— 以 Composer 依赖形式引入
+
+  完整的依赖清单、版本与许可证字段见根目录 composer.lock。本项目不分发
+  vendor/（该目录已被 .gitignore 排除，不在版本库内）。
+
+---------------------------------------------------------------------------
+4) 前端 npm 依赖（Vue、Vite、Ant Design Vue 等）
+---------------------------------------------------------------------------
+  版权方      各包作者/权利人（见 frontend/node_modules/<pkg>/LICENSE）
+  许可证      逐包不同，完整解析结果见 frontend/pnpm-lock.yaml
+  本仓库状态  UNMODIFIED —— 以 npm 依赖形式引入，node_modules 不入版本库
+
+===============================================================================
+三、修改说明（Apache License 2.0 第 4(b) 条）
+===============================================================================
+
+按第 4(b) 条「被修改的文件必须带有显著的修改声明」，此处统一声明：
+plugins/workflow-engine/ 是 Ingenious 的修改版（MODIFIED）。
+
+（1）全局性修改
+    * 命名空间：上游的 madong\ingenious 全量替换为 Alkaid\Workflow\Engine，
+      仓库内已无 madong\ingenious 残留。composer.json 的 PSR-4 映射为
+      "Alkaid\\Workflow\\Engine\\": "src/"。
+    * 包标识：composer.json 的 name 改为 alkaidsys/workflow-engine，
+      license 为 Apache-2.0。
+
+（2）目录构成（plugins/workflow-engine/src/ 共 213 个 PHP 文件）
+    * 源自上游、保留上游版权头的目录，共 131 个文件：
+        Core、cfg、domain、enums、event、ex、interface、libs、model、
+        parser、processor、scheduling
+    * 本项目新增、无上游版权头的目录，共 82 个文件：
+        Container、Definition、Expression、Integration、Monitor、
+        Multitenant、Nodes、Swoole、Triggers
+
+（3）本项目新增能力（即上述 82 个文件的主要内容）
+    * 多租户适配：Multitenant/（含 Interfaces、Traits、Exception），在数据
+      访问与上下文中注入 tenant_id 隔离。
+    * 框架集成：Integration/（含 Interfaces），与 AlkaidSYS 的容器、权限
+      （Casbin RBAC）和统一响应结构 code/message/data/timestamp 对接。
+    * Swoole 协程：Swoole/，适配 Swoole 常驻进程运行模型。
+    * 依赖注入：Container/，改用 php-di/php-di。
+    * 表达式引擎：Expression/（含 Cache、Context、Functions、Interfaces），
+      改用 symfony/expression-language。
+    * 节点与触发器：Nodes/、Triggers/、Definition/、Monitor/ 为本项目实现。
+
+（4）此外新增了上游不存在的工程化目录：config/、routes/、migrations/、
+    tests/、packages/workflow-ui/、docs/、scripts/。
+
+（5）逐项改造记录可查阅：
+    * plugins/workflow-engine/docs/implementation/（T-105、T-106、T-107 等）
+    * plugins/workflow-engine/docs/database-migration-guide.md
+    * plugins/workflow-engine/README.md 的「更新日志」一节
+
+除上述修改外，未改动上游代码的版权头与许可证声明。
+
+===============================================================================
+四、其他说明
+===============================================================================
+
+* 本文中出现的第三方名称、商标与版权归各自权利人所有，仅用于归属声明。
+* 本文件不替代任何第三方组件的许可证正文。分发本作品时须同时携带：
+  LICENSE.txt（本项目 Apache-2.0）、NOTICE（本文件）、
+  frontend/LICENSE（Vben MIT）、plugins/workflow-engine/LICENSE（Ingenious
+  Apache-2.0）。

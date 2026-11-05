@@ -4,7 +4,7 @@
 
 **强大、现代、低代码的企业级 SAAS 系统框架**
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.txt)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.txt)
 [![PHP](https://img.shields.io/badge/PHP-8.2+-777BB4?logo=php&logoColor=white)](https://www.php.net/)
 [![ThinkPHP](https://img.shields.io/badge/ThinkPHP-8.0-brightgreen)](https://www.thinkphp.cn/)
 [![Swoole](https://img.shields.io/badge/Swoole-5.0+-blue)](https://www.swoole.com/)
@@ -408,7 +408,21 @@ php think lowcode:generate crud Product
 
 ## 📄 许可证
 
-本项目采用 [MIT 许可证](LICENSE.txt)。
+本项目以 **[Apache License 2.0](LICENSE.txt)** 授权（SPDX：`Apache-2.0`），全文见 [LICENSE.txt](LICENSE.txt)。
+
+本项目包含或派生自若干第三方组件，它们保留各自的许可证：
+
+| 目录 / 组件 | 来源 | 许可证 | 说明 |
+|---|---|---|---|
+| 本仓库（`app/`、`domain/`、`infrastructure/` 等） | 本项目原创 | Apache-2.0 | 见 [LICENSE.txt](LICENSE.txt) |
+| [`frontend/`](frontend/) | [Vue Vben Admin](https://github.com/vbenjs/vue-vben-admin) | **MIT** | 派生版（修改版），保留 [frontend/LICENSE](frontend/LICENSE) 与各 `package.json` 的 MIT 声明 |
+| [`plugins/workflow-engine/`](plugins/workflow-engine/) | [Ingenious](https://gitcode.com/motion-code) 工作流引擎 | **Apache-2.0** | 修改版（命名空间改为 `Alkaid\Workflow\Engine`），保留上游版权头与 [LICENSE](plugins/workflow-engine/LICENSE) |
+| Composer / npm 依赖 | 各自上游 | 逐包不同 | 见 [composer.lock](composer.lock)、`frontend/pnpm-lock.yaml` |
+
+**完整的第三方归属（版权方、许可证、修改说明）见 [NOTICE](NOTICE)。**
+
+分发本作品时请一并携带 `LICENSE.txt`、`NOTICE`、`frontend/LICENSE` 与
+`plugins/workflow-engine/LICENSE` —— Apache-2.0 与 MIT 均要求保留版权与许可声明。
 
 ---
 

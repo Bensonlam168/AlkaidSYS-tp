@@ -18,7 +18,7 @@
   "support_terminals": ["admin"],
   "support_databases": ["mysql"],
   "price": 0,
-  "license": "MIT",
+  "license": "Apache-2.0",
   "tags": ["template", "example"],
   "install": {
     "sql": "sql/install.sql",
