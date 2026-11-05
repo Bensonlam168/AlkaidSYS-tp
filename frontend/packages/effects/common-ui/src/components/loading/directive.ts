@@ -30,7 +30,7 @@ const loadingDirective: Directive = {
   updated(el, binding) {
     const instance = el[LOADING_INSTANCE_KEY];
     const options = getOptions(binding);
-    if (options && instance?.component) {
+    if (instance?.component) {
       try {
         Object.keys(options).forEach((key) => {
           instance.component.props[key] = options[key];
@@ -76,7 +76,7 @@ const spinningDirective: Directive = {
   updated(el, binding) {
     const instance = el[SPINNER_INSTANCE_KEY];
     const options = getOptions(binding);
-    if (options && instance?.component) {
+    if (instance?.component) {
       try {
         Object.keys(options).forEach((key) => {
           instance.component.props[key] = options[key];

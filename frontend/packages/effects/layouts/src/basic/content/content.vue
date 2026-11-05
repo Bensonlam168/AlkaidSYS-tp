@@ -83,11 +83,6 @@ function transformComponent(
     return component;
   }
 
-  // componentName 与 routeName 一致，则直接返回
-  if (componentName === routeName) {
-    return component;
-  }
-
   // 设置 name
   component.type ||= {};
   (component.type as any).name = routeName;

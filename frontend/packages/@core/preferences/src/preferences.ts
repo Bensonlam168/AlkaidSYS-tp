@@ -141,7 +141,7 @@ class PreferenceManager {
   private handleUpdates(updates: DeepPartial<Preferences>) {
     const themeUpdates = updates.theme || {};
     const appUpdates = updates.app || {};
-    if (themeUpdates && Object.keys(themeUpdates).length > 0) {
+    if (Object.keys(themeUpdates).length > 0) {
       updateCSSVariables(this.state);
     }
 

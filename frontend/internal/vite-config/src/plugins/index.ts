@@ -133,7 +133,7 @@ async function loadApplicationPlugins(
     {
       condition: print,
       plugins: async () => {
-        return [await vitePrintPlugin({ infoMap: printInfoMap })];
+        return [vitePrintPlugin({ infoMap: printInfoMap })];
       },
     },
     {
@@ -145,7 +145,7 @@ async function loadApplicationPlugins(
     {
       condition: nitroMock,
       plugins: async () => {
-        return [await viteNitroMockPlugin(nitroMockOptions)];
+        return [viteNitroMockPlugin(nitroMockOptions)];
       },
     },
 
@@ -210,7 +210,7 @@ async function loadApplicationPlugins(
     {
       condition: archiver,
       plugins: async () => {
-        return [await viteArchiverPlugin(archiverPluginOptions)];
+        return [viteArchiverPlugin(archiverPluginOptions)];
       },
     },
   ]);

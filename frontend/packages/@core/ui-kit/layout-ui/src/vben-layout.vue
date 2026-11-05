@@ -155,13 +155,7 @@ const getSidebarWidth = computed(() => {
     return width;
   }
 
-  if (
-    !sidebarEnableState.value ||
-    (sidebarHidden &&
-      !isSidebarMixedNav.value &&
-      !isMixedNav.value &&
-      !isHeaderMixedNav.value)
-  ) {
+  if (!sidebarEnableState.value) {
     return width;
   }
 
