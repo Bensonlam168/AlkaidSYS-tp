@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+                  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+                  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+                  id="Definitions_ExpenseReimbursement"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="Process_ExpenseReimbursement" name="费用报销流程" isExecutable="false">
+    <bpmn:startEvent id="StartEvent_1" name="开始">
+      <bpmn:outgoing>SequenceFlow_1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Task_ApplyExpense" name="填写报销申请">
+      <bpmn:incoming>SequenceFlow_1</bpmn:incoming>
+      <bpmn:outgoing>SequenceFlow_2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_ManagerReview" name="部门经理审批">
+      <bpmn:incoming>SequenceFlow_2</bpmn:incoming>
+      <bpmn:outgoing>SequenceFlow_3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_FinanceReview" name="财务审批">
+      <bpmn:incoming>SequenceFlow_3</bpmn:incoming>
+      <bpmn:outgoing>SequenceFlow_4</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="EndEvent_1" name="结束">
+      <bpmn:incoming>SequenceFlow_4</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="SequenceFlow_1" sourceRef="StartEvent_1" targetRef="Task_ApplyExpense"/>
+    <bpmn:sequenceFlow id="SequenceFlow_2" sourceRef="Task_ApplyExpense" targetRef="Task_ManagerReview"/>
+    <bpmn:sequenceFlow id="SequenceFlow_3" sourceRef="Task_ManagerReview" targetRef="Task_FinanceReview"/>
+    <bpmn:sequenceFlow id="SequenceFlow_4" sourceRef="Task_FinanceReview" targetRef="EndEvent_1"/>
+  </bpmn:process>
+</bpmn:definitions>
