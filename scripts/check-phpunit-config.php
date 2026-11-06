@@ -124,12 +124,13 @@ const EXEMPT_CONFIGS = [
         //
         // 仍然只能「豁免」而不能「删条目」的原因：检查 D 要求仓库内每份 phpunit*.xml
         // 都被登记（VARIANT_CONFIGS 或 EXEMPT_CONFIGS 二者之一），而它不能进 VARIANT_CONFIGS ——
-        // 检查 A 要求变体的 force 集合覆盖基线（基线有 12 个 force 变量），
-        // 本配置的 env 一个都不带 force，进去会直接报 12 条 [MISSING]。
+        // 检查 A 要求变体的 force 集合覆盖基线的**每一个** force 变量，
+        // 本配置的 env 一个都不带 force，进去会按基线 force 变量的条数逐条报 [MISSING]。
+        // （这里刻意不写死条数：基线每加一个 force 项，写死的数字就会过期一次。）
         //
         // 与基线**剩余**的差异（都不是安全属性，故不由检查 G 判定，列在这里供复核人看）：
         //   1. schema 声明为 11.0，基线是 11.5（xsd 版本不同，属性语义不变）；
-        //   2. env：只有一个不带 force 的 APP_ENV=testing，基线那 12 个 force 变量一个都没有；
+        //   2. env：只有一个不带 force 的 APP_ENV=testing，基线那些 force 变量一个都没有；
         //   3. 套件布局：只有一个插件自有套件 tests，没有 Legacy（守卫型用例只在根仓库）；
         //   4. 没有基线的 <groups> performance 排除、memory_limit ini 与 coverage 段。
         'reason'                => '插件独立测试域（自带 testsuites，bootstrap 指向插件自己的 vendor/autoload.php，独立运行插件测试），env 仅剩不带 force 的 APP_ENV（原 DB_* 与 WORKFLOW_* 全是死配置，已于 2026-11-02 删除），不参与根级强制变量策略；已补齐 failOn*，剩余差异为 schema 11.0 与 11.5、无 force 变量、套件布局与 groups/coverage 段不同，安全属性已与基线一致',
