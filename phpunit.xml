@@ -207,10 +207,11 @@
              「被限流 / 不被限流」两类断言都会失去意义（静默空转，而不是报错）。 -->
         <env name="RATELIMIT_ENABLED" value="true" force="true"/>
 
-        <!-- RATELIMIT_SCOPE_*：限流阈值（config/ratelimit.php 的 scopes.*）必须可预期。
+        <!-- RATELIMIT_SCOPE_*_LIMIT / _PERIOD：scope 级「固定窗口」阈值必须可预期。
              不加 force 时，同一份用例在阈值被外部调小的机器上会撞 429、在调大后又让
              「应该被限流」的断言失效 —— 结果随机器漂移。
-             这里取较高的阈值，避免非限流用例被误伤。
+             注意这组值**只**被 fixed_window 分支读取（app/middleware/RateLimit.php:137-138）；
+             token_bucket 分支读的是下面那组 CAPACITY / RATE，两条分支不共用参数。
              注：tests/Feature/RateLimitMiddlewareTest.php 自身用 config() 覆盖内存配置来精确造 429，
              所以它感知不到 env 漂移；真正会被误伤的是「没打算测限流」的其余用例。 -->
         <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
@@ -219,18 +220,46 @@
         <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_PERIOD" value="60" force="true"/>
 
-        <!-- RATELIMIT_TB_*：token_bucket 算法的桶容量与补充速率，同样必须可预期。
-             这一组是上面 RATELIMIT_SCOPE_* 之外**另一套**参数（config/ratelimit.php:90-91）：
-             scope 决定「阈值按什么口径算」，token_bucket 决定「桶多大、每秒补多少」。
-             此前只钉了 scope 没钉 TB，于是桶容量一直是配置默认的 100。
-             后果是 CI 上偶发的 429：Feature 套件在 runner 上跑得快，同一个 IP（0.0.0.0）
-             在补充速率追上之前就把 100 个令牌打空，WorkflowTenantStrictnessTest 这类
-             「根本没打算测限流」的用例被误伤成 429，而本地因为跑得慢、令牌来得及补回去而绿。
-             这类红会随机阻塞 required check，比缺一个断言更糟。
-             取远超用例实际请求数的值：只要求「打不空」，不模拟真实限流；
-             真需要造 429 的用例（RateLimitMiddlewareTest）靠 config() 覆盖内存配置，
-             不读这里的环境变量，所以不受影响。 -->
+        <!-- RATELIMIT_SCOPE_*_CAPACITY / _RATE：token_bucket 分支**真正生效**的那组阈值。
+             为什么必须钉 scope 级、而不是只钉下面的 RATELIMIT_TB_*（CI 事故记录）：
+               token_bucket 分支的取值顺序是
+                   $capacity = (int) ($rule['capacity'] ?? $tbCfg['capacity'] ?? 100);   // RateLimit.php:227-228
+               而 resolveScopeRule() 优先返回 config('ratelimit.scopes.<scope>')，config/ratelimit.php
+               的每个 scope 都自带 capacity / rate —— 于是 $tbCfg **永远轮不到**。
+               RATELIMIT_TB_* 只在「scope 自己没声明 capacity/rate」时才兜底，对本仓库的四个
+               scope 全部无效。曾经只钉了 TB_*，结果 CI 上 19 条用例收到
+                   {"code":429,"data":{"scope":"ip","capacity":100,"rate":10,"tokens":0,
+                    "identifier":"0.0.0.0","algorithm":"token_bucket"}}
+               —— 桶容量还是配置默认的 100，本地全绿、CI 全红。
+             为什么是 100000：整条 Feature 套件共用同一个 ip 桶（CI 上所有请求的客户端 IP 都是
+               0.0.0.0），而 runner 约 30 秒就跑完 314 个用例 ≈ 10 req/s，正好等于默认补充速率 10/s，
+               突发即打空，之后级联 429；本地同一批用例要 184 秒，令牌来得及补回去，所以本地不炸。
+             取值只要求「打不空」，不模拟真实限流；真需要造 429 的用例（RateLimitMiddlewareTest）
+             靠 config() 覆盖内存配置，不读这里的环境变量，所以不受影响。
+             tests/Legacy/RateLimitPhpunitConfigGuardTest.php 守着这组变量：缺项、没 force、
+             三份配置取值不一致、或把容量调回「会打空」的量级，都会直接变红。 -->
+        <env name="RATELIMIT_SCOPE_IP_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_RATE" value="10000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_RATE" value="10000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_RATE" value="10000" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_RATE" value="10000" force="true"/>
+
+        <!-- RATELIMIT_ALGORITHM：算法决定「读哪一组阈值」。
+             内部是一个总开关：切到 fixed_window 时 CAPACITY / RATE 整组失效，切回 token_bucket 时
+             LIMIT / PERIOD 整组失效。不钉住它，测试结论会随运行环境导出的同名变量漂移，
+             而且漂移时没有任何断言会报出来（两组阈值只是悄悄不再被读取）。 -->
+        <env name="RATELIMIT_ALGORITHM" value="token_bucket" force="true"/>
+
+        <!-- RATELIMIT_TB_*：token_bucket 的**全局兜底**值（只有 scope 未声明 capacity/rate 时才生效）。
+             保留它是为了让「配置里某天新增一个不带 capacity/rate 的 scope」时仍有可预期的兜底，
+             但**不要**再用它来回答「测试为什么 429」—— 本仓库的四个 scope 都自带 capacity/rate，
+             它们读的是上面那组 RATELIMIT_SCOPE_*_CAPACITY / _RATE（config/ratelimit.php:90-91）。 -->
         <env name="RATELIMIT_TB_CAPACITY" value="100000" force="true"/>
         <env name="RATELIMIT_TB_RATE" value="10000" force="true"/>
     </php>

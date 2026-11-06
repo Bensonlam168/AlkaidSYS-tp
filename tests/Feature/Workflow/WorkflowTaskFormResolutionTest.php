@@ -672,7 +672,7 @@ class WorkflowTaskFormResolutionTest extends ThinkPHPTestCase
      */
     private function missingDefinitionRepository(): WorkflowDefinitionRepository
     {
-        return new class extends WorkflowDefinitionRepository {
+        return new class () extends WorkflowDefinitionRepository {
             /**
              * @return array<string, mixed>|null
              */

@@ -133,21 +133,42 @@
              必须与 phpunit.xml 保持同一取值，避免同一进程内语义漂移。 -->
         <env name="RATELIMIT_ENABLED" value="true" force="true"/>
 
-        <!-- RATELIMIT_SCOPE_*：限流阈值必须可预期，否则外部导出值会让限流用例随机成败 ——
-             同一份用例在阈值被外部调小的机器上会撞 429（非限流用例被误伤），
+        <!-- RATELIMIT_SCOPE_*_LIMIT / _PERIOD：scope 级「固定窗口」阈值必须可预期，否则外部导出值会让
+             限流用例随机成败 —— 同一份用例在阈值被外部调小的机器上会撞 429（非限流用例被误伤），
              在阈值被调大后又让「应该被限流」的断言永远不成立。
              这里取与 phpunit.xml 完全一致的较高阈值（1000 次 / 60 秒），
              让「本来不测限流」的用例不受影响；真正要精确造 429 的
-             tests/Feature/RateLimitMiddlewareTest.php 会用 config() 覆盖内存配置，不依赖这几个值。 -->
+             tests/Feature/RateLimitMiddlewareTest.php 会用 config() 覆盖内存配置，不依赖这几个值。
+             注意这组值只被 fixed_window 分支读取（app/middleware/RateLimit.php:137-138）。 -->
         <env name="RATELIMIT_SCOPE_IP_LIMIT" value="1000" force="true"/>
         <env name="RATELIMIT_SCOPE_IP_PERIOD" value="60" force="true"/>
         <env name="RATELIMIT_SCOPE_USER_LIMIT" value="1000" force="true"/>
         <env name="RATELIMIT_SCOPE_USER_PERIOD" value="60" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_LIMIT" value="1000" force="true"/>
         <env name="RATELIMIT_SCOPE_TENANT_PERIOD" value="60" force="true"/>
-        <!-- 与基线 phpunit.xml 同步：token_bucket 的桶容量/补充速率必须可预期，
-             否则 CI 上 Feature 套件跑得快会把 100 的默认桶打空、随机触发 429。
-             门禁「检查 A 强制变量覆盖关系」要求变体不得缺少基线的强制变量。 -->
+        <env name="RATELIMIT_SCOPE_ROUTE_LIMIT" value="1000" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_PERIOD" value="60" force="true"/>
+
+        <!-- RATELIMIT_SCOPE_*_CAPACITY / _RATE：token_bucket 分支真正生效的一组阈值。
+             必须与基线 phpunit.xml 逐字一致（门禁「检查 A 强制变量覆盖关系」按字面量比对，
+             tests/Legacy/RateLimitPhpunitConfigGuardTest.php 的 R2 也要求三份取值完全相同）。
+             为什么必须钉 scope 级而不是只钉下面的 RATELIMIT_TB_*、为什么是 100000：
+             详见 phpunit.xml 同名段落的注释（scope 级 capacity/rate 优先于全局 token_bucket 配置，
+             CI 上整条 Feature 套件共用一个 ip 桶，100 容量会被打空并级联 429）。 -->
+        <env name="RATELIMIT_SCOPE_IP_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_IP_RATE" value="10000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_USER_RATE" value="10000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_TENANT_RATE" value="10000" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_CAPACITY" value="100000" force="true"/>
+        <env name="RATELIMIT_SCOPE_ROUTE_RATE" value="10000" force="true"/>
+
+        <!-- RATELIMIT_ALGORITHM：算法是「读哪一组阈值」的总开关，必须与基线一致地钉死。 -->
+        <env name="RATELIMIT_ALGORITHM" value="token_bucket" force="true"/>
+
+        <!-- RATELIMIT_TB_*：token_bucket 的**全局兜底**值（只在 scope 未声明 capacity/rate 时生效），
+             与基线 phpunit.xml 保持同一取值。 -->
         <env name="RATELIMIT_TB_CAPACITY" value="100000" force="true"/>
         <env name="RATELIMIT_TB_RATE" value="10000" force="true"/>
     </php>
