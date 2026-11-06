@@ -69,6 +69,9 @@ return [
     'target_user_required' => '目标用户不能为空',
     'delegate_user_required' => '被委派人不能为空',
     'form_data_required' => '表单数据不能为空',
+    'form_validation_failed' => '表单数据校验未通过，请按提示修改后重新提交',
+    'form_validation_skipped_form_not_found' => '节点配置的表单「:form_name」在本租户下不存在，本次提交已跳过表单校验，请联系管理员修复流程定义',
+    'form_validation_skipped' => '任务所属流程定义数据不一致（原因：:reason），本次提交已跳过表单校验，请联系管理员核查',
 
     // Workflow trigger | 工作流触发器
     'trigger_not_found' => '触发器不存在',

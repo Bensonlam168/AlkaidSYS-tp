@@ -49,7 +49,7 @@ use Tests\ThinkPHPTestCase;
  * | --- | --- | --- |
  * | `instances/<id>/history` | `{instance_id, entries, count}` | 实例对象（含 `definition_id`） |
  * | `instances/<id>/variables` | `{instance_id, variables}` | 实例对象（含 `definition_id`） |
- * | `tasks/<id>/form` | `{task_id, form_schema, form_data, form_rules}` | 任务对象（含 `status`、`history`） |
+ * | `tasks/<id>/form` | `{task_id, form_name, form_schema, form_rules, form_messages, form_data, resolved, reason}` | 任务对象（含 `status`、`history`） |
  * | `triggers/<id>/logs` | 分页结构 `{list, total, page, page_size, total_pages}` | 触发器对象（含 `webhook_key`） |
  *
  * ## 夹具形态（2026 更新：实例/任务/触发器全部改为真库）
@@ -337,10 +337,19 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
 
         $this->assertSame(200, $response->getCode(), $this->diagnostics($response));
         $this->assertSame(
-            $this->sortedKeys(['form_data', 'form_rules', 'form_schema', 'task_id']),
+            $this->sortedKeys([
+                'task_id',
+                'form_name',
+                'form_schema',
+                'form_rules',
+                'form_messages',
+                'form_data',
+                'resolved',
+                'reason',
+            ]),
             $this->sortedKeys($data),
-            'getForm() 返回的是 {task_id, form_schema, form_data, form_rules}；出现 status/history 说明命中了 read()。'
-            . $this->diagnostics($response)
+            'getForm() 返回的是 {task_id, form_name, form_schema, form_rules, form_messages, form_data, resolved, reason}；'
+            . '出现 status/history 说明命中了 read()。' . $this->diagnostics($response)
         );
         $this->assertSame($taskId, $data['task_id'] ?? null);
     }

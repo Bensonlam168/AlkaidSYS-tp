@@ -38,7 +38,8 @@ use Throwable;
  * | `reject` | 改内存字段 | 引擎 `executeAndJumpToEnd()`（实例进入驳回终态） |
  * | `claim` / `unclaim` | 改内存字段 | 参与者集合交给引擎 + 宿主落受理人/状态 + 事件 |
  * | `transfer` / `delegate` | 改内存字段（`delegated_to` 等不存在列） | 目标用户校验 + 受理人迁移 + 事件 |
- * | `getForm` / `submitForm` | 只读写内存 `form_data` | 读库 `form_data`；提交后**推进流程** |
+ * | `getForm` / `submitForm` | 只读写内存 `form_data` | 表单模板沿定义体解析（低代码表单 + 校验规则）；`form_data` 读库；提交后**推进流程** |
+ * | `users` | （不存在） | 本租户用户目录（转办/委派选人），只回 `id`/`name`/`username` |
  *
  * ## 操作人身份（安全不变量）
  *
@@ -273,9 +274,18 @@ class WorkflowTaskController extends ApiController
      *
      * GET /workflow/tasks/{id}/form
      *
-     * 返回 `{task_id, form_schema, form_data, form_rules}`（与旧结构兼容）。
-     * `workflow_tasks` 没有 `form_schema` / `form_rules` 列（表单模板在流程定义体上），
-     * 因此这两项是**如实占位**（`null` / `[]`），不是静默丢掉字段。
+     * 返回
+     * `{task_id, form_name, form_schema, form_rules, form_messages, form_data, resolved, reason}`。
+     *
+     * 表单模板不再恒为 `null`：它沿
+     * `task → instance.definition_id（具体版本行）→ nodes_config → 节点 properties.form → lowcode_forms`
+     * 解析（实现与优先级见 `Infrastructure\Workflow\Support\WorkflowTaskFormResolver`）。
+     * `form_schema` 与 `GET /v1/lowcode/forms/{name}?with_parsed=1` 的 `data.parsed.components` 同源，
+     * `form_rules` / `form_messages` 与同接口的 `data.validator.rules/messages` 同源 ——
+     * 前端可以只维护一套渲染 + 校验代码。
+     *
+     * `resolved = false` 时 `reason` 一定非空（`node_has_no_form` / `form_not_found` /
+     * `definition_not_found` / ...），**不会**静默返回空 schema 让前端自己猜。
      */
     public function getForm(string $id, Request $request): Response
     {
@@ -284,6 +294,48 @@ class WorkflowTaskController extends ApiController
 
         return $this->respond(function () use ($tenantId, $taskId): Response {
             return $this->success($this->service()->form($tenantId, $this->parseId($taskId)));
+        });
+    }
+
+    /**
+     * List tenant users (for assignee pickers) | 本租户用户目录
+     *
+     * GET /workflow/users
+     *
+     * Query Parameters:
+     * - page / page_size（与列表端点同口径，最大 100）
+     * - keyword: string（模糊匹配 `name` / `username`）
+     *
+     * 这个端点存在的原因：转办 / 委派要「选人」，而改造前工作流模块**没有任何用户数据源** ——
+     * 前端只能让用户手输数字 ID，等于把最容易出错的内部主键暴露给操作者。
+     *
+     * 返回项**只有** `id` / `name` / `username`：
+     * 这是给下拉框用的接口，`password` / `email` / `phone` 之类的字段一律不返回
+     * （字段白名单在 `WorkflowUserDirectoryRepository::search()`，不是在这里删键）。
+     *
+     * ⚠️ 为什么不放在用户模块的控制器里：本端点的用途与授权都归属任务域
+     * （转办/委派目标、按受理人筛选待办），权限码也是 `workflow_task.read`；
+     * 放进用户模块会让「谁能看租户用户列表」出现两套授权口径。
+     */
+    public function users(Request $request): Response
+    {
+        $params   = $request->get();
+        $page     = (int) ($params['page'] ?? 1);
+        $pageSize = (int) ($params['page_size'] ?? 20);
+
+        $pagination = $this->validatePagination($page, $pageSize);
+
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
+        }
+
+        $tenantId = $request->tenantId();
+        $keyword  = isset($params['keyword']) && is_string($params['keyword']) ? $params['keyword'] : null;
+
+        return $this->respond(function () use ($tenantId, $keyword, $page, $pageSize): Response {
+            $result = $this->service()->searchUsers($tenantId, $keyword, $page, $pageSize);
+
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
         });
     }
 
@@ -297,6 +349,11 @@ class WorkflowTaskController extends ApiController
      * ⚠️ 语义变化：旧实现只把 `form_data` 存进内存、流程原地不动；
      * 现在提交表单会**推进流程**（`executeProcessTask()`，表单键以 `f_` 前缀并入 args）。
      * 不推进的话，「提交表单」与「什么都没做」对流程而言无法区分，任务会永远停在待办。
+     *
+     * 校验：`form_data` 会先按**后端表单规则**校验（`WorkflowTaskService::validateFormData()`，
+     * 规则与 `GET /v1/lowcode/forms/{name}?with_validator=1` 同源），不过则 422 + `data.errors` 按字段给文案。
+     * 响应里的 `form_validation` 是本次校验结论：`validated=false` + `needs_attention=true`
+     * 表示「模板缺失、已跳过校验」—— 前端据此提示运维，而不是把它当成一次正常提交悄悄放过。
      */
     public function submitForm(string $id, Request $request): Response
     {
@@ -331,6 +388,9 @@ class WorkflowTaskController extends ApiController
                 'form_data'  => $task['form_data'] ?? [],
                 'status'     => $task['status'] ?? null,
                 'next_tasks' => $task['next_tasks'] ?? [],
+                // 表单校验结论（见 WorkflowTaskService::validateFormData()）：
+                // `validated=false` + `needs_attention=true` = 模板缺失、已跳过校验，前端应提示运维
+                'form_validation' => $task['form_validation'] ?? null,
             ], $this->langService->trans('workflow.form_submitted'));
         });
     }

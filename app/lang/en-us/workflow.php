@@ -69,6 +69,9 @@ return [
     'target_user_required' => 'Target user is required',
     'delegate_user_required' => 'Delegate user is required',
     'form_data_required' => 'Form data is required',
+    'form_validation_failed' => 'Form data validation failed; fix the flagged fields and submit again',
+    'form_validation_skipped_form_not_found' => 'The form ":form_name" configured on this node does not exist in this tenant, so form validation was skipped; please ask an administrator to fix the process definition',
+    'form_validation_skipped' => 'The process definition data of this task is inconsistent (reason: :reason), so form validation was skipped; please ask an administrator to check it',
 
     // Workflow trigger | 工作流触发器
     'trigger_not_found' => 'Workflow trigger not found',

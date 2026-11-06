@@ -13,7 +13,7 @@
  * - workflow_definition.delete - 删除工作流定义
  * - workflow_instance.read     - 读取工作流实例
  * - workflow_instance.write    - 创建/管理工作流实例
- * - workflow_task.read         - 读取工作流任务
+ * - workflow_task.read         - 读取工作流任务（**也用于** `GET v1/workflow/users` 选人目录，理由见该组注释）
  * - workflow_task.write        - 处理工作流任务
  * - workflow_trigger.read      - 读取触发器
  * - workflow_trigger.write     - 管理触发器
@@ -317,6 +317,35 @@ Route::group('v1/workflow/triggers', function () {
     // 且必须在控制器之前（引擎的所有读写都要求 TenantContext 已就绪，否则 fail-closed 抛异常）。
     // 它负责「请求开始写入 + 请求结束（含异常）清理」，防的是 Swoole 常驻进程下的跨请求串租户。
     // 详见 app\middleware\WorkflowTenantContext 的类注释。
+    ->middleware(\app\middleware\WorkflowTenantContext::class);
+
+// ===========================================================================
+// Workflow User Directory API Routes | 工作流用户目录 API 路由
+// ===========================================================================
+// 用途：转办 / 委派「选人」下拉框，以及按受理人筛选待办。
+//
+// 为什么权限码用 `workflow_task.read`（而不是新增一个 workflow_user.read）：
+//   1. 这个目录的唯一用途是**任务域**的读 —— 选择任务处理人、按受理人筛任务；
+//      同一个权限码下已有 `GET v1/workflow/tasks` 会返回 `assignee` / `assignee_name`，
+//      本端点返回的 `id` / `name` / `username` 不比它多任何一类信息，不构成新的泄露面；
+//   2. 新增 `workflow_user.read` 必须同步改 seeder 与权限清单
+//      （`20251225000001_ensure_system_permissions` / 权限一致性检查），
+//      否则会出现「路由挂了中间件、但权限表里没有这个码 → 所有非超管 403」的部署事故；
+//   3. 若将来要把它收得比任务读更紧（例如只允许有写权限的人看他人姓名），
+//      应**同时**收紧 `GET v1/workflow/tasks` 的返回字段，而不是只在这里加一道闸 ——
+//      否则两处口径不一致，反而更难解释。
+//
+// 注意：本组路径是 `v1/workflow/users`，与 `v1/workflow/tasks`、`v1/workflow/triggers`
+// 在路由段边界上互不重叠，不存在被父级 `:id` 前缀吃掉的顺序问题。
+Route::group('v1/workflow/users', function () {
+    // List tenant users for assignee pickers | 列出本租户用户（选人下拉框）
+    Route::get('', 'app\controller\workflow\WorkflowTaskController@users')
+        ->middleware(\app\middleware\Permission::class, 'workflow_task.read');
+})
+    ->middleware(\app\middleware\Auth::class)
+    // 与任务组同样必须桥接租户上下文：目录查询强制按 `tenant_id` 过滤，
+    // 而租户上下文由 `WorkflowTenantContext` 在请求开始时写入、结束时清理
+    // （Swoole 常驻进程下防跨请求串租户）。
     ->middleware(\app\middleware\WorkflowTenantContext::class);
 
 // ===========================================================================

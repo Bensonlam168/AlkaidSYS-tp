@@ -50,7 +50,9 @@ use think\Request;
  *
  * ## 挂载位置
  *
- * `route/workflow.php` 的 5 个路由组（4 个鉴权组挂在 `Auth` 之后，webhook 组单独挂）。
+ * `route/workflow.php` 的 5 个路由组（definitions / instances / tasks / triggers / users）
+ * 全部挂在 `Auth` 之后；另有 1 个独立的 webhook 路由（`Route::any`，无 `Auth`，靠路径里的
+ * `webhook_key` 鉴权）单独挂载，它同样需要租户上下文，因为外部回调不带 JWT。
  * 必须在 `Auth` **之后**：JWT 里的 `tenant_id` 覆盖默认租户这一步发生在 `Auth` 里。
  *
  * @package app\middleware
