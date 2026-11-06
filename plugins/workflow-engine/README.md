@@ -14,6 +14,7 @@
 - ✅ 表达式引擎集成
 - ✅ 触发器系统
 - ✅ 完整节点类型库
+- ✅ 流程轨迹（事件时间线）：启动 / 任务完成 / 完成 / 拒绝四类事件落 `workflow_event_logs`，见下文「流程轨迹」
 
 ## 目录结构
 
@@ -44,6 +45,41 @@ composer install
 ## 使用
 
 详细使用说明请参考 [docs/](docs/) 目录。
+
+## 流程轨迹（「历史」能力）
+
+「历史」在本插件里的口径是**事件时间线**，不是实例快照副本：
+
+- 实例状态本身由 `workflow_instances` 唯一保存（`status` / `started_at` / `completed_at` / `duration` / `tenant_id`），
+  实例从不物理删除，因此**不再建** `workflow_instance_history` 那样的快照表（那会是一份只写一次、
+  零读取方的死重副本）。
+- 轨迹落 `workflow_event_logs`：一行一个事件，按 `created_at, id` 正序即得流程轨迹。
+  实现在 `src/Services/ProcessInstanceHistoryService.php`，契约见
+  `src/interface/services/IProcessInstanceHistoryService.php`。
+
+| `event_type` | 含义 | 写入点 |
+| --- | --- | --- |
+| `instance_started` | 流程启动 | `Core/ProcessEngines::startProcessInstanceById()` |
+| `task_completed` | 任务审批通过 | `Services/ProcessTaskService::finishProcessTask()` |
+| `instance_completed` | 流程走到 end 并完成 | `Services/ProcessInstanceService::finishProcessInstance()` |
+| `instance_rejected` | 流程被拒绝终止 | `Services/ProcessInstanceService::rejectProcessInstance()` |
+
+两条硬约定：
+
+1. **租户只认实例**：写事件的 `tenant_id` 取自实例本身（`workflow_instances.tenant_id`），
+   缺失即抛异常，**绝不回落默认租户 1**。读轨迹 `timeline()` 则必须按**当前租户**过滤
+   （租户 2 查租户 1 的实例得到空数组）。
+2. **写入是旁路审计**：写事件失败**不会**让审批失败。三处调用点统一经
+   `Services/Support/RecordsHistorySafely::recordHistorySafely()` 包裹，
+   捕获异常并记 WARNING（带失败原因），主流程照常推进。
+
+读取入口：`IProcessInstanceHistoryService::timeline(string $instanceId): array`。
+
+> 为什么没有 `IProcessTaskHistoryService` 的实现：该接口（`created/updated/findById/list`）
+> 全仓库零调用方。任务级事实已由 `workflow_tasks` 的
+> `result/comment/completed_at/rejected_at/cancelled_at`（单条任务的结果与意见）
+> 加本插件的 `task_completed` 事件（时间线上的顺序与操作人）覆盖，
+> 再实现四个没人调用的方法只会制造第二份真相。
 
 ## License & Attribution（许可证与归属）
 

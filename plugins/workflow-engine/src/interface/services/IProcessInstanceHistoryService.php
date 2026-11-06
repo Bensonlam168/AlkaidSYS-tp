@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 /**
  *+------------------
  * ingenious
@@ -9,221 +11,116 @@
  * Author: Mr. April (405784684@qq.com)
  *+------------------
  * Software Registration Number: 2024SR0694589
+ *+------------------
  * Official Website: https://madong.tech
  */
 
 namespace Alkaid\Workflow\Engine\interface\services;
 
 /**
- * 流程实例服务类
+ * 流程实例历史服务（= 流程轨迹 / 事件时间线的读写契约）
+ *
+ * ── 本接口为什么只剩 5 个方法（上游 30 多个声明全部被注释掉了）──────────────
+ * 上游 `ingenious` 的历史服务是「实例历史表 + 任务历史表」的双表快照模型，
+ * 30 多个方法里绝大多数（`create/update/page/interrupt/resume/pending/activate/
+ * withdraw/highLight/approvalRecord/createCCInstance/...`）在本仓库**没有任何调用方**：
+ * 引擎只有一处调用历史服务
+ * （见 {@see \Alkaid\Workflow\Engine\Core\ProcessEngines::startProcessInstanceById}）。
+ * 把注释掉的声明逐条恢复，就等于承诺「这些方法都已实现」，而没人调用的实现就是死代码。
+ * 因此这里只声明**引擎真正会走的**入口 + 本服务真正提供的读取口。
+ *
+ * ── 「历史」在本仓库的口径：事件时间线，不是快照副本 ──────────────────────
+ * 不建 `workflow_instance_history` 表。`workflow_instances` 已完整保存实例状态
+ * （status / started_at / completed_at / duration / tenant_id），且实例从不物理删除，
+ * 再造一张「只在启动时写一次、零读取方」的快照表纯属死重。
+ * 轨迹改为落 `workflow_event_logs`（该表早已建好外键与索引，此前零写入）：
+ * 一行一个事件（`instance_started` / `task_completed` / `instance_completed` /
+ * `instance_rejected`），按 `created_at, id` 正序即得流程轨迹。
+ *
+ * ── 任务级轨迹为什么不走 IProcessTaskHistoryService ────────────────────────
+ * {@see IProcessTaskHistoryService}（created/updated/findById/list）全仓库零调用方，
+ * 而任务级的事实已由两处覆盖：`workflow_tasks` 的
+ * `result/comment/completed_at/rejected_at/cancelled_at`（单条任务的结果与意见）
+ * 与本接口的 `task_completed` 事件（时间线上的顺序与操作人）。
+ * 再实现四个没人调用的方法只会制造第二份真相。
  *
  * @author Mr.April
  * @since  1.0
  */
 interface IProcessInstanceHistoryService
 {
-    //    /**
-    //     * 添加流程设计
-    //     *
-    //     * @param object $param
-    //     *
-    //     * @return bool
-    //     */
-    //    public function create(object $param): bool;
-    //
-    //    /**
-    //     * 更新流程实例
-    //     *
-    //     * @param object $param
-    //     *
-    //     * @return bool
-    //     */
-    //    public function update(object $param): bool;
-    //
-    //    /**
-    //     * 自定义分页查询流程实例
-    //     *
-    //     * @param object $param
-    //     *
-    //     * @return array
-    //     */
-    //    public function page(object $param): array;
-    //
-    //    /**
-    //     * 将流程实例修改为已完成
-    //     *
-    //     * @param string $id
-    //     */
-    //    public function findById(string $id): ?ProcessInstance;
-    //
-    //    /**
-    //     * 将流程实例修改为已完成
-    //     *
-    //     * @param string $processInstanceId
-    //     */
-    //    public function finishProcessInstance(string $processInstanceId): void;
-    //
-    //    /**
-    //     * 将流程实例修改为拒绝
-    //     *
-    //     * @param string $processInstanceId
-    //     */
-    //    public function rejectProcessInstance(string $processInstanceId): void;
-    //
-    //    /**
-    //     * 根据流程、操作人员、父流程实例ID创建流程实例
-    //     *
-    //     * @param \Alkaid\Workflow\Engine\model\ProcessDefine    $processDefine 流程定义对象
-    //     * @param String                                   $operator      操作人员ID
-    //     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args          参数列表
-    //     * @param string                                   $parentId
-    //     * @param string                                   $parentNodeName
-    //     *
-    //     * @return \Alkaid\Workflow\Engine\model\ProcessInstance|null 活动流程实例对象
-    //     */
-    //    public function createProcessInstance(ProcessDefine $processDefine, string $operator, Dict $args, string $parentId, string $parentNodeName): ?ProcessInstance;
-    //
-    //    /**
-    //     * 向指定实例id添加全局变量数据
-    //     *
-    //     * @param string                                   $processInstanceId
-    //     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args 变量数据
-    //     *
-    //     * @return void
-    //     */
-    //    public function addVariable(string $processInstanceId, Dict $args): void;
-    //
-    //    /**
-    //     * 移除指定实例id中的全局变量
-    //     *
-    //     * @param string $processDefineId 实例ID
-    //     * @param string $keys            移除变量keys
-    //     */
-    //    public function removeVariable(string $processDefineId, string $keys): void;
-    //
-    //    /***
-    //     * 保存流程实例
-    //     *
-    //     * @param \Alkaid\Workflow\Engine\model\ProcessInstance $processInstance 流程实例对象
-    //     */
-    //    public function saveProcessInstance(ProcessInstance $processInstance): ?ProcessInstance;
-    //
-    //    /**
-    //     * 流程实例强制终止与唤醒相对应
-    //     *
-    //     * @param string $processInstanceId 流程实例id
-    //     * @param string $operator          处理人
-    //     */
-    //    public function interrupt(string $processInstanceId, string $operator): void;
-    //
-    //    /**
-    //     * 唤醒历史流程实例与终止相对应
-    //     *
-    //     * @param string $processInstanceId 流程实例id
-    //     * @param string $operator          处理人员
-    //     */
-    //    public function resume(string $processInstanceId, string $operator): void;
-    //
-    //    /**
-    //     * 挂起流程与激活相对应
-    //     *
-    //     * @param string $processInstanceId 流程实例id
-    //     * @param string $operator          处理人员
-    //     */
-    //    public function pending(string $processInstanceId, string $operator): void;
-    //
-    //    /**
-    //     * 激活流程与挂起相对应
-    //     *
-    //     * @param string $processInstanceId
-    //     * @param string $operator
-    //     */
-    //    public function activate(string $processInstanceId, string $operator): void;
-    //
-    //    /**
-    //     * 更新流程实例
-    //     *
-    //     * @param \Alkaid\Workflow\Engine\model\ProcessInstance $processInstance 流程实例对象
-    //     */
-    //    public function updateProcessInstance(ProcessInstance $processInstance): void;
-    //
-    //    /**
-    //     * 根据ID获取流程实例
-    //     *
-    //     * @param string $id
-    //     *
-    //     * @return \Alkaid\Workflow\Engine\model\ProcessInstance|null
-    //     */
-    //    public function getById(string $id): ?ProcessInstance;
-    //
-    //    /**
-    //     * 启动且执行流程（自动执行第一个节点）
-    //     *
-    //     * @param string                                   $processDefineId
-    //     * @param \Alkaid\Workflow\Engine\libs\utils\Dict $args
-    //     */
-    //    public function startAndExecute(string $processDefineId, Dict $args): void;
-    //
-    //    /**
-    //     * 获取流程实例高亮数据
-    //     *
-    //     * @param string $processInstanceId
-    //     *
-    //     * @return array
-    //     */
-    //    public function highLight(string $processInstanceId): array;
-    //
-    //    /**
-    //     * 审批记录
-    //     *
-    //     * @param string $processInstanceId
-    //     *
-    //     * @return array|null
-    //     */
-    //    public function approvalRecord(string $processInstanceId): ?array;
-    //
-    //    /**
-    //     * 撤回
-    //     *
-    //     * @param string $processInstanceId
-    //     * @param string $operator
-    //     */
-    //    public function withdraw(string $processInstanceId, string $operator): void;
-    //
-    //    /**
-    //     * 更新会签变量
-    //     *
-    //     * @param \Alkaid\Workflow\Engine\model\TaskModel $taskModel
-    //     * @param \Alkaid\Workflow\Engine\Core\Execution  $execution
-    //     * @param array                                    $taskActors
-    //     */
-    //    public function updateCountersignVariable(TaskModel $taskModel, Execution $execution, array $taskActors): void;
-    //
-    //    /**
-    //     * 创建实例抄送
-    //     *
-    //     * @param string $processInstanceId
-    //     * @param string $creator
-    //     * @param string $actorIds
-    //     */
-    //    public function createCCInstance(string $processInstanceId, string $creator, string $actorIds): void;
-    //
-    //    /**
-    //     * 更新抄送状态
-    //     *
-    //     * @param string $processInstanceId
-    //     * @param string $actorId
-    //     */
-    //    public function updateCCStatus(string $processInstanceId, string $actorId): void;
-    //
-    //    /**
-    //     * 自定义分页查询我的抄送
-    //     *
-    //     * @param object $param
-    //     *
-    //     * @return array
-    //     */
-    //    public function ccInstancePage(object $param): array;
+    /**
+     * 记录「流程实例已启动」（`workflow_instances` 落库之后调用）
+     *
+     * 调用点保持不变：`ProcessEngines::startProcessInstanceById()` 第 3.1 步。
+     * 那里的守卫（服务缺失 / 没有该方法 → 跳过并记 INFO）是**故意保留**的防御性代码：
+     * 宿主可以用 `process_instance_history_service` 覆盖成自己的实现，
+     * 覆盖物不一定实现了本方法。
+     *
+     * @param object          $processInstance 刚落库的实例（引擎视角对象，含 id / tenant_id）
+     * @param string|int|null $operator        发起人原始标识（`flow_auto` 这类非数字身份也要能留痕）
+     *
+     * @return void
+     */
+    public function createHistoryProcessInstance(object $processInstance, string|int|null $operator = null): void;
 
+    /**
+     * 记录「任务已完成」事件
+     *
+     * @param string|int      $processInstanceId 实例ID
+     * @param string|int      $processTaskId     任务ID
+     * @param string|int|null $operator          操作人原始标识
+     * @param array           $extra             附加快照（节点名 / 审批意见 / 完成时间等，由调用方给）
+     *
+     * @return void
+     */
+    public function recordTaskCompleted(
+        string|int $processInstanceId,
+        string|int $processTaskId,
+        string|int|null $operator,
+        array $extra = []
+    ): void;
 
+    /**
+     * 记录「实例已完成」事件（实例走到 end 且状态变为 completed）
+     *
+     * @param string|int      $processInstanceId 实例ID
+     * @param string|int|null $operator          操作人（查不到就 null，不伪造）
+     * @param array           $extra             附加快照（status / duration / completed_at 等）
+     *
+     * @return void
+     */
+    public function recordInstanceCompleted(
+        string|int $processInstanceId,
+        string|int|null $operator,
+        array $extra = []
+    ): void;
+
+    /**
+     * 记录「实例已拒绝」事件（拒绝终态）
+     *
+     * @param string|int      $processInstanceId 实例ID
+     * @param string|int|null $operator          操作人（查不到就 null，不伪造）
+     * @param array           $extra             附加快照（status / duration / completed_at 等）
+     *
+     * @return void
+     */
+    public function recordInstanceRejected(
+        string|int $processInstanceId,
+        string|int|null $operator,
+        array $extra = []
+    ): void;
+
+    /**
+     * 读取流程轨迹（按 created_at, id 正序）
+     *
+     * **强制租户过滤**：租户取自当前租户上下文（`TenantContext` / `extension_parameters.tenant_id`），
+     * 取不到即抛 {@see \Alkaid\Workflow\Engine\Multitenant\Exception\TenantIsolationException}。
+     * 其他租户查同一个实例ID只能拿到空数组（不是「读到了但看不见」）。
+     *
+     * @param string $processInstanceId 实例ID
+     *
+     * @return array<int, array<string, mixed>> 事件列表（`event_data` 已解码为数组）
+     */
+    public function timeline(string $processInstanceId): array;
 }

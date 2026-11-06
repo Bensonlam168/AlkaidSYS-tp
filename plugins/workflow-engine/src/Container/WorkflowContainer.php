@@ -7,6 +7,7 @@ namespace Alkaid\Workflow\Engine\Container;
 use Alkaid\Workflow\Engine\Core\ProcessEngines;
 use Alkaid\Workflow\Engine\Core\ServiceContext;
 use Alkaid\Workflow\Engine\Services\ProcessDefineService;
+use Alkaid\Workflow\Engine\Services\ProcessInstanceHistoryService;
 use Alkaid\Workflow\Engine\Services\ProcessInstanceService;
 use Alkaid\Workflow\Engine\Services\ProcessTaskService;
 use Alkaid\Workflow\Engine\interface\IProcessEngines;
@@ -146,15 +147,23 @@ class WorkflowContainer
         $processInstanceService = $config['process_instance_service'] ?? ProcessInstanceService::class;
         $processTaskService = $config['process_task_service'] ?? ProcessTaskService::class;
 
-        // 两个历史服务的实现类：本仓库**还没有** —— 历史表尚未建立，
-        // 且 IProcessInstanceHistoryService 的方法声明全部被注释成了空接口，
-        // 所以「未配置」时必须登记 null，而不是照抄上面三行的 `?? 接口名`。
-        // 为什么不能登记接口名：ServiceContext::normalizeDefinitions() 只把**存在的类**
-        // 包成 DI\create()，接口名会作为字面值留在 PHP-DI 里，find() 于是返回一个**字符串**；
-        // 而 ProcessServiceTrait::processInstanceHistoryService() 的返回类型是
+        // 实例历史服务（= 流程轨迹）。默认用插件自带的真实实现，宿主可用
+        // `process_instance_history_service` 覆盖成自己的实现（覆盖能力保留）。
+        //
+        // 为什么以前登记 null、现在能登记类名：`IProcessInstanceHistoryService` 此前是**空接口**
+        // （30 多个声明全被注释），插件没有实现类，历史表也没建。
+        // 若登记接口名，ServiceContext::normalizeDefinitions() 只把**存在的类**包成 DI\create()，
+        // 接口名会作为字面值留在 PHP-DI 里，find() 于是返回一个**字符串**；而
+        // ProcessServiceTrait::processInstanceHistoryService() 的返回类型是
         // ?IProcessInstanceHistoryService，字符串不匹配会直接抛 TypeError，
         // 比「返回 null、由调用方守卫」更难排查（守卫见 ProcessEngines::startProcessInstanceById）。
-        $processInstanceHistoryService = $config['process_instance_history_service'] ?? null;
+        //
+        // 现在接口有了真契约（5 个方法）与真实现（落 workflow_event_logs），
+        // 登记真实类名即可让引擎侧按接口 FQCN 取到对象。
+        $processInstanceHistoryService = $config['process_instance_history_service'] ?? ProcessInstanceHistoryService::class;
+
+        // 任务历史服务仍保持「未配置即 null」：IProcessTaskHistoryService 全仓库零调用方，
+        // 实现它的 4 个方法就是死代码（理由见 IProcessInstanceHistoryService 的类注释）。
         $processTaskHistoryService = $config['process_task_history_service'] ?? null;
 
         $this->coreConfig = $config;
@@ -257,10 +266,12 @@ class WorkflowContainer
         $this->coreServices[IProcessInstanceService::class] = $this->coreServices['processInstanceService'];
         $this->coreServices[IProcessTaskService::class] = $this->coreServices['processTaskService'];
 
-        // 历史服务的同步规则与上面三条不同：它**允许为 null**（当前没有实现类），
+        // 历史服务的同步规则与上面三条不同：它**允许为 null**（宿主可显式关掉实例历史服务），
         // 所以不能用「无条件赋值」，否则会把宿主按接口 FQCN 注入的实现覆盖回 null。
         // 用 `??` 表达「两边谁有值就用谁」：宿主无论写短名还是写接口 FQCN，
-        // 引擎侧按接口 FQCN 取值都能拿到同一个服务。
+        // 引擎侧按接口 FQCN 取值都能拿到同一个服务；两边都没值才是 null
+        // （实例历史现在有默认实现，null 只会出现在宿主主动覆盖成 null 的场景；
+        // 任务历史没有任何实现类，默认就是 null）。
         $this->coreServices[IProcessInstanceHistoryService::class]
             = $this->coreServices[IProcessInstanceHistoryService::class]
             ?? $this->coreServices['processInstanceHistoryService'];

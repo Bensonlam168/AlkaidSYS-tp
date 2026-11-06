@@ -9,6 +9,7 @@ use Alkaid\Workflow\Engine\Integration\WorkflowBootstrap;
 use Alkaid\Workflow\Engine\Multitenant\TenantContext;
 use Alkaid\Workflow\Engine\ex\LFlowException;
 use Alkaid\Workflow\Engine\interface\services\IProcessInstanceHistoryService;
+use Alkaid\Workflow\Engine\Services\ProcessInstanceHistoryService;
 use Alkaid\Workflow\Engine\parser\ModelParser;
 use madong\helper\Dict;
 use Tests\ThinkPHPTestCase;
@@ -38,20 +39,20 @@ use think\facade\Db;
  *   - 旧形态（`{start:{id,name},...}` 节点表）必须**明确报错**而不是产出空模型；
  *   - 决策节点的两条出边必须靠 `properties.expr` 分派（引擎只读这个键）。
  *
- * ## 历史服务：本测试**不注入任何替身**
+ * ## 历史（流程轨迹）：本测试**不注入任何替身**
  *
- * `startProcessInstanceById()` 第 3.1 步会写历史流程实例，但本仓库**还没有**历史服务：
- * `IProcessInstanceHistoryService` 是空接口（方法声明全被注释），也没有历史表与实现类。
- * 此前的写法是往容器里注入一个「记录型历史服务」替身来「让引擎跑起来」——
- * 那证明的是替身可用，不是生产路径可用：
- * 生产路径下该服务为 null，第 3.1 步直接
- * `Error: Call to a member function createHistoryProcessInstance() on null`（ProcessEngines.php:72）。
- * 替身已于本包删除（`tests/Feature/Workflow/Support/RecordingProcessInstanceHistoryService.php`）。
+ * `startProcessInstanceById()` 第 3.1 步会写「流程启动」事件，落到 `workflow_event_logs`
+ * （`event_type = instance_started`）。此前本仓库没有历史服务：
+ * `IProcessInstanceHistoryService` 是空接口（方法声明全被注释），也没有实现类，
+ * 该步只能走守卫分支跳过。当时的写法是往容器里注入一个「记录型历史服务」替身来
+ * 「让引擎跑起来」—— 那证明的是替身可用，不是生产路径可用。
  *
- * 现在的口径：引擎把历史写入当**审计旁路**，服务缺失时跳过并记一条日志，主流程照常推进。
- * 因此本测试**注入零个依赖**（`service_dependencies` 都不传），跑的就是生产路径；
- * {@see testStartInstancePersistsRunningInstanceAndFirstTask()} 里还额外断言
- * 「容器里确实没有历史服务」—— 缺它也能起流程，正是本包的修复口径。
+ * 现在服务有真契约（5 个方法）与真实现（{@see ProcessInstanceHistoryService}），
+ * 并且由 `WorkflowContainer` **默认注册**，所以本测试仍然**注入零个依赖**
+ * （`service_dependencies` 都不传），跑的就是生产装配；只是断言从
+ * 「容器里确实没有历史服务」改成「启动事件真的落库，且轨迹顺序与流程推进顺序一致」。
+ * 替身文件（`tests/Feature/Workflow/Support/RecordingProcessInstanceHistoryService.php`）
+ * 仍然不需要恢复 —— 用替身证明不了生产路径。
  *
  * ## 数据从哪来（测试库的现实）
  *
@@ -238,16 +239,26 @@ class WorkflowLogicFlowExecutionEndToEndTest extends ThinkPHPTestCase
         $this->assertSame('pending', (string) $task['status'], '示例定义未指派参与者，任务应为 pending');
         $this->assertSame('user_task', (string) $task['task_type'], '人工任务类型应为 user_task');
 
-        // ---- 生产路径自证：容器里根本没有历史服务实现，流程照样起来了 ----
+        // ---- 生产路径自证：默认装配下历史（轨迹）服务真的就位，且启动事件已落库 ----
         //
-        // 本仓库还没有历史表与实现类（见类注释），`service_dependencies` 也没注入任何东西，
-        // 所以这里取到的必然是 null。断言它，是为了把「缺历史服务也能启动」这件事钉住：
-        // 引擎的 3.1 步必须走守卫分支（跳过 + 记日志），而不是 `... on null`。
-        // 将来补上真实实现（含建表迁移）后，这条断言应改成「历史行已落库」。
-        $this->assertNull(
-            ServiceContext::find(IProcessInstanceHistoryService::class),
-            '生产路径下容器不应提供历史服务实现；本用例证明的正是「缺它也能启动」'
+        // 改造前这里是 `assertNull(ServiceContext::find(...))`（那时没有实现类，
+        // 断言的是「缺历史服务也能启动」）。服务落地后口径翻过来：
+        // 容器必须给出真实实现，且「流程启动」必须是轨迹的第一行。
+        $historyService = ServiceContext::find(IProcessInstanceHistoryService::class);
+        $this->assertInstanceOf(
+            ProcessInstanceHistoryService::class,
+            $historyService,
+            '默认装配必须提供真实的实例历史服务（WorkflowContainer::buildCoreServices）'
         );
+
+        $startedEvent = Db::table('workflow_event_logs')
+            ->where('instance_id', $instanceId)
+            ->order('id', 'asc')
+            ->find();
+        $this->assertIsArray($startedEvent, '启动流程必须留下 instance_started 事件');
+        $this->assertSame('instance_started', (string) $startedEvent['event_type']);
+        $this->assertSame(self::TENANT_ID, (int) $startedEvent['tenant_id'], '事件租户必须来自实例本身');
+        $this->assertNull($startedEvent['task_id'], '启动事件不是任务事件');
 
         // 说明（已知缺口，不作断言）：workflow_instances.current_node_id / current_node_name
         // 由 createProcessInstance() 初始化为 NULL，且引擎执行链里**没有任何代码**回写它们，
@@ -315,6 +326,54 @@ class WorkflowLogicFlowExecutionEndToEndTest extends ThinkPHPTestCase
             ->order('id')
             ->column('node_name');
         $this->assertSame($expectedChain, $taskNodes, '实例的任务节点序列应与原 bpmn_xml 的 userTask 顺序一致');
+
+        // ---- 流程轨迹：事件顺序必须与流程推进顺序一致 ----
+        //
+        // 这是「历史」能力的端到端验收：`timeline()` 是 P2 接「流程轨迹 / 审批记录」
+        // 页面的数据源，它返回的顺序就是用户看到的顺序。
+        $historyService = ServiceContext::find(IProcessInstanceHistoryService::class);
+        $this->assertInstanceOf(ProcessInstanceHistoryService::class, $historyService);
+
+        $timeline = $historyService->timeline((string) $instanceId);
+
+        $this->assertSame(
+            [
+                ProcessInstanceHistoryService::EVENT_INSTANCE_STARTED,
+                ProcessInstanceHistoryService::EVENT_TASK_COMPLETED,
+                ProcessInstanceHistoryService::EVENT_TASK_COMPLETED,
+                ProcessInstanceHistoryService::EVENT_TASK_COMPLETED,
+                ProcessInstanceHistoryService::EVENT_INSTANCE_COMPLETED,
+            ],
+            array_column($timeline, 'event_type'),
+            '轨迹应为「启动 → 三次任务完成 → 完成」，顺序与流程推进一致'
+        );
+
+        // 任务级事件必须按节点顺序指回真实任务（timeline 的 task_id 不是摆设）
+        $taskIdsByNodeOrder = array_map(
+            static fn ($id) => (int) $id,
+            Db::table('workflow_tasks')->where('instance_id', $instanceId)->order('id')->column('id')
+        );
+        $taskEvents = array_values(array_filter(
+            $timeline,
+            static fn (array $event): bool => $event['event_type'] === ProcessInstanceHistoryService::EVENT_TASK_COMPLETED
+        ));
+
+        $this->assertSame(
+            $taskIdsByNodeOrder,
+            array_column($taskEvents, 'task_id'),
+            '每个 task_completed 事件必须指向对应的任务行'
+        );
+        $this->assertSame(
+            $expectedChain,
+            array_column(array_column($taskEvents, 'event_data'), 'node_name'),
+            '事件里的节点名序列必须与任务节点序列一致'
+        );
+
+        // 实例级事件不带 task_id，且首尾必须是启动 / 完成
+        $this->assertNull($timeline[0]['task_id'], '实例级事件不应带 task_id');
+        $this->assertNull($timeline[4]['task_id'], '实例级事件不应带 task_id');
+        $this->assertSame('completed', $timeline[4]['event_data']['status'] ?? null);
+        $this->assertIsInt($timeline[4]['event_data']['duration'] ?? null, '完成事件应带耗时');
     }
 
     // -----------------------------------------------------------------

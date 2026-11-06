@@ -14,6 +14,7 @@ use Alkaid\Workflow\Engine\interface\model\IProcessDefine;
 use Alkaid\Workflow\Engine\interface\model\IProcessInstance;
 use Alkaid\Workflow\Engine\interface\services\IProcessInstanceService;
 use Alkaid\Workflow\Engine\model\TaskModel;
+use Alkaid\Workflow\Engine\Services\Support\RecordsHistorySafely;
 use Alkaid\Workflow\Engine\Services\Support\ResolvesWorkflowTenant;
 use madong\interface\IDict;
 
@@ -46,11 +47,17 @@ use madong\interface\IDict;
 class ProcessInstanceService implements IProcessInstanceService
 {
     use ResolvesWorkflowTenant;
+    use RecordsHistorySafely;
 
     /**
      * 本服务负责的表
      */
     private const TABLE = 'workflow_instances';
+
+    /**
+     * 任务表（反查「把实例推进到终态的人」）
+     */
+    private const TASK_TABLE = 'workflow_tasks';
 
     /**
      * 实例标题列上限（workflow_instances.title varchar(200)）
@@ -210,14 +217,20 @@ class ProcessInstanceService implements IProcessInstanceService
 
     /**
      * 结束流程实例（状态置 completed，写完成时间与执行时长）
+     *
+     * 状态落库后追加 `instance_completed` 事件（旁路审计，失败只记 WARNING）。
      */
     public function finishProcessInstance(string|int $processInstanceId): void
     {
-        $this->transitionToTerminalState(
+        $terminal = $this->transitionToTerminalState(
             $processInstanceId,
             WorkflowStateMap::engineToInstance(ProcessInstanceStateEnum::FINISHED->value),
             '结束流程实例'
         );
+
+        $this->recordHistorySafely('记录流程完成事件', function ($history) use ($processInstanceId, $terminal): void {
+            $history->recordInstanceCompleted($processInstanceId, $terminal['operator'], $terminal);
+        });
     }
 
     /**
@@ -227,14 +240,20 @@ class ProcessInstanceService implements IProcessInstanceService
      * 引擎侧 `ProcessInstanceStateEnum` 有 REJECT(45)，两个枚举不是一一对应。
      * 这里按 WorkflowStateMap 的口径把「拒绝」落到 cancelled（终态），
      * 任务级拒绝仍能在 `workflow_tasks.status = 'rejected'` 上精确表达。
+     *
+     * 状态落库后追加 `instance_rejected` 事件（旁路审计，失败只记 WARNING）。
      */
     public function rejectProcessInstance(string|int $processInstanceId): void
     {
-        $this->transitionToTerminalState(
+        $terminal = $this->transitionToTerminalState(
             $processInstanceId,
             WorkflowStateMap::engineToInstance(ProcessInstanceStateEnum::REJECT->value),
             '拒绝流程实例'
         );
+
+        $this->recordHistorySafely('记录流程拒绝事件', function ($history) use ($processInstanceId, $terminal): void {
+            $history->recordInstanceRejected($processInstanceId, $terminal['operator'], $terminal);
+        });
     }
 
     /**
@@ -243,21 +262,68 @@ class ProcessInstanceService implements IProcessInstanceService
      * @param string|int $processInstanceId 实例ID
      * @param string     $status            目标状态（表枚举字符串）
      * @param string     $operation         操作描述
+     * @return array{status: string, completed_at: string, duration: int|null, operator: string|null, last_task_id: int|null}
      */
-    private function transitionToTerminalState(string|int $processInstanceId, string $status, string $operation): void
+    private function transitionToTerminalState(string|int $processInstanceId, string $status, string $operation): array
     {
         $id = $this->requireInstanceId($processInstanceId, $operation);
         $row = $this->findRowOrFail($id, $operation);
 
         $timestamp = time();
         $startedAt = isset($row['started_at']) && $row['started_at'] ? strtotime((string) $row['started_at']) : false;
+        $completedAt = date('Y-m-d H:i:s', $timestamp);
+        $duration = $startedAt === false ? null : max(0, ($timestamp - $startedAt) * 1000);
 
         $this->scoped(self::TABLE, $operation)->updateById($id, [
             'status'       => $status,
-            'completed_at' => date('Y-m-d H:i:s', $timestamp),
-            'duration'     => $startedAt === false ? null : max(0, ($timestamp - $startedAt) * 1000),
-            'updated_at'   => date('Y-m-d H:i:s', $timestamp),
+            'completed_at' => $completedAt,
+            'duration'     => $duration,
+            'updated_at'   => $completedAt,
         ]);
+
+        // 终态事件需要「谁把它推到终态的」：见 lastCompletedTask() 的说明
+        $lastTask = $this->lastCompletedTask($id);
+
+        return [
+            'status'       => $status,
+            'completed_at' => $completedAt,
+            'duration'     => $duration,
+            'operator'     => $lastTask['assignee'],
+            'last_task_id' => $lastTask['id'],
+        ];
+    }
+
+    /**
+     * 取「本实例最后完成的那条任务」（终态事件的 data 来源）
+     *
+     * 为什么是反查而不是直接拿 operator：`finishProcessInstance()` / `rejectProcessInstance()`
+     * 的接口签名只有实例ID（上游既定契约，不能只为审计改签名），而真正知道 operator 的
+     * EndProcessHandler 不在本包可改范围。`finishProcessTask()` 完成时会把真实操作人写进
+     * `workflow_tasks.assignee`，因此「最后一条 completed 任务的 assignee」就是推进终态的人。
+     *
+     * 查不到（系统身份 `flow_auto` 没有 user_id、或流程里没有人工任务）时返回 null：
+     * 宁可在审计里留下空白，也不伪造一个操作人。
+     *
+     * @return array{id: int|null, assignee: string|null}
+     */
+    private function lastCompletedTask(int $instanceId): array
+    {
+        try {
+            $row = $this->scoped(self::TASK_TABLE, '读取终态操作人')
+                ->query()
+                ->where('instance_id', (string) $instanceId)
+                ->where('status', 'completed')
+                ->order('id', 'desc')
+                ->find();
+        } catch (\Throwable) {
+            // 终态写入已经成功，这里只是给审计补快照，不能因此让 finish/reject 失败
+            return ['id' => null, 'assignee' => null];
+        }
+
+        return [
+            'id'       => isset($row['id']) ? (int) $row['id'] : null,
+            'assignee' => isset($row['assignee']) && $row['assignee'] !== null ? (string) $row['assignee'] : null,
+        ];
     }
 
     /**

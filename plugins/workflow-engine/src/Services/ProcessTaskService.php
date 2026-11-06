@@ -18,6 +18,7 @@ use Alkaid\Workflow\Engine\libs\utils\StringHelper;
 use Alkaid\Workflow\Engine\model\CustomModel;
 use Alkaid\Workflow\Engine\model\ProcessModel;
 use Alkaid\Workflow\Engine\model\TaskModel;
+use Alkaid\Workflow\Engine\Services\Support\RecordsHistorySafely;
 use Alkaid\Workflow\Engine\Services\Support\ResolvesWorkflowTenant;
 use madong\interface\IDict;
 
@@ -56,6 +57,7 @@ use madong\interface\IDict;
 class ProcessTaskService implements IProcessTaskService
 {
     use ResolvesWorkflowTenant;
+    use RecordsHistorySafely;
 
     /**
      * 本服务负责的表
@@ -169,11 +171,14 @@ class ProcessTaskService implements IProcessTaskService
 
     /**
      * 任务完成（状态置 completed，写完成时间、处理结果与审批意见）
+     *
+     * 状态更新成功之后追加一条 `task_completed` 事件（`workflow_event_logs`）。
+     * 事件写入是旁路审计：失败只记 WARNING，不影响本方法的结果（见 recordHistorySafely）。
      */
     public function finishProcessTask(string|int $processTaskId, string|int $operator, IDict $args): void
     {
         $taskId = $this->requireTaskId($processTaskId, '完成流程任务');
-        $this->findRowOrFail($taskId, '完成流程任务');
+        $row = $this->findRowOrFail($taskId, '完成流程任务');
 
         $timestamp = date('Y-m-d H:i:s');
         $comment = $args->get(ProcessConstEnum::APPROVAL_COMMENT->value);
@@ -197,6 +202,17 @@ class ProcessTaskService implements IProcessTaskService
         }
 
         $this->scoped(self::TABLE, '完成流程任务')->updateById($taskId, $data);
+
+        // 任务状态已经落库 → 追加轨迹事件（顺序：先状态、后审计，审计失败不回滚状态）
+        $instanceId = (string) ($row['instance_id'] ?? '');
+        $this->recordHistorySafely('记录任务完成事件', function ($history) use ($instanceId, $taskId, $operator, $row, $data): void {
+            $history->recordTaskCompleted($instanceId, $taskId, $operator, [
+                'node_name' => $row['node_name'] ?? null,
+                'title'     => $row['title'] ?? null,
+                'comment'   => $data['comment'] ?? null,
+                'status'    => $data['status'],
+            ]);
+        });
     }
 
     /**
