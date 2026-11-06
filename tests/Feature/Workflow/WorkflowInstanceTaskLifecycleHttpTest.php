@@ -267,9 +267,19 @@ class WorkflowInstanceTaskLifecycleHttpTest extends ThinkPHPTestCase
 
         $formBody = json_decode($form->getContent(), true);
         $this->assertSame(
-            ['form_data', 'form_rules', 'form_schema', 'task_id'],
+            [
+                'form_data',
+                'form_messages',
+                'form_name',
+                'form_rules',
+                'form_schema',
+                'reason',
+                'resolved',
+                'task_id',
+            ],
             $this->sortedKeys($formBody['data']),
-            '表单结构必须保持旧契约（键名与顺序无关）'
+            '表单结构必须是 8 键契约（键名与顺序无关）：'
+            . 'task_id / form_name / form_schema / form_rules / form_messages / form_data / resolved / reason'
         );
 
         $submit = $this->httpRequest('POST', 'v1/workflow/tasks/' . $taskId . '/form', [

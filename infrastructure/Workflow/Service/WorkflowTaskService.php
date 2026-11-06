@@ -12,6 +12,7 @@ use Infrastructure\Workflow\Repository\WorkflowInstanceRepository;
 use Infrastructure\Workflow\Repository\WorkflowTaskRepository;
 use Infrastructure\Workflow\Repository\WorkflowUserDirectoryRepository;
 use Infrastructure\Workflow\Support\WorkflowActorMatch;
+use Infrastructure\Workflow\Support\WorkflowTaskFormResolver;
 use Infrastructure\Workflow\WorkflowEngineBootstrap;
 use madong\helper\Dict;
 use Throwable;
@@ -58,7 +59,10 @@ use Throwable;
  * - 「转办」落成「`assignee` 改成目标 + 原受理人**移出** `candidate_users` + `task_transferred` 事件」；
  *   两者的唯一可落库差异就是「原受理人是否仍在候选集」，因为「受理人之外的人也能办」这一双人可办语义
  *   被已经钉住的不变量（候选身份不得越过受理人）明确禁止；
- * - 「审批结果 / 完成产出」落在 `result`（引擎把整个 args JSON 写进去）与 `comment`（审批意见列）。
+ * - 「审批结果 / 完成产出」落在 `result`（引擎把整个 args JSON 写进去）与 `comment`（审批意见列）；
+ * - 表单**模板**（`form_schema` / `form_rules` / `form_messages`）不在任务行上，而是沿
+ *   `instance.definition_id → nodes_config → properties.form → lowcode_forms` 解析
+ *   （{@see WorkflowTaskFormResolver}）；任务行上的 `form_data` 只是**已填的值**。
  *
  * @package Infrastructure\Workflow\Service
  */
@@ -101,25 +105,30 @@ class WorkflowTaskService
 
     private ?WorkflowUserDirectoryRepository $users;
 
+    private ?WorkflowTaskFormResolver $formResolver;
+
     /**
-     * @param LanguageService|null              $lang      语言服务（控制器传入同一个实例；null 时惰性新建）
-     * @param WorkflowTaskRepository|null       $tasks     任务仓储
-     * @param WorkflowInstanceRepository|null   $instances 实例仓储（判断实例是否允许办理）
-     * @param WorkflowEventLogRepository|null   $events    事件仓储（宿主动作留痕）
-     * @param WorkflowUserDirectoryRepository|null $users  用户目录（转办/委派的目标用户校验）
+     * @param LanguageService|null              $lang          语言服务（控制器传入同一个实例；null 时惰性新建）
+     * @param WorkflowTaskRepository|null       $tasks         任务仓储
+     * @param WorkflowInstanceRepository|null   $instances     实例仓储（判断实例是否允许办理）
+     * @param WorkflowEventLogRepository|null   $events        事件仓储（宿主动作留痕）
+     * @param WorkflowUserDirectoryRepository|null $users      用户目录（转办/委派的目标用户校验 + 选人目录）
+     * @param WorkflowTaskFormResolver|null     $formResolver  表单解析器（表单模板 → 低代码表单 + 校验规则）
      */
     public function __construct(
         ?LanguageService $lang = null,
         ?WorkflowTaskRepository $tasks = null,
         ?WorkflowInstanceRepository $instances = null,
         ?WorkflowEventLogRepository $events = null,
-        ?WorkflowUserDirectoryRepository $users = null
+        ?WorkflowUserDirectoryRepository $users = null,
+        ?WorkflowTaskFormResolver $formResolver = null
     ) {
-        $this->lang      = $lang;
-        $this->tasks     = $tasks;
-        $this->instances = $instances;
-        $this->events    = $events;
-        $this->users     = $users;
+        $this->lang         = $lang;
+        $this->tasks        = $tasks;
+        $this->instances    = $instances;
+        $this->events       = $events;
+        $this->users        = $users;
+        $this->formResolver = $formResolver;
     }
 
     // =====================================================================
@@ -169,24 +178,76 @@ class WorkflowTaskService
     }
 
     /**
-     * 任务表单（读 `form_data`）
+     * 任务表单（模板 + 已提交值）
      *
-     * `form_schema` / `form_rules` 在 `workflow_tasks` 里**没有对应列**（模板定义在流程定义体上），
-     * 因此保持旧结构的占位（`null` / `[]`）而不是凭定义体拼一份假 schema ——
-     * 真要渲染表单，应走定义详情接口拿节点配置。
+     * ## 表单模板从哪来（改造要点）
      *
-     * @return array{task_id: int, form_schema: null, form_data: array<string, mixed>, form_rules: array<int, mixed>}
+     * `workflow_tasks` **没有** `form_schema` / `form_rules` 列，模板在**流程定义体的节点配置**上。
+     * 改造前这里恒返回 `form_schema: null` / `form_rules: []`，前端拿不到任何可渲染结构；
+     * 现在改为沿
+     * `task → instance.definition_id（具体版本行）→ nodes_config → 节点 properties.form →`
+     * `lowcode_forms` 解析（实现与全部优先级说明见 {@see WorkflowTaskFormResolver}）。
+     *
+     * 版本正确性：`definition_id` 指向**具体版本行**，因此老实例永远读到它启动时那一版的表单模板，
+     * 定义发布新版本不会让在跑实例的审批界面换掉表单。
+     *
+     * ## 返回契约（「没配」与「配了但找不到」必须可区分）
+     *
+     * `resolved = false` 时 `reason` 一定非空（`node_has_no_form` / `form_not_found` /
+     * `definition_not_found` / `instance_not_found` / `node_not_found`），
+     * **绝不**静默返回 `form_schema: null` 而不说明原因。
+     *
+     * `form_schema` 是 `SchemaParser` 产出的 `components`（与
+     * `GET /v1/lowcode/forms/{name}?with_parsed=1` 的 `data.parsed.components` 同一个数组）；
+     * `form_rules` / `form_messages` 来自同一套 `FormValidatorManager`（`data.validator.rules/messages`），
+     * 因此前端「工作流里渲染 + 校验」与「低代码表单详情」用的是完全一致的规则。
+     *
+     * @return array{
+     *     task_id: int,
+     *     form_name: string|null,
+     *     form_schema: array<int, array<string, mixed>>|null,
+     *     form_rules: array<string, mixed>,
+     *     form_messages: array<string, mixed>,
+     *     form_data: array<string, mixed>,
+     *     resolved: bool,
+     *     reason: string|null
+     * }
      */
     public function form(int $tenantId, int $taskId): array
     {
         $task = $this->requireOwned($tenantId, $taskId);
 
+        $resolved = $this->formResolver()->resolve($tenantId, $task);
+
         return [
-            'task_id'     => $taskId,
-            'form_schema' => null,
-            'form_data'   => is_array($task['form_data'] ?? null) ? $task['form_data'] : [],
-            'form_rules'  => [],
+            'task_id'       => $taskId,
+            'form_name'     => $resolved['form_name'],
+            'form_schema'   => $resolved['form_schema'],
+            'form_rules'    => $resolved['form_rules'],
+            'form_messages' => $resolved['form_messages'],
+            'form_data'     => is_array($task['form_data'] ?? null) ? $task['form_data'] : [],
+            'resolved'      => $resolved['resolved'],
+            'reason'        => $resolved['reason'],
         ];
+    }
+
+    /**
+     * 本租户用户目录（转办 / 委派「选人」下拉框的数据源）
+     *
+     * 为什么放在任务服务上：目录的唯一用途是**选任务的处理人**（转办目标 / 委派目标 /
+     * 按受理人筛选待办），属于任务域的读；授权口径也因此与任务端点一致（`workflow_task.read`）。
+     *
+     * 安全边界：仓储只回 `id` / `name` / `username` 三个字段，且强制 `tenant_id` 过滤 ——
+     * 这是给下拉框用的接口，`password` / `email` / `phone` 这类字段一个都不能出现在这里
+     * （多返回一个字段就是多一个泄露面，回归见
+     * `tests/Feature/Workflow/WorkflowUserDirectoryEndpointTest`）。
+     *
+     * @param string|null $keyword 关键字（匹配 `name` / `username`，空串等价于不过滤）
+     * @return array{list: array<int, array<string, mixed>>, total: int}
+     */
+    public function searchUsers(int $tenantId, ?string $keyword, int $page, int $pageSize): array
+    {
+        return $this->users()->search($tenantId, $keyword, $page, $pageSize);
     }
 
     // =====================================================================
@@ -943,6 +1004,14 @@ class WorkflowTaskService
     private function users(): WorkflowUserDirectoryRepository
     {
         return $this->users ??= new WorkflowUserDirectoryRepository();
+    }
+
+    /**
+     * 表单解析器（惰性构造；依赖全部用默认实现，见 WorkflowTaskFormResolver 的类注释）
+     */
+    private function formResolver(): WorkflowTaskFormResolver
+    {
+        return $this->formResolver ??= new WorkflowTaskFormResolver();
     }
 
     /**

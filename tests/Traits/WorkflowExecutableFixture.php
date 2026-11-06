@@ -103,9 +103,15 @@ trait WorkflowExecutableFixture
      * @param string             $name     定义名（清理时按它圈定，建议带测试专用前缀）
      * @param int                $tenantId 归属租户
      * @param array|null         $graph    自定义图；null 时用 {@see approvalGraph()}
+     * @param int                $version  版本号（默认 1；「发新版本」类用例传 2，
+     *                                     用于验证「在跑实例锁在旧版本的图/表单上」）
      */
-    protected function insertExecutableDefinition(string $name, int $tenantId = 1, ?array $graph = null): int
-    {
+    protected function insertExecutableDefinition(
+        string $name,
+        int $tenantId = 1,
+        ?array $graph = null,
+        int $version = 1
+    ): int {
         $now = date('Y-m-d H:i:s');
 
         return (int) Db::table('workflow_definitions')->insertGetId([
@@ -116,7 +122,7 @@ trait WorkflowExecutableFixture
             'type'             => 'approval',
             'category'         => 'finance',
             'icon'             => 'fixture-icon',
-            'version'          => 1,
+            'version'          => $version,
             'status'           => 'published',
             'nodes_config'     => json_encode($graph ?? $this->approvalGraph($name), JSON_UNESCAPED_UNICODE),
             'triggers_config'  => json_encode([], JSON_UNESCAPED_UNICODE),
