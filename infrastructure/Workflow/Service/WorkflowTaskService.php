@@ -55,6 +55,18 @@ use Throwable;
  * `form_data`（{@see self::validateFormData()}）。引擎只负责推进状态机，它既不认识低代码表单，
  * 也不会因为「金额是负数」而拒绝 —— 少了宿主这一段，后端的「唯一权威」就不存在。
  *
+ * ### 校验的触发条件是「带了 form_data」，不是「调的是哪个动作」
+ *
+ * `form` / `approve` / `complete` / `reject` 四个动作都把 `form_data` 的键以 `f_` 前缀写进引擎 args
+ * （见 {@see self::buildActionArgs()}），于是**同一份脏数据有四条入口**。
+ * 只给 `submitForm()` 加校验等于没修：把 `{"amount": -5}` 从 `/form` 换成 `/approve` 发出去，
+ * 它照样落进 `workflow_tasks.result`，并且成为后续节点表达式能引用的变量。
+ *
+ * 因此校验放在四个动作的唯一漏斗 {@see self::runAction()} 里，条件是
+ * 「payload 里有非空 `form_data`」—— 新动作只要经由这个漏斗就会自动被覆盖，
+ * 不需要有人记得去补一行动作判断。
+ * 审批通常**只带** `comment` / `output`，那种请求根本不进校验（否则所有正常审批都会被打成 422）。
+ *
  * > 本包**不改** `plugins/workflow-engine/src/`，因此「引擎未实现」的方法只能由宿主补齐；
  * > 与客户端相关的语义差异写在交付报告「契约冲突」一节。
  *
@@ -269,9 +281,13 @@ class WorkflowTaskService
     /**
      * 审批通过
      *
-     * @param array<string, mixed> $payload `comment` / `form_data`
+     * `form_data` 是**可选**的，但一旦带上来就与 `submitForm()` 走同一套后端规则校验
+     * （见 {@see self::runAction()} 第 4 步）：不合规 → 422，任务状态、`result`、`form_data` 一个字节不动。
+     * 只带 `comment`（审批的常态）时完全不碰校验逻辑 —— 没有表单值就没有可校验的东西。
+     *
+     * @param array<string, mixed> $payload `comment` / `form_data`（可选，带了就校验）
      * @param string[]             $userGroupSlugs
-     * @return array<string, mixed> 任务行 + `next_tasks`
+     * @return array<string, mixed> 任务行 + `next_tasks`（带了 form_data 时另含 `form_validation`）
      */
     public function approve(int $tenantId, int $userId, array $userGroupSlugs, int $taskId, array $payload): array
     {
@@ -286,7 +302,10 @@ class WorkflowTaskService
      * 是引擎里语义明确、不依赖上游节点存在性的驳回实现：任务结束 → 跳结束节点 → 实例按 `submit_type`
      * 走 `rejectProcessInstance()`（实例 `cancelled`），并在事件表留下 `instance_rejected`。
      *
-     * @param array<string, mixed> $payload `comment` / `form_data`
+     * 驳回同样不允许借 `form_data` 绕过表单规则：带了 `form_data` 且不合规 → 422，
+     * 且此时**实例不会**进入 `cancelled` —— 校验发生在任何写库动作之前（见 runAction() 第 4 步）。
+     *
+     * @param array<string, mixed> $payload `comment` / `form_data`（可选，带了就校验）
      * @param string[]             $userGroupSlugs
      * @return array<string, mixed>
      */
@@ -298,7 +317,10 @@ class WorkflowTaskService
     /**
      * 完成任务（产出写进 args → 引擎落 `result`）
      *
-     * @param array<string, mixed> $payload `comment` / `output` / `form_data`
+     * `output` **不校验**：它是审批产出/意见，不是表单值，没有对应的表单规则可依。
+     * `form_data` 则会校验（与 `submitForm()` 同一套规则），因为它同样是「表单里的值」。
+     *
+     * @param array<string, mixed> $payload `comment` / `output` / `form_data`（可选，带了就校验）
      * @param string[]             $userGroupSlugs
      * @return array<string, mixed>
      */
@@ -534,29 +556,45 @@ class WorkflowTaskService
         // 3）宿主授权（移植旧 checkTaskAccess 语义）
         $this->assertActor($task, $userId, $userGroupSlugs);
 
-        // 4）表单类动作：**先按后端规则校验 → 通过后才落库**
+        // 4）表单值校验：**只要本次请求带了 form_data 就必须先过这一关**（表单类动作一律校验）
         //
-        //    顺序不能反：先写 form_data 再校验失败，会在库里留下一行「脏表单 + 任务没推进」的数据，
-        //    用户看到 422、重开表单却看到自己「没提交成功」的内容 —— 比直接拒绝更糟。
+        //    顺序不能反：先写 form_data / 先推进再校验失败，会在库里留下一行「脏数据 + 任务没推进」，
+        //    用户看到 422、重开却看到自己「没提交成功」的内容 —— 比直接拒绝更糟。
         //
-        //    位置也刻意放在这里（三层授权之后、落库之前）而不是 submitForm() 入口：
-        //    若放在入口，未登录/非受理人的请求能靠 422 的字段文案反推本节点的表单规则。
+        //    位置也刻意放在这里（三层授权之后、任何写库之前）而不是各动作入口：
+        //    a. `form` / `approve` / `complete` / `reject` 四个动作都以本方法为唯一漏斗，
+        //       在这里判一次 = 四条入口全覆盖，**不存在第二条平行分支**可漏；
+        //    b. 触发条件是「payload 里有非空 form_data」而不是「action === 某几个值」，
+        //       所以将来新增的动作只要经由本方法并把 form_data 传下去，就自动被校验，
+        //       不需要有人记得回来补一行动作判断；
+        //    c. 若放在 submitForm() 入口，未登录 / 非受理人的请求能靠 422 的字段文案反推本节点的表单规则。
+        //
+        //    ⚠️ 反过来也必须成立：审批的常态是**只带 comment**（或 output），
+        //    `formDataOf()` 对这种请求返回 null，整段直接跳过。
+        //    绝不能「没带 form_data 就拿空数组去校验」—— 那会把所有正常审批按 require 规则打成 422。
+        $formData       = $this->formDataOf($payload);
         $formValidation = null;
 
+        if ($action === self::ACTION_FORM || $formData !== null) {
+            // ACTION_FORM 恒校验（提交表单必然有 form_data，这里加 `||` 只为守住这个不变量，
+            // 免得将来有人绕过 submitForm() 直接调 runAction() 时把校验也一起绕过）
+            $formValidation = $this->validateFormData($tenantId, $task, $formData ?? []);
+        }
+
+        // 4.1）只有「提交表单」把表单值落到任务行；审批类动作的表单值只随 args 进 `result`，
+        //      不覆盖 `workflow_tasks.form_data`（那是「已填的表单」，不是「本次审批的产出」）
         if ($action === self::ACTION_FORM) {
-            $formData = is_array($payload['form_data'] ?? null) ? $payload['form_data'] : [];
-
-            $formValidation = $this->validateFormData($tenantId, $task, $formData);
-
             $this->tasks()->updateForTenant($tenantId, $taskId, [
-                'form_data' => json_encode($formData, JSON_UNESCAPED_UNICODE),
+                'form_data' => json_encode($formData ?? [], JSON_UNESCAPED_UNICODE),
             ]);
         }
 
         // 5）引擎授权桥接
         $this->ensureEngineActor($taskId, $userId);
 
-        $args = $this->buildActionArgs($action, $payload);
+        // 传的是**已校验的那个数组**：写进 args 的表单值与校验过的表单值是同一个变量，
+        // 没有第二次从 payload 取值的机会（见 buildActionArgs() 的参数说明）
+        $args = $this->buildActionArgs($action, $payload, $formData);
 
         try {
             if ($action === self::ACTION_REJECT) {
@@ -581,14 +619,14 @@ class WorkflowTaskService
         if ($action === self::ACTION_FORM) {
             $this->events()->append($tenantId, (int) $task['instance_id'], $taskId, 'task_form_submitted', [
                 'node_name' => $task['node_name'] ?? null,
-                'keys'      => array_keys($payload['form_data']),
+                'keys'      => array_keys($formData ?? []),
             ], $userId);
         }
 
         $refreshed = $this->requireOwned($tenantId, $taskId);
         $refreshed['next_tasks'] = $this->normalizeNextTasks($result);
 
-        // 7）把表单校验结论一并回给前端（只有表单类动作才有该键）：
+        // 7）把表单校验结论一并回给前端（本次请求带了 form_data 才有该键，与动作无关）：
         //    `validated=false` 且 `needs_attention=true` 时必须让前端**能提示运维** ——
         //    「跳过校验」这件事一旦静默，配置错误就会一直烂在那里，直到有人发现批下来的单子金额是负数
         if ($formValidation !== null) {
@@ -1074,12 +1112,24 @@ class WorkflowTaskService
      * 组装引擎参数
      *
      * - 审批意见 → `tf_approval_comment`（引擎据此回填 `workflow_tasks.comment`）；
-     * - 表单/产出 → `f_<键>`（引擎的表单字段口径，见 `ProcessFlowUtils` 对 `f_title` 的处理）；
+     * - 表单值 / 审批产出 → `f_<键>`（引擎的表单字段口径，见 `ProcessFlowUtils` 对 `f_title` 的处理）；
      * - 驳回 → `submit_type = REJECT`（`EndProcessHandler` 据此把实例置为驳回态，缺了它就变成「正常结束」）。
      *
-     * @param array<string, mixed> $payload
+     * ## 为什么 `form_data` 由调用方传进来，而不是在这里从 `$payload` 里再读一次
+     *
+     * 因为它**必须**是 {@see self::validateFormData()} 校验过的那个数组。
+     * 从 `$payload` 重读一遍等于把「校验的值」与「写进 `result` 的值」拆成两次取值 ——
+     * 现在它们碰巧是同一个数组，但那是巧合，不是保证；将来有人在中间加一次归一化
+     * （比如顺手裁掉未声明的键），「校验过 A、写入 B」就会原样复现本方法要堵的那类缺陷。
+     * 传参形态把这件事变成**结构约束**：能写进 args 的表单值只可能来自 runAction() 里那个已校验的变量。
+     *
+     * `output` 仍直接从 payload 取：它是审批产出/意见，不是表单值，没有对应的表单规则可依
+     * （给它编一套规则等于凭空发明契约，客户端只要不带它就会全场 422）。
+     *
+     * @param array<string, mixed>      $payload  原始请求体（这里只用于取 `output`）
+     * @param array<string, mixed>|null $formData 已校验的表单值；null = 本次不写表单值
      */
-    private function buildActionArgs(string $action, array $payload): Dict
+    private function buildActionArgs(string $action, array $payload, ?array $formData): Dict
     {
         $args = new Dict();
 
@@ -1089,9 +1139,11 @@ class WorkflowTaskService
             $args->put(self::ARG_APPROVAL_COMMENT, $comment);
         }
 
-        foreach (['form_data', 'output'] as $field) {
-            $values = $payload[$field] ?? null;
+        // 表单值在前、产出在后：两者共用 `f_` 前缀（引擎不区分「表单字段」与「产出字段」，
+        // 对后续节点而言都是可引用的变量），同名键时 output 覆盖 form_data —— 与改造前同序同名。
+        $output = $payload['output'] ?? null;
 
+        foreach ([$formData, is_array($output) ? $output : null] as $values) {
             if (!is_array($values)) {
                 continue;
             }
@@ -1110,6 +1162,36 @@ class WorkflowTaskService
         }
 
         return $args;
+    }
+
+    /**
+     * 取本次请求携带的「表单值」（null = 本次没有表单值要校验/落库）
+     *
+     * ## 为什么「没带」与「空数组」归成同一个 null
+     *
+     * 两者对引擎的效果完全一样：`buildActionArgs()` 遍历一个空数组时一个键也写不出，
+     * 于是 `result` 里不会多任何东西 —— 既然无可写入，就没有可校验的对象。
+     *
+     * 而把它们分开处理会制造一个**纯粹的风险**：审批的常态是只带 `comment`，
+     * 若把「没带 form_data」当成「交了一份空表单」去跑 `require` 规则，
+     * 每一次正常审批都会被自己的必填规则打成 422 —— 这是本包最容易踩坏的一条。
+     *
+     * 另外，`submitForm()` 的「必须是非空数组」是**它自己**的结构要求（`form_data_required`，由控制器
+     * 与服务各挡一次），属于「有东西可提交」的语义；审批接口没有这条要求。
+     * 两者刻意不同，不要因为本方法返回 null 就把那条要求也一起抹平。
+     *
+     * @param array<string, mixed> $payload 原始请求体
+     * @return array<string, mixed>|null
+     */
+    private function formDataOf(array $payload): ?array
+    {
+        $raw = $payload['form_data'] ?? null;
+
+        if (!is_array($raw) || $raw === []) {
+            return null;
+        }
+
+        return $raw;
     }
 
     /**
