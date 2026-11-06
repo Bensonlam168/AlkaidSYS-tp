@@ -42,6 +42,11 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
     use \Tests\Traits\WorkflowFixtureIsolation;
 
     /**
+     * 真库夹具定义的名称前缀（清理时按前缀删除，避免误删真实定义）
+     */
+    private const STRICT_DEFINITION_PREFIX = 'p3a_tenant_strictness_';
+
+    /**
      * 测试用户 ID（租户 1 / 租户 2）
      *
      * 选用 66xx 段，避开既有用例占用的 6xxx 子段与以高位 ID 批量清理的测试。
@@ -106,8 +111,7 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
      */
     public function testCrossTenantTaskDetailIsDeniedWhileOwnTenantAllowed(): void
     {
-        $taskId = 'task_strict_detail_' . uniqid();
-        $this->seedTask($taskId, 1);
+        $taskId = $this->seedTask(1);
 
         // 租户 2 读取租户 1 的任务 → 必须被拒绝
         $crossResponse = $this->httpRequest(
@@ -125,7 +129,7 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
 
         $crossBody = json_decode($crossResponse->getContent(), true);
         $this->assertIsArray($crossBody);
-        // 业务码 403 来自控制器 forbidden()，区别于权限中间件的 2002
+        // 业务码 403 来自服务层的租户归属校验，区别于权限中间件的 2002
         $this->assertSame(403, $crossBody['code'], '跨租户读取的业务码应为 403，实际响应：' . $crossResponse->getContent());
 
         // 租户 1 读取自己的任务 → 必须 200（正常路径不能被收紧破坏）
@@ -149,35 +153,25 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
     }
 
     /**
-     * 用例 2（RED）：任务列表不得把「无租户归属」的记录泄漏给任何租户
+     * 用例 2：任务列表只能返回本租户的任务（不能把别的租户的任务混进来）
      *
-     * 现状缺陷：`($task['tenant_id'] ?? null) === $tenantId || ... === null`
-     * 使 tenant_id 缺失/为 null 的任务同时出现在**两个**租户的列表里。
+     * 旧用例用「tenant_id 为 null 的孤儿任务」来钉住 `|| === null` 这条死分支。
+     * 真库下该数据**不可表示**（`workflow_tasks.tenant_id` NOT NULL + 外键），
+     * 因此改用真实可构造的对照：两个租户各一条任务，断言各自的列表里只有自己那条。
+     * 若将来有人重新引入 `|| X === null` 或干脆去掉租户过滤，跨租户那条会立刻出现在列表里。
      */
-    public function testTaskListDoesNotLeakRecordWithoutTenantId(): void
+    public function testTaskListDoesNotLeakTaskFromAnotherTenant(): void
     {
-        $ownTaskId = 'task_strict_own_' . uniqid();
-        $orphanTaskId = 'task_strict_orphan_' . uniqid();
-
-        // 一条正常归属租户 1 的任务 + 一条没有任何租户归属的任务（DB 中不可能存在，仅用于钉住死分支）
-        $this->seedTask($ownTaskId, 1);
-        $this->seedTask($orphanTaskId, null);
+        $ownTaskId     = $this->seedTask(1);
+        $foreignTaskId = $this->seedTask(2);
 
         $tenant1Ids = $this->listTaskIds($this->tenant1UserId, 1);
         $tenant2Ids = $this->listTaskIds($this->tenant2UserId, 2);
 
         $this->assertContains($ownTaskId, $tenant1Ids, '租户 1 的列表应包含自己租户的任务（正常路径）');
         $this->assertNotContains($ownTaskId, $tenant2Ids, '租户 2 的列表不得包含租户 1 的任务');
-        $this->assertNotContains(
-            $orphanTaskId,
-            $tenant1Ids,
-            '缺少 tenant_id 的记录（tenant_id NOT NULL，DB 中不可能存在）不得被视为「全局任务」对租户 1 可见'
-        );
-        $this->assertNotContains(
-            $orphanTaskId,
-            $tenant2Ids,
-            '缺少 tenant_id 的记录不得对租户 2 可见（原 null 宽免分支会把它泄漏给所有租户）'
-        );
+        $this->assertContains($foreignTaskId, $tenant2Ids, '租户 2 的列表应包含自己租户的任务（正常路径）');
+        $this->assertNotContains($foreignTaskId, $tenant1Ids, '租户 1 的列表不得包含租户 2 的任务');
     }
 
     /**
@@ -245,35 +239,63 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种一条工作流任务（tenant_id 允许为 null，用于钉住已删除的 null 宽免分支）
+     * 播种一条工作流任务（**真库**：定义 → 实例 → 任务）
+     *
+     * 任务的 `instance_id` / `tenant_id` 都有外键，无法凭空插入；
+     * 这里按外键顺序造出最小可追溯数据，用例结束后由 `purgeWorkflowBusinessFixtures()` 清理。
+     *
+     * @param int $tenantId 归属租户
+     * @return int 任务主键
      */
-    private function seedTask(string $taskId, ?int $tenantId): void
+    private function seedTask(int $tenantId): int
     {
-        $now = (new \DateTimeImmutable())->format('c');
+        $now = date('Y-m-d H:i:s');
 
-        $task = [
-            'id' => $taskId,
-            'tenant_id' => $tenantId,
-            'instance_id' => 'inst_' . $taskId,
-            'definition_id' => 'def_' . $taskId,
-            'name' => 'P3-A 租户严格匹配测试任务',
-            'type' => WorkflowTaskController::TYPE_APPROVAL,
-            'status' => WorkflowTaskController::STATUS_PENDING,
-            'assignee' => null,
-            'delegated_to' => null,
-            'candidate_users' => [],
-            'candidate_groups' => [],
-            'form_data' => [],
-            'due_date' => null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ];
+        $definitionId = (int) Db::table('workflow_definitions')->insertGetId([
+            'tenant_id'    => $tenantId,
+            'name'         => self::STRICT_DEFINITION_PREFIX . uniqid(),
+            'display_name' => 'P3-A 租户严格匹配测试定义',
+            'description'  => 'P3-A 测试夹具（用例结束后删除）',
+            'type'         => 'approval',
+            'category'     => 'finance',
+            'icon'         => 'strict-icon',
+            'version'      => 1,
+            'status'       => 'draft',
+            'is_active'    => 0,
+            'created_at'   => $now,
+            'updated_at'   => $now,
+        ]);
 
-        $ref = new \ReflectionProperty(WorkflowTaskController::class, 'tasks');
-        $ref->setAccessible(true);
-        $tasks = (array) $ref->getValue();
-        $tasks[$taskId] = $task;
-        $ref->setValue(null, $tasks);
+        $instanceId = (int) Db::table('workflow_instances')->insertGetId([
+            'definition_id' => $definitionId,
+            'tenant_id'     => $tenantId,
+            'title'         => 'P3-A 租户严格匹配测试实例',
+            'status'        => 'running',
+            'priority'      => 0,
+            'variables'     => json_encode([], JSON_UNESCAPED_UNICODE),
+            'context'       => json_encode([], JSON_UNESCAPED_UNICODE),
+            'started_at'    => $now,
+            'created_by'    => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
+            'created_at'    => $now,
+            'updated_at'    => $now,
+        ]);
+
+        return (int) Db::table('workflow_tasks')->insertGetId([
+            'instance_id'      => $instanceId,
+            'tenant_id'        => $tenantId,
+            'node_id'          => 'apply',
+            'node_name'        => 'apply',
+            'task_type'        => 'user_task',
+            'task_sub_type'    => 'approval',
+            'title'            => 'P3-A 租户严格匹配测试任务',
+            'status'           => 'pending',
+            'priority'         => 0,
+            'candidate_users'  => json_encode([], JSON_UNESCAPED_UNICODE),
+            'candidate_groups' => json_encode([], JSON_UNESCAPED_UNICODE),
+            'form_data'        => json_encode([], JSON_UNESCAPED_UNICODE),
+            'created_at'       => $now,
+            'updated_at'       => $now,
+        ]);
     }
 
     /**
@@ -460,7 +482,32 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
      */
     private function cleanupFixtures(): void
     {
+        $this->purgeWorkflowBusinessFixtures();
         $this->purgeWorkflowFixtures();
+    }
+
+    /**
+     * 删除本类播种的业务数据（按定义名前缀圈定；外键顺序：任务 → 实例 → 定义）
+     */
+    private function purgeWorkflowBusinessFixtures(): void
+    {
+        $definitionIds = Db::table('workflow_definitions')
+            ->whereLike('name', self::STRICT_DEFINITION_PREFIX . '%')
+            ->column('id');
+
+        if ($definitionIds === []) {
+            return;
+        }
+
+        $instanceIds = Db::table('workflow_instances')->whereIn('definition_id', $definitionIds)->column('id');
+
+        if ($instanceIds !== []) {
+            Db::table('workflow_tasks')->whereIn('instance_id', $instanceIds)->delete();
+            Db::table('workflow_event_logs')->whereIn('instance_id', $instanceIds)->delete();
+            Db::table('workflow_instances')->whereIn('id', $instanceIds)->delete();
+        }
+
+        Db::table('workflow_definitions')->whereIn('id', $definitionIds)->delete();
     }
 
     /**

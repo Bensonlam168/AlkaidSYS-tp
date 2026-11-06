@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Infrastructure\Workflow;
 
 use Alkaid\Workflow\Engine\Container\WorkflowContainer;
+use Alkaid\Workflow\Engine\Core\ServiceContext;
 use Alkaid\Workflow\Engine\interface\IConfiguration;
 use Alkaid\Workflow\Engine\interface\IProcessEngines;
 use Alkaid\Workflow\Engine\interface\services\IProcessDefineService;
+use Alkaid\Workflow\Engine\interface\services\IProcessInstanceHistoryService;
 use Alkaid\Workflow\Engine\interface\services\IProcessInstanceService;
 use Alkaid\Workflow\Engine\interface\services\IProcessTaskService;
 use Alkaid\Workflow\Engine\Multitenant\TenantContext;
@@ -240,6 +242,36 @@ final class WorkflowEngineBootstrap
     public function taskService(): IProcessTaskService
     {
         return $this->container()->getProcessTaskService();
+    }
+
+    /**
+     * 工作流实例历史（轨迹）服务
+     *
+     * 引擎容器把实现登记在 `IProcessInstanceHistoryService::class` 这个**接口名**下
+     * （见 `WorkflowContainer::buildCoreServices()`），并且**没有**对应的 `getXxx()` 便捷方法，
+     * 因此这里走 `ServiceContext::find()`。必须先 `container()`：`ServiceContext` 的上下文
+     * 是在 `WorkflowContainer::initialize()` 里建立的，没初始化就查只会拿到 null。
+     *
+     * 为什么不在调用点直接 `ServiceContext::find()`：宿主只需要「拿到能用的历史服务」，
+     * 「取不到时怎么报错」这件事应当和其它服务一样集中在这里，而不是散落在服务层。
+     *
+     * @throws RuntimeException 容器里没有可用的历史服务实现
+     */
+    public function historyService(): IProcessInstanceHistoryService
+    {
+        $this->container();
+
+        $service = ServiceContext::find(IProcessInstanceHistoryService::class);
+
+        if (!$service instanceof IProcessInstanceHistoryService) {
+            throw new RuntimeException(sprintf(
+                '工作流引擎装配失败：%s 未注册（实际取到 %s），无法读取流程轨迹',
+                IProcessInstanceHistoryService::class,
+                get_debug_type($service)
+            ));
+        }
+
+        return $service;
     }
 
     /**
