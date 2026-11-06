@@ -35,6 +35,11 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
     use \Tests\Traits\WorkflowFixtureIsolation;
 
     /**
+     * 本用例创建的定义名统一前缀（tearDown 按前缀回收真实库行）
+     */
+    private const DEFINITION_NAME_PREFIX = 'tenant_isolation_wf_';
+
+    /**
      * 测试用户 ID（租户 1 / 租户 2）
      * 使用高位 ID，避免与既有测试数据（<= 101050）或种子数据冲突
      */
@@ -88,6 +93,9 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
 
     protected function tearDown(): void
     {
+        // 回收本用例通过真实 API 创建的定义行（定义控制器已是真库实现）
+        $this->purgeCreatedDefinitions();
+
         // 清空本用例注册的路由中间件，避免污染后续测试套件
         $this->resetRouteMiddlewareQueue();
         $this->resetInMemoryStores();
@@ -95,6 +103,35 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
         $this->clearPermissionCache();
 
         parent::tearDown();
+    }
+
+    /**
+     * 删除本用例通过 API 创建的定义行（按名称前缀圈定）
+     *
+     * 2026 变更：定义控制器已改为真库 + 真引擎，`createDefinitionAsTenant1()` 会真的写库；
+     * 不回收就会在测试库里越积越多，并让「列表基线」类断言逐渐失真。
+     */
+    private function purgeCreatedDefinitions(): void
+    {
+        $definitionIds = Db::table('workflow_definitions')
+            ->whereLike('name', self::DEFINITION_NAME_PREFIX . '%')
+            ->column('id');
+
+        if ($definitionIds === []) {
+            return;
+        }
+
+        // 外键顺序：事件 → 任务 → 触发器 → 实例 → 定义（本用例通常只有定义行）
+        $instanceIds = Db::table('workflow_instances')->whereIn('definition_id', $definitionIds)->column('id');
+
+        if ($instanceIds !== []) {
+            Db::table('workflow_tasks')->whereIn('instance_id', $instanceIds)->delete();
+            Db::table('workflow_event_logs')->whereIn('instance_id', $instanceIds)->delete();
+            Db::table('workflow_instances')->whereIn('id', $instanceIds)->delete();
+        }
+
+        Db::table('workflow_triggers')->whereIn('definition_id', $definitionIds)->delete();
+        Db::table('workflow_definitions')->whereIn('id', $definitionIds)->delete();
     }
 
     /**
@@ -233,14 +270,17 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
 
     /**
      * 以租户 1 身份创建一条工作流定义并返回其 ID
+     *
+     * 2026 变更：定义控制器已改为真库 + 真引擎，返回的是**真实自增主键（int）**，
+     * 不再是 `wf_xxx` 字符串。调用方必须按 int 比较（列表接口回的也是 int）。
      */
-    private function createDefinitionAsTenant1(): string
+    private function createDefinitionAsTenant1(): int
     {
         $response = $this->httpRequest(
             'POST',
             'v1/workflow/definitions',
             [
-                'name' => 'tenant_isolation_wf_' . uniqid(),
+                'name' => self::DEFINITION_NAME_PREFIX . uniqid(),
                 'display_name' => 'Tenant Isolation Workflow',
                 'description' => 'C-7 tenant isolation test',
                 'type' => 'approval',
@@ -260,8 +300,8 @@ class WorkflowTenantIsolationTest extends ThinkPHPTestCase
         $this->assertArrayHasKey('data', $body);
         $this->assertArrayHasKey('id', $body['data']);
 
-        $definitionId = (string) $body['data']['id'];
-        $this->assertNotSame('', $definitionId);
+        $definitionId = (int) $body['data']['id'];
+        $this->assertGreaterThan(0, $definitionId, '创建定义必须返回真实自增主键');
 
         return $definitionId;
     }

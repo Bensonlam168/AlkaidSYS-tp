@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Workflow;
 
-use Alkaid\Workflow\Engine\Definition\WorkflowBuilder;
 use app\constant\ErrorCode;
 use app\controller\ApiController;
 use app\controller\workflow\WorkflowDefinitionController;
@@ -40,12 +39,12 @@ use think\Response;
  *      由 Auth 中间件返回 401/2001，根本到不了控制器；用例 14 因此断言「鉴权层拒绝」，
  *      控制器内的 `<= 0` 守卫保留为纵深防御，其覆盖率由**用例 15**（反射直接调用 helper）提供。
  *
- * 注意：
- *   - 定义 / 触发器控制器**仍是内存 Mock**，对应用例继续用反射播种并在前后清空；
- *   - 实例 / 任务控制器已改为**真库 + 真引擎**，对应用例改为插真数据、断言真库行：
- *     `workflow_tasks` / `workflow_instances` 的 `tenant_id` 都是 `NOT NULL` + 外键，
- *     旧用例靠反射造出来的「tenant_id 为 null 的孤儿记录」在真实库中**不可表示**，
- *     因此这部分断言升级为两条硬防线：「数据库拒绝 NULL」+「跨租户访问 403」。
+ * 注意（2026：四个工作流控制器全部改真库 + 真引擎后）：
+ *   定义 / 触发器控制器也已不再持有内存 Mock 数组，`static $definitions` / `$triggers` 已随实现删除。
+ *   于是**四类资源的口径统一为**：`tenant_id` 都是 `NOT NULL`（+ 外键），
+ *   旧用例靠反射造出来的「tenant_id 为 null 的孤儿记录」在真实库中**不可表示**，
+ *   断言升级为两条硬防线：「数据库拒绝 NULL」+「跨租户访问 403」；
+ *   每个资源另有「同租户仍可访问」与「越权调用零副作用（读库验证）」的正向对照。
  *
  * @package Tests\Feature\Workflow
  */
@@ -132,18 +131,46 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     // =====================================================================
 
     /**
-     * 用例 1（RED）：tenant_id 为 null 的定义，任何租户读取详情都必须被拒绝
+     * 用例 1：跨租户读取定义详情必须被拒绝（403），且「tenant_id 为 NULL 的定义」在库里根本插不进去
      *
-     * 现状缺陷：`$definition->getTenantId() !== null && ...` 让缺失归属的定义直接放行 → 200。
+     * 旧实现是内存对象：测试靠反射注入一个 `tenant_id = null` 的定义，钉住
+     * `$tenantId !== null && $definition->getTenantId() !== null && ...` 里
+     * `isset()`/`!== null` 对 null 放行的 fail-open 分支。
+     * 改成真库后这条路**走不通**：`workflow_definitions.tenant_id` 是 `NOT NULL`，
+     * R13 那类孤儿定义在真实库中**不可表示**。
+     *
+     * 因此断言换成两条**真实存在**的防线，语义比原来更强：
+     *   1. 跨租户读同一条定义 → **403**（业务码也是 403：来自租户归属校验，
+     *      不是权限中间件的 2002，也不是「查不到所以 404」—— 后者会把「不是你的」伪装成「不存在」）；
+     *   2. 数据库直接拒绝 `tenant_id = NULL` 的定义（fail-closed 在 schema 层就成立）。
      */
-    public function testDefinitionDetailIsDeniedForRecordWithoutTenantId(): void
+    public function testDefinitionDetailIsDeniedForForeignTenantAndNullTenantIsRejectedBySchema(): void
     {
-        $definitionId = $this->seedDefinition(null);
+        $definitionId = $this->seedDefinition(1);
 
-        $this->assertReadDeniedForBothTenants(
+        $response = $this->httpRequest(
+            'GET',
             'v1/workflow/definitions/' . $definitionId,
-            'tenant_id 为 null 的工作流定义'
+            [],
+            $this->authHeaders($this->tenant2UserId, 2)
         );
+
+        $this->assertDenied($response, '跨租户读取定义详情必须被拒绝');
+        $this->assertSame(
+            403,
+            (int) (json_decode($response->getContent(), true)['code'] ?? 0),
+            '跨租户读定义的业务码必须是 403（来自租户归属校验），实际响应：' . $response->getContent()
+        );
+
+        // schema 层兜底：tenant_id 为 NULL 的定义行写不进去
+        $this->assertNullTenantInsertIsRejected('workflow_definitions', [
+            'name'         => self::R13_DEFINITION_PREFIX . 'null_tenant_' . uniqid(),
+            'display_name' => 'R13 NULL 租户定义（必须被拒绝）',
+            'type'         => 'approval',
+            'version'      => 1,
+            'status'       => 'draft',
+            'is_active'    => 0,
+        ]);
     }
 
     /**
@@ -169,51 +196,64 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         $body = json_decode($response->getContent(), true);
         $this->assertIsArray($body);
         $this->assertSame(0, $body['code'], '同租户读取定义详情的业务码应为 0，实际响应：' . $response->getContent());
-        $this->assertSame($definitionId, $body['data']['id'], '返回的应是请求的那条定义');
+        // 真库主键是整数（旧 Mock 用字符串 id），断言按真实类型比较
+        $this->assertSame($definitionId, (int) $body['data']['id'], '返回的应是请求的那条定义');
         $this->assertSame(1, $body['data']['tenant_id'], '返回定义的 tenant_id 应为 1');
     }
 
     /**
-     * 用例 3（RED）：tenant_id 为 null 的定义，validate / archive / delete 都必须被拒绝且无副作用
+     * 用例 3：跨租户调用定义的 validate / archive / delete 都必须被拒绝且无副作用
      *
-     * 覆盖 `validateAction()` / `archive()` / `delete()` 三处同样的失效开放分支。
+     * 覆盖 `validateAction()` / `archive()` / `delete()` 三处入口（旧实现里三处都有
+     * 「缺失归属即放行」的同一段失效开放分支）。
+     * 副作用断言读的是**库里的行**，不再是内存对象 —— 越权调用连一个字段都不许改。
      */
-    public function testDefinitionActionEndpointsAreDeniedForRecordWithoutTenantId(): void
+    public function testDefinitionActionEndpointsAreDeniedForForeignTenant(): void
     {
-        $definitionId = $this->seedDefinition(null);
-        $headers = $this->authHeaders($this->tenant1UserId, 1);
+        $definitionId = $this->seedDefinition(1);
+        $headers = $this->authHeaders($this->tenant2UserId, 2);
 
         $this->assertDenied(
             $this->httpRequest('POST', 'v1/workflow/definitions/' . $definitionId . '/validate', [], $headers),
-            'tenant_id 为 null 的定义，validate 必须被拒绝（不得 200）'
+            '跨租户调用 validate 必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('POST', 'v1/workflow/definitions/' . $definitionId . '/archive', [], $headers),
-            'tenant_id 为 null 的定义，archive 必须被拒绝（不得 200）'
+            '跨租户调用 archive 必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('DELETE', 'v1/workflow/definitions/' . $definitionId, [], $headers),
-            'tenant_id 为 null 的定义，delete 必须被拒绝（不得 200）'
+            '跨租户调用 delete 必须被拒绝（不得 200）'
         );
 
         // 副作用断言：定义必须仍在，且状态未被 archive 改写
-        $definition = $this->getStatic(WorkflowDefinitionController::class, 'definitions', $definitionId);
-        $this->assertNotNull($definition, '越权 delete 被拒绝后，定义不应被删除');
-        $this->assertNotSame(
-            'archived',
-            $definition->getStatus(),
+        $definition = Db::table('workflow_definitions')->where('id', $definitionId)->find();
+        $this->assertIsArray($definition, '越权 delete 被拒绝后，定义不应被删除');
+        $this->assertSame(
+            'draft',
+            (string) $definition['status'],
             '越权 archive 被拒绝后，定义状态不应被改写为 archived'
         );
+        $this->assertSame(0, (int) $definition['is_active'], '越权 archive 被拒绝后，is_active 不应被改写');
 
         // 防止修过头：同租户定义仍可正常删除
         $ownDefinitionId = $this->seedDefinition(1);
-        $ownResponse = $this->httpRequest('DELETE', 'v1/workflow/definitions/' . $ownDefinitionId, [], $headers);
+        $ownResponse = $this->httpRequest(
+            'DELETE',
+            'v1/workflow/definitions/' . $ownDefinitionId,
+            [],
+            $this->authHeaders($this->tenant1UserId, 1)
+        );
         $this->assertSame(
             200,
             $ownResponse->getCode(),
             '同租户删除自己的定义应返回 200，实际响应：' . $ownResponse->getContent()
+        );
+        $this->assertNull(
+            Db::table('workflow_definitions')->where('id', $ownDefinitionId)->find(),
+            '同租户删除后，定义行必须从库里消失'
         );
     }
 
@@ -489,17 +529,38 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     // =====================================================================
 
     /**
-     * 用例 11（RED）：tenant_id 为 null 的触发器，任何租户读取详情都必须被拒绝
+     * 用例 11：跨租户读取触发器详情必须被拒绝（403），且 NULL tenant_id 的触发器插不进库
+     *
+     * 与用例 1 同一口径：真库下 `workflow_triggers.tenant_id` 是 `NOT NULL`，
+     * 旧的「孤儿触发器」只能存在于内存数组里。
      */
-    public function testTriggerDetailIsDeniedForRecordWithoutTenantId(): void
+    public function testTriggerDetailIsDeniedForForeignTenantAndNullTenantIsRejectedBySchema(): void
     {
-        $triggerId = 'trig_r13_orphan_' . uniqid();
-        $this->seedTrigger($triggerId, null);
+        $definitionId = $this->seedDefinition(1);
+        $triggerId    = $this->seedTrigger($definitionId, 1);
 
-        $this->assertReadDeniedForBothTenants(
+        $response = $this->httpRequest(
+            'GET',
             'v1/workflow/triggers/' . $triggerId,
-            'tenant_id 为 null 的工作流触发器'
+            [],
+            $this->authHeaders($this->tenant2UserId, 2)
         );
+
+        $this->assertDenied($response, '跨租户读取触发器详情必须被拒绝');
+        $this->assertSame(
+            403,
+            (int) (json_decode($response->getContent(), true)['code'] ?? 0),
+            '跨租户读触发器的业务码必须是 403（来自租户归属校验），实际响应：' . $response->getContent()
+        );
+
+        // schema 层兜底：除 tenant_id 外**全列合法**，命中失败只可能是 tenant_id NOT NULL
+        $this->assertNullTenantInsertIsRejected('workflow_triggers', [
+            'definition_id' => $definitionId,
+            'name'          => 'r13_null_tenant_trigger_' . uniqid(),
+            'type'          => 'manual',
+            'config'        => json_encode([], JSON_UNESCAPED_UNICODE),
+            'is_active'     => 1,
+        ]);
     }
 
     /**
@@ -507,8 +568,8 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
      */
     public function testTriggerDetailIsAllowedForOwnTenantRecord(): void
     {
-        $triggerId = 'trig_r13_own_' . uniqid();
-        $this->seedTrigger($triggerId, 1);
+        $definitionId = $this->seedDefinition(1);
+        $triggerId    = $this->seedTrigger($definitionId, 1);
 
         $response = $this->httpRequest(
             'GET',
@@ -526,46 +587,64 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         $body = json_decode($response->getContent(), true);
         $this->assertIsArray($body);
         $this->assertSame(0, $body['code'], '同租户读取触发器详情的业务码应为 0，实际响应：' . $response->getContent());
-        $this->assertSame($triggerId, $body['data']['id'], '返回的应是请求的那条触发器');
+        // 真库主键是整数（旧 Mock 用字符串 id），断言按真实类型比较
+        $this->assertSame($triggerId, (int) $body['data']['id'], '返回的应是请求的那条触发器');
+        $this->assertSame(1, $body['data']['tenant_id'], '返回触发器的 tenant_id 应为 1');
     }
 
     /**
-     * 用例 13（RED）：tenant_id 为 null 的触发器，disable / logs 都必须被拒绝且无副作用
+     * 用例 13：跨租户调用触发器的 disable / logs 都必须被拒绝且无副作用
      */
-    public function testTriggerActionEndpointsAreDeniedForRecordWithoutTenantId(): void
+    public function testTriggerActionEndpointsAreDeniedForForeignTenant(): void
     {
-        $triggerId = 'trig_r13_action_' . uniqid();
-        $this->seedTrigger($triggerId, null);
-        $headers = $this->authHeaders($this->tenant1UserId, 1);
+        $definitionId = $this->seedDefinition(1);
+        $triggerId    = $this->seedTrigger($definitionId, 1);
+        $headers      = $this->authHeaders($this->tenant2UserId, 2);
 
         $this->assertDenied(
             $this->httpRequest('POST', 'v1/workflow/triggers/' . $triggerId . '/disable', [], $headers),
-            'tenant_id 为 null 的触发器，disable 必须被拒绝（不得 200）'
+            '跨租户 disable 必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('GET', 'v1/workflow/triggers/' . $triggerId . '/logs', [], $headers),
-            'tenant_id 为 null 的触发器，logs 必须被拒绝（不得 200）'
+            '跨租户 logs 必须被拒绝（不得 200）'
         );
 
-        // 副作用断言：触发器状态未被改写
-        $trigger = $this->getStatic(WorkflowTriggerController::class, 'triggers', $triggerId);
-        $this->assertNotNull($trigger, '触发器应仍存在于控制器静态存储中');
+        // 副作用断言：库里的 is_active 未被改写（enabled 仍是 1），且没有多出审计日志
+        $trigger = Db::table('workflow_triggers')->where('id', $triggerId)->find();
+        $this->assertIsArray($trigger, '越权调用后触发器行必须仍然存在');
+        $this->assertSame(1, (int) $trigger['is_active'], '越权 disable 被拒绝后，触发器应仍为 enabled');
+
         $this->assertSame(
-            WorkflowTriggerController::STATUS_ENABLED,
-            $trigger['status'],
-            '越权 disable 被拒绝后，触发器状态应仍为 enabled'
+            0,
+            Db::table('workflow_event_logs')
+                ->whereRaw(
+                    "CAST(JSON_UNQUOTE(JSON_EXTRACT(event_data, '\$.trigger_id')) AS UNSIGNED) = ?",
+                    [$triggerId]
+                )
+                ->count(),
+            '越权调用不得写入任何触发器审计日志'
         );
 
-        // 防止修过头：同租户触发器仍可正常禁用
-        $ownTriggerId = 'trig_r13_action_own_' . uniqid();
-        $this->seedTrigger($ownTriggerId, 1);
-        $ownResponse = $this->httpRequest('POST', 'v1/workflow/triggers/' . $ownTriggerId . '/disable', [], $headers);
+        // 防止修过头：同租户触发器仍可正常禁用，且日志真的落库
+        $ownDefinitionId = $this->seedDefinition(1);
+        $ownTriggerId    = $this->seedTrigger($ownDefinitionId, 1);
+        $ownResponse     = $this->httpRequest(
+            'POST',
+            'v1/workflow/triggers/' . $ownTriggerId . '/disable',
+            [],
+            $this->authHeaders($this->tenant1UserId, 1)
+        );
         $this->assertSame(
             200,
             $ownResponse->getCode(),
             '同租户禁用自己的触发器应返回 200，实际响应：' . $ownResponse->getContent()
         );
+
+        $disabled = Db::table('workflow_triggers')->where('id', $ownTriggerId)->find();
+        $this->assertIsArray($disabled);
+        $this->assertSame(0, (int) $disabled['is_active'], '禁用后 is_active 必须落库为 0');
     }
 
     // =====================================================================
@@ -600,8 +679,8 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         $foreignTaskId = $this->seedTask(2);
         $ownedTaskId   = $this->seedTask(1);
 
-        // 对象形态（Definition）：内存 Mock 控制器，同样播种一条定义，证明守卫对所有调用形态生效
-        $orphanDefinitionId = $this->seedDefinition(null);
+        // 对象形态（Definition）：真实库里的定义行（控制器已是真库+真引擎，不再是内存对象）
+        $orphanDefinitionId = $this->seedDefinition(1);
 
         // 手工签发 tenant_id = 0 的令牌：签发侧已不可产生此类 token，此处验证校验侧兜底
         $headers = $this->rawAuthHeaders($this->signZeroTenantAccessToken($this->tenant1UserId));
@@ -731,6 +810,10 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     /**
      * 断言详情端点对「租户 1 / 租户 2」两个上下文都被拒绝（403/404，绝不是 200）
      *
+     * 说明：定义与触发器改真库后，R13 的「缺失归属」形态在 schema 层已不可表示
+     * （`tenant_id` 是 NOT NULL），因此当前没有用例需要「两个租户都无权」的场景；
+     * 保留本辅助供将来出现「双方都无权访问」的资源时复用。
+     *
      * @param string $uri       请求 URI
      * @param string $resourceLabel 资源描述（用于断言消息）
      */
@@ -772,16 +855,62 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种一条工作流定义（tenant_id 允许为 null，用于钉住失效开放分支），返回其 ID
+     * 播种一条工作流定义（**真库**），返回其主键
+     *
+     * 2026 变更：`WorkflowDefinitionController` 已由内存 Mock 改为真库 + 真引擎，
+     * 反射往 `static $definitions` 里塞对象的路子不存在了（Mock 也证明不了租户隔离真的生效）。
+     * 现在统一往 `workflow_definitions` 插一行 draft，`nodes_config` 是一张最小合法图，
+     * 便于 validate 端点真的跑一遍引擎校验。
+     *
+     * @param int $tenantId 归属租户（NULL 在真库中不可表示，见 assertNullTenantInsertIsRejected）
      */
-    private function seedDefinition(?int $tenantId): string
+    private function seedDefinition(int $tenantId): int
     {
-        $builder = WorkflowBuilder::create('r13_wf_' . uniqid(), ['tenant_id' => $tenantId]);
-        $definition = $builder->getDefinition();
+        $name = self::R13_DEFINITION_PREFIX . uniqid();
+        $now  = date('Y-m-d H:i:s');
 
-        $this->putStatic(WorkflowDefinitionController::class, 'definitions', $definition->getId(), $definition);
+        return (int) Db::table('workflow_definitions')->insertGetId([
+            'tenant_id'    => $tenantId,
+            'name'         => $name,
+            'display_name' => 'R13 租户归属测试定义',
+            'description'  => 'R13 测试夹具（用例结束后按前缀删除）',
+            'type'         => 'approval',
+            'version'      => 1,
+            'status'       => 'draft',
+            'is_active'    => 0,
+            'nodes_config' => json_encode($this->minimalGraph($name), JSON_UNESCAPED_UNICODE),
+            'created_at'   => $now,
+            'updated_at'   => $now,
+            'created_by'   => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
+            'updated_by'   => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
+        ]);
+    }
 
-        return $definition->getId();
+    /**
+     * 最小合法 LogicFlow 图：start → apply → end
+     *
+     * @return array<string, mixed>
+     */
+    private function minimalGraph(string $name): array
+    {
+        return [
+            'name'  => $name,
+            'type'  => 'approval',
+            'nodes' => [
+                ['id' => 'start', 'type' => 'ingenious:start', 'x' => 200, 'y' => 160, 'text' => ['value' => '开始'],
+                    'properties' => ['_alkaid_node_class' => 'StartNode', '_alkaid_node_type' => 'start']],
+                ['id' => 'apply', 'type' => 'ingenious:task', 'x' => 420, 'y' => 160, 'text' => ['value' => '填写申请'],
+                    'properties' => ['_alkaid_node_class' => 'TaskNode', '_alkaid_node_type' => 'task']],
+                ['id' => 'end', 'type' => 'ingenious:end', 'x' => 640, 'y' => 160, 'text' => ['value' => '结束'],
+                    'properties' => ['_alkaid_node_class' => 'EndNode', '_alkaid_node_type' => 'end']],
+            ],
+            'edges' => [
+                ['id' => 'flow_start_apply', 'type' => 'polyline', 'sourceNodeId' => 'start',
+                    'targetNodeId' => 'apply', 'text' => ['value' => ''], 'properties' => ['_alkaid_type' => 'sequence']],
+                ['id' => 'flow_apply_end', 'type' => 'polyline', 'sourceNodeId' => 'apply',
+                    'targetNodeId' => 'end', 'text' => ['value' => ''], 'properties' => ['_alkaid_type' => 'sequence']],
+            ],
+        ];
     }
 
     /**
@@ -848,26 +977,14 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     /**
      * 播种一条工作流定义行（**真库**，只作为实例的外键目标，不参与执行）
      *
+     * 与 {@see self::seedDefinition()} 等价，保留独立名字是为了让「这里只当外键目标用」
+     * 的意图在调用处可读。
+     *
      * @param int $tenantId 归属租户
      */
     private function seedDefinitionRow(int $tenantId): int
     {
-        $now = date('Y-m-d H:i:s');
-
-        return (int) Db::table('workflow_definitions')->insertGetId([
-            'tenant_id'        => $tenantId,
-            'name'             => self::R13_DEFINITION_PREFIX . uniqid(),
-            'display_name'     => 'R13 租户归属测试定义',
-            'description'      => 'R13 测试夹具（用例结束后删除）',
-            'type'             => 'approval',
-            'category'         => 'finance',
-            'icon'             => 'r13-icon',
-            'version'          => 1,
-            'status'           => 'draft',
-            'is_active'        => 0,
-            'created_at'       => $now,
-            'updated_at'       => $now,
-        ]);
+        return $this->seedDefinition($tenantId);
     }
 
     /**
@@ -876,19 +993,23 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
      * 这是 R13 的**最底层**防线：控制器的 `isset()` 判断可以被改错，但 schema 层的
      * `NOT NULL` 无法被绕过 —— 每条写入路径最终都要撞上它。
      *
-     * 注意：这里刻意用最小列集触发同样的约束失败，只验证「NULL 被拒绝」这一件事，
-     * 不验证别的列是否必填（那与 R13 无关）。
+     * 注意：不传 `$row` 时只给最小列集，失败原因可能是任何约束（对 workflow_tasks /
+     * workflow_instances 这类「其余列本就必填」的表够用）。**要精确定位到 tenant_id** 时，
+     * 用 `$row` 传入「除 tenant_id 外全列合法」的行：此时插入若仍失败，原因只可能是
+     * `tenant_id` 的 NOT NULL 约束。
      *
-     * @param string $table 表名（workflow_tasks / workflow_instances）
+     * @param string               $table 表名（workflow_tasks / workflow_instances / workflow_definitions / workflow_triggers）
+     * @param array<string, mixed> $row   除 tenant_id 之外应当合法的列
      */
-    private function assertNullTenantInsertIsRejected(string $table): void
+    private function assertNullTenantInsertIsRejected(string $table, array $row = []): void
     {
         $rejected = false;
 
         try {
-            // 只给 tenant_id = NULL 与最小列：无论失败原因是 NOT NULL 还是别的约束，
-            // 只要 SQL 没有「成功插入」就已达到本断言目的
-            Db::table($table)->insert(['tenant_id' => null, 'created_at' => date('Y-m-d H:i:s')]);
+            Db::table($table)->insert($row + [
+                'tenant_id'  => null,
+                'created_at' => date('Y-m-d H:i:s'),
+            ]);
         } catch (\Throwable) {
             $rejected = true;
         }
@@ -897,59 +1018,37 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
             $rejected,
             $table . '.tenant_id 为 NOT NULL，写入 NULL 必须被数据库拒绝（R13 的孤儿数据在真库中不可表示）'
         );
+
+        // 二次确认：确实没有落库任何一行（避免「插进去了但报了别的错」这种假绿）
+        $this->assertSame(
+            0,
+            Db::table($table)->whereNull('tenant_id')->count(),
+            $table . ' 中不得存在 tenant_id 为 NULL 的行'
+        );
     }
 
     /**
-     * 播种一条工作流触发器（状态 enabled，便于验证 disable 的副作用）
+     * 播种一条工作流触发器（**真库**，状态 enabled，便于验证 disable 的副作用）
+     *
+     * @param int $definitionId 所属定义（必须与 tenant_id 同租户，外键才成立）
+     * @param int $tenantId     归属租户
+     * @return int 触发器主键
      */
-    private function seedTrigger(string $triggerId, ?int $tenantId): void
+    private function seedTrigger(int $definitionId, int $tenantId): int
     {
-        $now = (new \DateTimeImmutable())->format('c');
+        $now = date('Y-m-d H:i:s');
 
-        $this->putStatic(WorkflowTriggerController::class, 'triggers', $triggerId, [
-            'id' => $triggerId,
-            'definition_id' => 'def_' . $triggerId,
-            'name' => 'R13 租户归属测试触发器',
-            'description' => '',
-            'type' => WorkflowTriggerController::TYPE_MANUAL,
-            'config' => [],
-            'status' => WorkflowTriggerController::STATUS_ENABLED,
-            'webhook_key' => null,
-            'webhook_url' => null,
-            'execution_count' => 0,
-            'last_execution_at' => null,
-            'last_execution_status' => null,
-            'created_by' => (string) $this->tenant1UserId,
-            'created_at' => $now,
-            'updated_at' => $now,
-            'tenant_id' => $tenantId,
+        return (int) Db::table('workflow_triggers')->insertGetId([
+            'definition_id' => $definitionId,
+            'tenant_id'     => $tenantId,
+            'name'          => 'r13_trigger_' . uniqid(),
+            'type'          => WorkflowTriggerController::TYPE_MANUAL,
+            'config'        => json_encode([], JSON_UNESCAPED_UNICODE),
+            'is_active'     => 1,
+            'created_at'    => $now,
+            'updated_at'    => $now,
+            'created_by'    => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
         ]);
-    }
-
-    /**
-     * 向控制器进程内静态存储写入一条记录
-     */
-    private function putStatic(string $class, string $property, string $key, mixed $value): void
-    {
-        $ref = new \ReflectionProperty($class, $property);
-        $ref->setAccessible(true);
-
-        $rows = (array) $ref->getValue();
-        $rows[$key] = $value;
-        $ref->setValue(null, $rows);
-    }
-
-    /**
-     * 从控制器进程内静态存储读取一条记录
-     */
-    private function getStatic(string $class, string $property, string $key): mixed
-    {
-        $ref = new \ReflectionProperty($class, $property);
-        $ref->setAccessible(true);
-
-        $rows = (array) $ref->getValue();
-
-        return $rows[$key] ?? null;
     }
 
     /**
@@ -1106,7 +1205,10 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     }
 
     /**
-     * 清空四个工作流控制器的进程内静态存储
+     * 清空仍保留内存静态存储的工作流控制器（实例 / 任务控制器）
+     *
+     * 定义与触发器控制器改真库后已无这些静态属性，`property_exists()` 会跳过它们；
+     * 保留本方法是为了覆盖尚未改造的两个控制器，避免用例间串味。
      */
     private function resetInMemoryStores(): void
     {
@@ -1290,12 +1392,36 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
 
     /**
      * 删除本类播种的业务数据（按定义名前缀圈定，绝不按 ID 区间乱删）
+     *
+     * 外键顺序：事件 → 任务 → 触发器 → 实例 → 定义。
+     * 触发器有两条清理路径：
+     *   ① `definition_id` 落在本次圈定的定义里（正常路径）；
+     *   ② `name LIKE 'r13_trigger_%'`（兜底：万一某条触发器被挪到别的定义下）。
      */
     private function purgeWorkflowBusinessFixtures(): void
     {
         $definitionIds = Db::table('workflow_definitions')
             ->whereLike('name', self::R13_DEFINITION_PREFIX . '%')
             ->column('id');
+
+        $triggerIds = $definitionIds === []
+            ? []
+            : Db::table('workflow_triggers')->whereIn('definition_id', $definitionIds)->column('id');
+
+        $orphanTriggerIds = Db::table('workflow_triggers')->whereLike('name', 'r13_trigger_%')->column('id');
+        $triggerIds       = array_values(array_unique(array_map('intval', array_merge($triggerIds, $orphanTriggerIds))));
+
+        if ($triggerIds !== []) {
+            // 触发器管理事件：instance_id 为 NULL，只能靠 event_data.trigger_id 关联
+            Db::table('workflow_event_logs')
+                ->whereRaw(
+                    "CAST(JSON_UNQUOTE(JSON_EXTRACT(event_data, '\$.trigger_id')) AS UNSIGNED) IN ("
+                    . implode(',', $triggerIds) . ')'
+                )
+                ->delete();
+
+            Db::table('workflow_triggers')->whereIn('id', $triggerIds)->delete();
+        }
 
         if ($definitionIds === []) {
             return;

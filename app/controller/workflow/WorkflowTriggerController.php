@@ -5,43 +5,78 @@ declare(strict_types=1);
 namespace app\controller\workflow;
 
 use app\controller\ApiController;
-use think\App;
-use think\Request;
+use app\Request;
+use Closure;
+use Infrastructure\Workflow\Exception\WorkflowActionException;
+use Infrastructure\Workflow\Service\WorkflowTriggerService;
+use think\facade\Log;
 use think\Response;
-use Alkaid\Workflow\Engine\Triggers\TriggerManager;
-use Alkaid\Workflow\Engine\Triggers\TriggerContext;
+use Throwable;
 
 /**
  * Workflow Trigger API Controller | 工作流触发器 API 控制器
  *
- * RESTful API for workflow trigger management.
- * 工作流触发器管理的 RESTful API。
+ * ## 本控制器的职责（分层约定）
  *
- * Endpoints:
- * - GET    /workflow/triggers                      - List triggers | 列出触发器
- * - GET    /workflow/triggers/types                - Get available trigger types | 获取可用触发器类型
- * - GET    /workflow/triggers/{id}                 - Get trigger details | 获取触发器详情
- * - POST   /workflow/triggers                      - Create trigger | 创建触发器
- * - PUT    /workflow/triggers/{id}                 - Update trigger | 更新触发器
- * - DELETE /workflow/triggers/{id}                 - Delete trigger | 删除触发器
- * - POST   /workflow/triggers/{id}/enable          - Enable trigger | 启用触发器
- * - POST   /workflow/triggers/{id}/disable         - Disable trigger | 禁用触发器
- * - POST   /workflow/triggers/{id}/test            - Test trigger | 测试触发器
- * - POST   /workflow/triggers/webhook/{key}        - Webhook endpoint | Webhook 端点
- * - GET    /workflow/triggers/{id}/logs            - Get trigger logs | 获取触发器日志
+ * 只做四件事：**取参 → 参数校验 → 调 Service → 包统一响应**。
+ * 归属校验、配置校验、引擎调用、留痕、负载映射全部在
+ * `Infrastructure\Workflow\Service\WorkflowTriggerService`，
+ * 数据访问在 `Infrastructure\Workflow\Repository\*`。控制器里不出现 SQL。
+ *
+ * Endpoints（11 个动作 + 1 个受保护的状态切换助手 `setTriggerStatus()`）：
+ * - GET    /v1/workflow/triggers                - index    列出触发器
+ * - GET    /v1/workflow/triggers/types          - types    获取可用触发器类型（静态元数据）
+ * - GET    /v1/workflow/triggers/{id}           - read     触发器详情（含 recent_logs）
+ * - POST   /v1/workflow/triggers                - save     创建触发器
+ * - PUT    /v1/workflow/triggers/{id}           - update   更新触发器
+ * - DELETE /v1/workflow/triggers/{id}           - delete   删除触发器
+ * - POST   /v1/workflow/triggers/{id}/enable    - enable   启用触发器
+ * - POST   /v1/workflow/triggers/{id}/disable   - disable  禁用触发器
+ * - POST   /v1/workflow/triggers/{id}/test      - test     测试触发器
+ * - GET    /v1/workflow/triggers/{id}/logs      - logs     触发器日志
+ * - ANY    /v1/workflow/triggers/webhook/{key}  - webhook  外部回调入口（无 Auth）
+ *
+ * ## 与旧实现的关系（Mock → 真库/引擎）
+ *
+ * 旧版本是 `protected static array $triggers` / `$triggerLogs` 的内存 Mock，并依赖一批
+ * **库里并不存在的列**（`description` / `status` / `webhook_key` / `execution_count` /
+ * `last_execution_*`）。真库只有
+ * `id / definition_id / tenant_id / name / type / config / is_active / created_at / updated_at / created_by`。
+ *
+ * | 端点 | 旧（Mock） | 新（真库 / 引擎） |
+ * | ---- | ---------- | ----------------- |
+ * | `index` | 内存过滤 + `usort` | `workflow_triggers` 查询 + 执行统计从事件表派生 |
+ * | `types` | 静态数组 | **不变**（纯静态元数据 + 语言包，无需落库） |
+ * | `read` | 内存对象 + 内存日志 | 库行 + `workflow_event_logs` 最近 10 条 |
+ * | `save` | 塞数组、随机 `trig_xxx` | 插真行；`definition_id` 必须是本租户的数字主键；webhook 生成真实 key |
+ * | `update` | 就地改字段 | 更新真行 + 引擎 `validateConfig()` 复校 |
+ * | `delete` | `unset` | 硬删（触发器没有下游级联数据），日志保留 |
+ * | `enable`/`disable` | 改 `status` 字段 | 改 `is_active`（1/0）+ 留痕 |
+ * | `test` | 假 `would_trigger` | 真注册到 `TriggerManager` + 真 `shouldTrigger()`；非 dry-run 真启动实例 |
+ * | `webhook` | 生成假 `inst_xxx` | 真校验（方法/IP/签名）→ `WorkflowInstanceService::start()` 真实例 |
+ * | `logs` | 内存数组 | `workflow_event_logs` 真行（`event_data.trigger_id` 归属） |
+ *
+ * ## webhook 为什么没有 Auth
+ *
+ * 外部回调不可能带 JWT。鉴权靠 ① 路径里的 `webhook_key`（32 位十六进制）；
+ * ② `config.secret` 的 `X-Webhook-Signature`（HMAC-SHA256 over **raw body**）；
+ * ③ 可选 `allowed_ips` / `http_methods` 白名单。租户上下文来自全局 `TenantIdentify`
+ * （`X-Tenant-ID` 或 `DEFAULT_TENANT_ID`）—— **绝不跨租户搜 key**。
  *
  * @package app\controller\workflow
  */
 class WorkflowTriggerController extends ApiController
 {
     /**
-     * Trigger status constants
+     * Trigger status constants | 触发器状态常量
+     *
+     * 与库里的 `is_active` 一一对应：`enabled` ⇄ `1`，`disabled` ⇄ `0`。
      */
     public const STATUS_ENABLED = 'enabled';
     public const STATUS_DISABLED = 'disabled';
 
     /**
-     * Trigger type constants
+     * Trigger type constants | 触发器类型常量
      */
     public const TYPE_MANUAL = 'manual';
     public const TYPE_WEBHOOK = 'webhook';
@@ -49,120 +84,59 @@ class WorkflowTriggerController extends ApiController
     public const TYPE_DATA_EVENT = 'data_event';
 
     /**
-     * In-memory storage for demo
-     *
-     * @var array
+     * 应用服务（惰性构造）
      */
-    protected static array $triggers = [];
-
-    /**
-     * Trigger logs storage
-     *
-     * @var array
-     */
-    protected static array $triggerLogs = [];
-
-    /**
-     * TriggerManager instance
-     *
-     * @var TriggerManager|null
-     */
-    protected ?TriggerManager $triggerManager = null;
-
-    /**
-     * Constructor
-     */
-    public function __construct(App $app)
-    {
-        parent::__construct($app);
-        $this->triggerManager = new TriggerManager();
-    }
+    private ?WorkflowTriggerService $triggerService = null;
 
     /**
      * List triggers | 列出触发器
      *
-     * GET /workflow/triggers
+     * GET /v1/workflow/triggers
      *
      * Query Parameters:
-     * - page: int
-     * - page_size: int
-     * - definition_id: string (filter by workflow definition)
-     * - type: string (manual|webhook|schedule|data_event)
-     * - status: string (enabled|disabled)
+     * - page: int（默认 1）
+     * - page_size: int（默认 20，上限 100）
+     * - definition_id: int（按定义筛选）
+     * - type: string（manual|webhook|schedule|data_event|message_event）
+     * - status: string（enabled|disabled；落库列是 `is_active`）
+     * - name: string（模糊匹配）
      *
-     * @param Request $request
-     * @return Response
+     * 每条记录都带**派生**的 `execution_count` / `last_execution_at` /
+     * `last_execution_status`（来源是 `workflow_event_logs`，不是计数列）。
      */
     public function index(Request $request): Response
     {
-        $params = $request->get();
-        $page = (int)($params['page'] ?? 1);
-        $pageSize = (int)($params['page_size'] ?? 20);
+        $params   = $request->get();
+        $page     = (int) ($params['page'] ?? 1);
+        $pageSize = (int) ($params['page_size'] ?? 20);
 
-        // Validate pagination
-        $paginationValidation = $this->validatePagination($page, $pageSize);
-        if (!$paginationValidation['valid']) {
-            return $this->validationError($paginationValidation['errors']);
+        $pagination = $this->validatePagination($page, $pageSize);
+
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
         }
 
-        // Get tenant ID
         $tenantId = $request->tenantId();
 
-        // Filter triggers
-        $allTriggers = array_values(self::$triggers);
+        return $this->respond(function () use ($tenantId, $params, $page, $pageSize): Response {
+            $result = $this->service()->paginate($tenantId, [
+                'definition_id' => $params['definition_id'] ?? null,
+                'type'          => $params['type'] ?? null,
+                'status'        => $params['status'] ?? null,
+                'name'          => $params['name'] ?? null,
+            ], $page, $pageSize);
 
-        // Apply tenant filter
-        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_triggers.tenant_id` 是 NOT NULL，
-        // 不存在「全局触发器」，原实现的 `|| (... ?? null) === null` 是死分支，
-        // 却会让「缺少 tenant_id 的脏数据」对所有租户可见（fail-open）。
-        // 注：`app\Request::tenantId()` 返回 int（恒 >= 1），故不再需要 null 包裹判断。
-        $allTriggers = array_filter($allTriggers, fn ($trigger) => ($trigger['tenant_id'] ?? null) === $tenantId);
-
-        // Apply type filter
-        if (!empty($params['type'])) {
-            $allTriggers = array_filter(
-                $allTriggers,
-                fn ($trigger) =>
-                $trigger['type'] === $params['type']
-            );
-        }
-
-        // Apply status filter
-        if (!empty($params['status'])) {
-            $allTriggers = array_filter(
-                $allTriggers,
-                fn ($trigger) =>
-                $trigger['status'] === $params['status']
-            );
-        }
-
-        // Apply definition filter
-        if (!empty($params['definition_id'])) {
-            $allTriggers = array_filter(
-                $allTriggers,
-                fn ($trigger) =>
-                $trigger['definition_id'] === $params['definition_id']
-            );
-        }
-
-        // Re-index and sort
-        $allTriggers = array_values($allTriggers);
-        usort($allTriggers, fn ($a, $b) => strtotime($b['created_at']) - strtotime($a['created_at']));
-
-        $total = count($allTriggers);
-        $offset = ($page - 1) * $pageSize;
-        $list = array_slice($allTriggers, $offset, $pageSize);
-
-        return $this->paginate($list, $total, $page, $pageSize);
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
+        });
     }
 
     /**
      * Get available trigger types | 获取可用触发器类型
      *
-     * GET /workflow/triggers/types
+     * GET /v1/workflow/triggers/types
      *
-     * @param Request $request
-     * @return Response
+     * 纯静态元数据（类型 + 配置 JSON Schema），**不读库**：
+     * 这份 schema 是「前端表单怎么画」的唯一来源，与具体触发器实例无关。
      */
     public function types(Request $request): Response
     {
@@ -236,187 +210,115 @@ class WorkflowTriggerController extends ApiController
     /**
      * Get trigger details | 获取触发器详情
      *
-     * GET /workflow/triggers/{id}
+     * GET /v1/workflow/triggers/{id}
      *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * 额外带 `recent_logs`（最近 10 条，时间正序）—— 与旧契约字段名一致。
      */
     public function read(string $id, Request $request): Response
     {
-        $trigger = self::$triggers[$id] ?? null;
+        $tenantId  = $request->tenantId();
+        $triggerId = $id;
 
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.trigger_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($trigger['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        // Include recent logs
-        $trigger['recent_logs'] = array_slice(self::$triggerLogs[$id] ?? [], -10);
-
-        return $this->success($trigger);
+        return $this->respond(function () use ($tenantId, $triggerId): Response {
+            return $this->success($this->service()->detail($tenantId, $this->parseId($triggerId)));
+        });
     }
 
     /**
      * Create trigger | 创建触发器
      *
-     * POST /workflow/triggers
+     * POST /v1/workflow/triggers
      *
      * Request Body:
      * {
-     *   "definition_id": "wf_xxx",
-     *   "name": "My Trigger",
-     *   "type": "webhook|manual|schedule|data_event",
-     *   "config": {...},
-     *   "enabled": true
+     *   "definition_id": 123,               // 必填，**本租户的数字主键**（旧 `wf_xxx` 字符串不再接受）
+     *   "name": "报销回调",                  // 必填，租户内唯一（`uk_tenant_name`）
+     *   "type": "webhook",
+     *   "config": {...},                    // 引擎配置；`config._alkaid_meta` 由服务独占维护
+     *   "description": "...",               // 可选，存进 `config._alkaid_meta.description`
+     *   "enabled": true,                    // 可选，默认 true → `is_active = 1`
+     *   "webhook_key": "..."                // 可选（仅 webhook），不合法/缺省时自动生成
      * }
-     *
-     * @param Request $request
-     * @return Response
      */
     public function save(Request $request): Response
     {
-        $data = $request->post();
+        // `post()` 在「请求体缺失 / 非 JSON」时返回 null，统一折成空数组再交给服务层校验
+        $data     = $request->post();
+        $data     = is_array($data) ? $data : [];
+        $tenantId = $request->tenantId();
+        $userId   = $request->userId();
 
-        // Validate required fields
-        $errors = $this->validateTriggerData($data);
-        if (!empty($errors)) {
-            return $this->validationError($errors);
+        // `created_by` 带 `users.id` 外键：系统身份无法表示
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Get tenant ID
-        $tenantId = $request->tenantId();
-        $userId = $request->userId() ?? 'system';
-
-        // Generate trigger ID and webhook key
-        $triggerId = 'trig_' . uniqid();
-        $webhookKey = bin2hex(random_bytes(16));
-
-        // Create trigger
-        $trigger = [
-            'id' => $triggerId,
-            'definition_id' => $data['definition_id'],
-            'name' => $data['name'],
-            'description' => $data['description'] ?? '',
-            'type' => $data['type'],
-            'config' => $data['config'] ?? [],
-            'status' => ($data['enabled'] ?? true) ? self::STATUS_ENABLED : self::STATUS_DISABLED,
-            'webhook_key' => $data['type'] === self::TYPE_WEBHOOK ? $webhookKey : null,
-            'webhook_url' => $data['type'] === self::TYPE_WEBHOOK
-                ? "/workflow/triggers/webhook/{$webhookKey}"
-                : null,
-            'execution_count' => 0,
-            'last_execution_at' => null,
-            'last_execution_status' => null,
-            'created_by' => $userId,
-            'created_at' => (new \DateTimeImmutable())->format('c'),
-            'updated_at' => (new \DateTimeImmutable())->format('c'),
-            'tenant_id' => $tenantId,
-        ];
-
-        // Store trigger
-        self::$triggers[$triggerId] = $trigger;
-
-        // Add log entry
-        $this->addTriggerLog($triggerId, 'CREATED', $userId, ['config' => $data['config'] ?? []]);
-
-        return $this->success($trigger, $this->langService->trans('workflow.trigger_created'), 0, 201);
+        return $this->respond(function () use ($tenantId, $userId, $data): Response {
+            return $this->success(
+                $this->service()->create($tenantId, $userId, $data),
+                $this->langService->trans('workflow.trigger_created'),
+                0,
+                201
+            );
+        });
     }
 
     /**
      * Update trigger | 更新触发器
      *
-     * PUT /workflow/triggers/{id}
+     * PUT /v1/workflow/triggers/{id}
      *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * 注意两处真校验（旧 Mock 都没有）：
+     * 1. 改名会检查本租户内唯一（并发靠 `uk_tenant_name` 兜底）；
+     * 2. 改 `type` 或 `config` 都会重新跑引擎的 `validateConfig()`
+     *    —— 否则把 manual 改成 schedule 而配置里没有 cron，会造出一条永不触发的触发器。
      */
     public function update(string $id, Request $request): Response
     {
-        $trigger = self::$triggers[$id] ?? null;
+        $tenantId  = $request->tenantId();
+        $triggerId = $id;
+        $data      = $request->put();
+        $data      = is_array($data) ? $data : [];
+        $userId    = $request->userId();
 
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.trigger_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($trigger['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $data = $request->put();
-        $userId = $request->userId() ?? 'system';
-
-        // Update allowed fields
-        if (isset($data['name'])) {
-            $trigger['name'] = $data['name'];
-        }
-        if (isset($data['description'])) {
-            $trigger['description'] = $data['description'];
-        }
-        if (isset($data['config'])) {
-            $trigger['config'] = $data['config'];
-        }
-        if (isset($data['enabled'])) {
-            $trigger['status'] = $data['enabled'] ? self::STATUS_ENABLED : self::STATUS_DISABLED;
-        }
-
-        $trigger['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$triggers[$id] = $trigger;
-
-        // Add log entry
-        $this->addTriggerLog($id, 'UPDATED', $userId, ['changes' => $data]);
-
-        return $this->success($trigger, $this->langService->trans('workflow.trigger_updated'));
+        return $this->respond(function () use ($tenantId, $userId, $triggerId, $data): Response {
+            return $this->success(
+                $this->service()->update($tenantId, $userId, $this->parseId($triggerId), $data),
+                $this->langService->trans('workflow.trigger_updated')
+            );
+        });
     }
 
     /**
      * Delete trigger | 删除触发器
      *
-     * DELETE /workflow/triggers/{id}
+     * DELETE /v1/workflow/triggers/{id}
      *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * 硬删：触发器没有下游级联数据（实例挂在**定义**上，不挂触发器）。
+     * 历史日志保留（审计需要「这个入口曾经存在过」），只是本资源的 `logs` 端点之后会 404。
      */
     public function delete(string $id, Request $request): Response
     {
-        $trigger = self::$triggers[$id] ?? null;
+        $tenantId  = $request->tenantId();
+        $triggerId = $id;
+        $userId    = $request->userId();
 
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.trigger_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($trigger['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        unset(self::$triggers[$id]);
-        unset(self::$triggerLogs[$id]);
-
-        return $this->success(null, $this->langService->trans('workflow.trigger_deleted'));
+        return $this->respond(function () use ($tenantId, $userId, $triggerId): Response {
+            return $this->success(
+                $this->service()->delete($tenantId, $userId, $this->parseId($triggerId)),
+                $this->langService->trans('workflow.trigger_deleted')
+            );
+        });
     }
 
     /**
      * Enable trigger | 启用触发器
      *
-     * POST /workflow/triggers/{id}/enable
-     *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * POST /v1/workflow/triggers/{id}/enable
      */
     public function enable(string $id, Request $request): Response
     {
@@ -426,11 +328,7 @@ class WorkflowTriggerController extends ApiController
     /**
      * Disable trigger | 禁用触发器
      *
-     * POST /workflow/triggers/{id}/disable
-     *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * POST /v1/workflow/triggers/{id}/disable
      */
     public function disable(string $id, Request $request): Response
     {
@@ -440,470 +338,211 @@ class WorkflowTriggerController extends ApiController
     /**
      * Test trigger | 测试触发器
      *
-     * POST /workflow/triggers/{id}/test
+     * POST /v1/workflow/triggers/{id}/test
      *
      * Request Body:
      * {
      *   "test_data": {...},
-     *   "dry_run": true
+     *   "dry_run": true          // 默认 true
      * }
      *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * `dry_run=false` 且条件满足 → **真启动一个实例**并返回真实 `instance_id`；
+     * 若此时触发器是禁用的 → 400 `trigger_disabled`（不是「测试失败」，而是「它本来就不会执行」）。
      */
     public function test(string $id, Request $request): Response
     {
-        $trigger = self::$triggers[$id] ?? null;
+        $tenantId  = $request->tenantId();
+        $triggerId = $id;
+        $data      = $request->post();
+        $data      = is_array($data) ? $data : [];
+        $userId    = $request->userId();
 
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.trigger_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($trigger['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $data = $request->post();
-        $testData = $data['test_data'] ?? [];
-        $dryRun = $data['dry_run'] ?? true;
-        $userId = $request->userId() ?? 'system';
-
-        try {
-            // Create test context
-            $context = new TriggerContext(
-                $trigger['type'],
-                $trigger['definition_id'],
-                $testData,
-                $tenantId,
-                $userId
+        return $this->respond(function () use ($tenantId, $userId, $triggerId, $data): Response {
+            return $this->success(
+                $this->service()->test($tenantId, $userId, $this->parseId($triggerId), $data)
             );
-
-            // Validate the trigger configuration
-            $triggerInstance = $this->triggerManager->getTriggerType($trigger['type']);
-            if ($triggerInstance === null) {
-                return $this->error(
-                    $this->langService->trans('workflow.unknown_trigger_type'),
-                    400,
-                    ['type' => $trigger['type']],
-                    400
-                );
-            }
-
-            // Validate configuration
-            $validationResult = $triggerInstance->validateConfig($trigger['config']);
-            if (!$validationResult['valid']) {
-                return $this->error(
-                    $this->langService->trans('workflow.trigger_config_invalid'),
-                    400,
-                    ['validation_errors' => $validationResult['errors']],
-                    400
-                );
-            }
-
-            // Check conditions
-            $conditionsMet = $triggerInstance->checkConditions($context, $trigger['config']);
-
-            // Build test result
-            $result = [
-                'trigger_id' => $id,
-                'trigger_type' => $trigger['type'],
-                'test_data' => $testData,
-                'dry_run' => $dryRun,
-                'validation' => [
-                    'config_valid' => true,
-                    'conditions_met' => $conditionsMet,
-                ],
-                'would_trigger' => $conditionsMet,
-                'message' => $conditionsMet
-                    ? $this->langService->trans('workflow.trigger_test_would_fire')
-                    : $this->langService->trans('workflow.trigger_test_would_not_fire'),
-            ];
-
-            // If not dry run and conditions met, actually trigger
-            if (!$dryRun && $conditionsMet && $trigger['status'] === self::STATUS_ENABLED) {
-                $result['triggered'] = true;
-                $result['instance_id'] = 'inst_test_' . uniqid();
-                $result['message'] = $this->langService->trans('workflow.trigger_test_fired');
-
-                // Update trigger stats
-                $trigger['execution_count']++;
-                $trigger['last_execution_at'] = (new \DateTimeImmutable())->format('c');
-                $trigger['last_execution_status'] = 'success';
-                self::$triggers[$id] = $trigger;
-
-                // Add log entry
-                $this->addTriggerLog($id, 'EXECUTED', $userId, [
-                    'test_mode' => true,
-                    'data' => $testData,
-                ]);
-            }
-
-            // Add log entry for test
-            $this->addTriggerLog($id, 'TESTED', $userId, [
-                'dry_run' => $dryRun,
-                'conditions_met' => $conditionsMet,
-            ]);
-
-            return $this->success($result);
-        } catch (\Exception $e) {
-            return $this->error(
-                $this->langService->trans('workflow.trigger_test_failed') . ': ' . $e->getMessage(),
-                500,
-                [],
-                500
-            );
-        }
+        });
     }
 
     /**
      * Webhook endpoint | Webhook 端点
      *
-     * POST /workflow/triggers/webhook/{key}
+     * ANY /v1/workflow/triggers/webhook/{key}
      *
-     * @param string $key Webhook key
-     * @param Request $request
-     * @return Response
+     * 失败语义（全部由 `WorkflowTriggerService::handleWebhook()` 抛出并映射）：
+     * - key 在**本租户**下不存在 → 404（不泄露别租户的 key 是否存在）
+     * - 触发器被禁用 → 400 `trigger_disabled`
+     * - 方法不在白名单 → 405
+     * - IP 不在白名单 → 403
+     * - `config.secret` 已配置但签名缺失/不符 → 401
+     * - 定义不可启动（非 published+active）或引擎失败 → 上游的 400/500
      */
     public function webhook(string $key, Request $request): Response
     {
-        // Find trigger by webhook key
-        $trigger = null;
-        foreach (self::$triggers as $t) {
-            if (($t['webhook_key'] ?? null) === $key) {
-                $trigger = $t;
-                break;
-            }
+        $payload = $request->post();
+
+        if (!is_array($payload) || $payload === []) {
+            $decoded = json_decode((string) $request->getContent(), true);
+            $payload = is_array($decoded) ? $decoded : [];
         }
 
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.webhook_not_found'));
-        }
+        $context = [
+            // webhook 无 Auth：租户来自全局 TenantIdentify（X-Tenant-ID 或 DEFAULT_TENANT_ID）
+            'tenant_id'  => $request->tenantId(),
+            'method'     => strtoupper((string) $request->method()),
+            'ip'         => (string) $request->ip(),
+            'user_agent' => (string) $request->header('User-Agent', ''),
+            'signature'  => (string) $request->header('X-Webhook-Signature', ''),
+            'raw_body'   => (string) $request->getContent(),
+        ];
 
-        // Check if enabled
-        if ($trigger['status'] !== self::STATUS_ENABLED) {
-            return $this->error(
-                $this->langService->trans('workflow.trigger_disabled'),
-                400,
-                [],
-                400
+        return $this->respond(function () use ($key, $context, $payload): Response {
+            return $this->success(
+                $this->service()->handleWebhook($key, $context, $payload),
+                $this->langService->trans('workflow.webhook_processed')
             );
+        });
+    }
+
+    /**
+     * Get trigger logs | 获取触发器日志
+     *
+     * GET /v1/workflow/triggers/{id}/logs
+     *
+     * Query Parameters:
+     * - page: int（默认 1）
+     * - page_size: int（默认 50，上限 100）
+     * - event_type: string（可选，收窄到某一类）
+     *
+     * 数据来源是 `workflow_event_logs`（见 `WorkflowEventLogRepository::TRIGGER_EVENT_TYPES`）。
+     * 每条同时给出：
+     * - `event`：旧契约的大写词汇（`CREATED` / `UPDATED` / `ENABLED` / `DISABLED` /
+     *   `TESTED` / `EXECUTED` / `FAILED`）；
+     * - `event_type`：库里真实值（`trigger_created` / …）；
+     * - `instance_id`：执行类事件是真实实例ID，管理类事件是 `null`。
+     */
+    public function logs(string $id, Request $request): Response
+    {
+        $tenantId  = $request->tenantId();
+        $triggerId = $id;
+        $params    = $request->get();
+        $page      = (int) ($params['page'] ?? 1);
+        $pageSize  = (int) ($params['page_size'] ?? 50);
+
+        // 日志端点的默认页大小是 50（旧契约），上限沿用全局的 100
+        if ($pageSize > 100) {
+            $pageSize = 100;
         }
 
-        // Validate webhook configuration
-        $config = $trigger['config'] ?? [];
+        $pagination = $this->validatePagination($page, $pageSize);
 
-        // Check allowed methods
-        $allowedMethods = $config['http_methods'] ?? ['POST'];
-        if (!in_array($request->method(), $allowedMethods, true)) {
-            return $this->error(
-                $this->langService->trans('workflow.method_not_allowed'),
-                405,
-                ['allowed_methods' => $allowedMethods],
-                405
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
+        }
+
+        $eventType = isset($params['event_type']) && is_scalar($params['event_type']) && (string) $params['event_type'] !== ''
+            ? (string) $params['event_type']
+            : null;
+
+        return $this->respond(function () use ($tenantId, $triggerId, $page, $pageSize, $eventType): Response {
+            $result = $this->service()->logs(
+                $tenantId,
+                $this->parseId($triggerId),
+                $page,
+                $pageSize,
+                $eventType
             );
+
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
+        });
+    }
+
+    /**
+     * Set trigger status | 设置触发器状态（enable / disable 的共用实现）
+     *
+     * 保留为受保护方法（而非各自内联）：旧实现里两个动作共享同一段状态改写 + 留痕逻辑，
+     * 这个结构值得保留 —— 单点修改才不会出现「启用走了 A 路径、禁用走了 B 路径」的分叉。
+     */
+    protected function setTriggerStatus(string $id, Request $request, bool $enabled): Response
+    {
+        $tenantId  = $request->tenantId();
+        $triggerId = $id;
+        $userId    = $request->userId();
+
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check allowed IPs
-        $allowedIps = $config['allowed_ips'] ?? [];
-        if (!empty($allowedIps)) {
-            $clientIp = $request->ip();
-            if (!in_array($clientIp, $allowedIps, true)) {
-                return $this->forbidden($this->langService->trans('workflow.ip_not_allowed'));
-            }
-        }
+        return $this->respond(function () use ($tenantId, $userId, $triggerId, $enabled): Response {
+            $row = $this->service()->setEnabled($tenantId, $userId, $this->parseId($triggerId), $enabled);
 
-        // Verify signature if secret is set
-        if (!empty($config['secret'])) {
-            $signature = $request->header('X-Webhook-Signature');
-            $payload = $request->getContent();
-            $expectedSignature = 'sha256=' . hash_hmac('sha256', $payload, $config['secret']);
+            $message = $enabled
+                ? $this->langService->trans('workflow.trigger_enabled')
+                : $this->langService->trans('workflow.trigger_disabled');
 
-            if (!hash_equals($expectedSignature, $signature ?? '')) {
-                return $this->error(
-                    $this->langService->trans('workflow.invalid_signature'),
-                    401,
-                    [],
-                    401
-                );
-            }
-        }
+            return $this->success($row, $message);
+        });
+    }
 
-        // Get payload
-        $payload = $request->post() ?: json_decode($request->getContent(), true) ?: [];
+    // =====================================================================
+    // 内部
+    // =====================================================================
 
-        // Apply payload mapping if configured
-        $variables = $payload;
-        if (!empty($config['payload_mapping'])) {
-            $variables = $this->applyPayloadMapping($payload, $config['payload_mapping']);
-        }
-
+    /**
+     * 统一的「业务异常 → 响应」出口
+     *
+     * 1. `WorkflowActionException` 带自己的业务码 / HTTP 状态 / 字段级错误；
+     * 2. 其余 `Throwable` 一律 500 + 通用文案（原始异常只进日志）。
+     *
+     * @param Closure(): Response $action
+     */
+    private function respond(Closure $action): Response
+    {
         try {
-            // Create instance (in production, this would actually start a workflow)
-            $instanceId = 'inst_' . uniqid();
-
-            // Update trigger stats
-            $trigger['execution_count']++;
-            $trigger['last_execution_at'] = (new \DateTimeImmutable())->format('c');
-            $trigger['last_execution_status'] = 'success';
-            self::$triggers[$trigger['id']] = $trigger;
-
-            // Add log entry
-            $this->addTriggerLog($trigger['id'], 'WEBHOOK_RECEIVED', 'webhook', [
-                'method' => $request->method(),
-                'ip' => $request->ip(),
-                'payload_size' => strlen($request->getContent()),
-                'instance_id' => $instanceId,
-            ]);
-
-            return $this->success([
-                'triggered' => true,
-                'instance_id' => $instanceId,
-                'definition_id' => $trigger['definition_id'],
-                'variables' => $variables,
-            ], $this->langService->trans('workflow.webhook_processed'), 0, 200);
-        } catch (\Exception $e) {
-            // Update trigger stats for failure
-            $trigger['last_execution_at'] = (new \DateTimeImmutable())->format('c');
-            $trigger['last_execution_status'] = 'failed';
-            self::$triggers[$trigger['id']] = $trigger;
-
-            // Add log entry
-            $this->addTriggerLog($trigger['id'], 'WEBHOOK_FAILED', 'webhook', [
-                'error' => $e->getMessage(),
+            return $action();
+        } catch (WorkflowActionException $e) {
+            return $this->error($e->getPublicMessage(), $e->getBusinessCode(), $e->getErrors(), $e->getHttpStatus());
+        } catch (Throwable $e) {
+            Log::error('[WORKFLOW_TRIGGER_FAILED] ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
             ]);
 
             return $this->error(
-                $this->langService->trans('workflow.webhook_processing_failed'),
-                500,
-                ['error' => $e->getMessage()],
+                '工作流触发器操作失败，请稍后重试或联系管理员 | workflow trigger operation failed',
+                WorkflowActionException::CODE_SERVER_ERROR,
+                [],
                 500
             );
         }
     }
 
     /**
-     * Get trigger logs | 获取触发器日志
+     * 解析路径上的触发器ID
      *
-     * GET /workflow/triggers/{id}/logs
+     * 非数字 / 非正数 → 404（路径参数不合法等价于「这条资源不存在」）。
      *
-     * @param string $id Trigger ID
-     * @param Request $request
-     * @return Response
+     * @throws WorkflowActionException
      */
-    public function logs(string $id, Request $request): Response
+    private function parseId(string $id): int
     {
-        $trigger = self::$triggers[$id] ?? null;
-
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.trigger_not_found'));
+        if (!ctype_digit($id) || (int) $id <= 0) {
+            throw WorkflowActionException::notFound($this->langService->trans('workflow.trigger_not_found'));
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($trigger['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $params = $request->get();
-        $page = (int)($params['page'] ?? 1);
-        $pageSize = (int)($params['page_size'] ?? 50);
-
-        $logs = self::$triggerLogs[$id] ?? [];
-        $logs = array_reverse($logs); // Most recent first
-
-        $total = count($logs);
-        $offset = ($page - 1) * $pageSize;
-        $list = array_slice($logs, $offset, $pageSize);
-
-        return $this->paginate($list, $total, $page, $pageSize);
+        return (int) $id;
     }
 
     /**
-     * Set trigger status | 设置触发器状态
-     *
-     * @param string $id
-     * @param Request $request
-     * @param bool $enabled
-     * @return Response
+     * 应用服务（惰性构造，复用控制器的语言服务实例）
      */
-    protected function setTriggerStatus(string $id, Request $request, bool $enabled): Response
+    private function service(): WorkflowTriggerService
     {
-        $trigger = self::$triggers[$id] ?? null;
-
-        if ($trigger === null) {
-            return $this->notFound($this->langService->trans('workflow.trigger_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($trigger['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $userId = $request->userId() ?? 'system';
-        $newStatus = $enabled ? self::STATUS_ENABLED : self::STATUS_DISABLED;
-
-        $trigger['status'] = $newStatus;
-        $trigger['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$triggers[$id] = $trigger;
-
-        // Add log entry
-        $this->addTriggerLog($id, $enabled ? 'ENABLED' : 'DISABLED', $userId, []);
-
-        $message = $enabled
-            ? $this->langService->trans('workflow.trigger_enabled')
-            : $this->langService->trans('workflow.trigger_disabled');
-
-        return $this->success($trigger, $message);
-    }
-
-    /**
-     * Validate trigger data | 验证触发器数据
-     *
-     * @param array $data
-     * @return array Validation errors
-     */
-    protected function validateTriggerData(array $data): array
-    {
-        $errors = [];
-
-        if (empty($data['definition_id'])) {
-            $errors['definition_id'] = $this->langService->trans('workflow.definition_id_required');
-        }
-
-        if (empty($data['name'])) {
-            $errors['name'] = $this->langService->trans('workflow.trigger_name_required');
-        }
-
-        if (empty($data['type'])) {
-            $errors['type'] = $this->langService->trans('workflow.trigger_type_required');
-        } else {
-            $validTypes = [self::TYPE_MANUAL, self::TYPE_WEBHOOK, self::TYPE_SCHEDULE, self::TYPE_DATA_EVENT];
-            if (!in_array($data['type'], $validTypes, true)) {
-                $errors['type'] = $this->langService->trans('workflow.invalid_trigger_type');
-            }
-        }
-
-        // Type-specific validation
-        if ($data['type'] === self::TYPE_SCHEDULE && empty($data['config']['cron_expression'])) {
-            $errors['config.cron_expression'] = $this->langService->trans('workflow.cron_expression_required');
-        }
-
-        if ($data['type'] === self::TYPE_DATA_EVENT) {
-            if (empty($data['config']['collection'])) {
-                $errors['config.collection'] = $this->langService->trans('workflow.collection_required');
-            }
-            if (empty($data['config']['event_type'])) {
-                $errors['config.event_type'] = $this->langService->trans('workflow.event_type_required');
-            }
-        }
-
-        return $errors;
-    }
-
-    /**
-     * Apply payload mapping | 应用负载映射
-     *
-     * @param array $payload
-     * @param array $mapping
-     * @return array
-     */
-    protected function applyPayloadMapping(array $payload, array $mapping): array
-    {
-        $result = [];
-
-        foreach ($mapping as $targetKey => $sourceKey) {
-            if (is_string($sourceKey)) {
-                // Simple mapping: target_key => source_key
-                $result[$targetKey] = $this->getNestedValue($payload, $sourceKey);
-            } elseif (is_array($sourceKey)) {
-                // Advanced mapping with transformation
-                $value = $this->getNestedValue($payload, $sourceKey['path'] ?? '');
-                if (isset($sourceKey['default']) && $value === null) {
-                    $value = $sourceKey['default'];
-                }
-                if (isset($sourceKey['transform'])) {
-                    $value = $this->transformValue($value, $sourceKey['transform']);
-                }
-                $result[$targetKey] = $value;
-            }
-        }
-
-        return $result;
-    }
-
-    /**
-     * Get nested value from array | 从数组获取嵌套值
-     *
-     * @param array $array
-     * @param string $path Dot-notation path
-     * @return mixed
-     */
-    protected function getNestedValue(array $array, string $path): mixed
-    {
-        $keys = explode('.', $path);
-        $value = $array;
-
-        foreach ($keys as $key) {
-            if (!isset($value[$key])) {
-                return null;
-            }
-            $value = $value[$key];
-        }
-
-        return $value;
-    }
-
-    /**
-     * Transform value | 转换值
-     *
-     * @param mixed $value
-     * @param string $transform
-     * @return mixed
-     */
-    protected function transformValue(mixed $value, string $transform): mixed
-    {
-        return match ($transform) {
-            'string' => (string)$value,
-            'int', 'integer' => (int)$value,
-            'float' => (float)$value,
-            'bool', 'boolean' => (bool)$value,
-            'json' => json_encode($value),
-            'uppercase' => strtoupper((string)$value),
-            'lowercase' => strtolower((string)$value),
-            'trim' => trim((string)$value),
-            default => $value,
-        };
-    }
-
-    /**
-     * Add trigger log entry | 添加触发器日志记录
-     *
-     * @param string $triggerId
-     * @param string $event
-     * @param int|string $userId 操作用户ID（来自 JWT 时为 int，系统/未认证操作时为 'system'）
-     * @param array $data
-     * @return void
-     */
-    protected function addTriggerLog(string $triggerId, string $event, int|string $userId, array $data): void
-    {
-        if (!isset(self::$triggerLogs[$triggerId])) {
-            self::$triggerLogs[$triggerId] = [];
-        }
-
-        self::$triggerLogs[$triggerId][] = [
-            'id' => 'log_' . uniqid(),
-            'trigger_id' => $triggerId,
-            'event' => $event,
-            'user_id' => $userId,
-            'data' => $data,
-            'timestamp' => (new \DateTimeImmutable())->format('c'),
-        ];
+        return $this->triggerService ??= new WorkflowTriggerService($this->langService);
     }
 }

@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Workflow;
 
-use Alkaid\Workflow\Engine\Definition\WorkflowBuilder;
-use app\controller\workflow\WorkflowDefinitionController;
 use app\controller\workflow\WorkflowTaskController;
 use Infrastructure\Permission\Service\PermissionService;
 use Tests\Helpers\AuthHelper;
@@ -28,12 +26,14 @@ use think\facade\Db;
  *   2. 列表不再把「无租户归属」的记录泄漏给任何租户；
  *   3. 同租户记录仍然可见（防止修过头）。
  *
- * 注意：
- *   - 工作流数据存放在控制器进程内 `protected static array`，本测试用反射播种，
- *     并在每个用例前后清空，避免用例间互相污染；
- *   - 「tenant_id 为 null 的记录」在 DB 中不可能存在（列 NOT NULL），
- *     这里刻意播种是为了把「已删除的 null 宽免分支」钉成回归断言：
- *     将来若有人重新引入 `|| X === null`，本测试会立刻变红。
+ * 注意（2026：四个工作流控制器全部改真库 + 真引擎后）：
+ *   - 工作流数据不再存在控制器进程内的 `protected static array` 里，本测试改为向
+ *     `workflow_*` 表插真行，并在每个用例后按名称前缀清理；
+ *   - 「tenant_id 为 null 的记录」在真库中**插不进去**（列 NOT NULL），
+ *     因此「列表不得泄漏无租户归属记录」这组用例改写为**真实可构造**的对照
+ *     「租户 1 的列表里不得出现租户 2 的定义/任务」—— 同样能钉死
+ *     `X === $tenantId || X === null` 这类「多了个 null 宽免」的回归（且强度更高：
+ *     现在走的是真实 SQL + 真实索引，而不是内存 foreach）。
  *
  * @package Tests\Feature\Workflow
  */
@@ -175,23 +175,31 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
     }
 
     /**
-     * 用例 3（RED）：定义列表同样不得泄漏「无租户归属」的定义
+     * 用例 3：定义列表严格按 tenant_id 过滤，不泄漏其它租户的定义
      *
-     * 该分支用的是对象方法（`$def->getTenantId() === null`），与数组键写法不同，单独覆盖。
+     * 2026 变更（Mock → 真库）：控制器不再用 `static $definitions` 存对象，
+     * 而 `workflow_definitions.tenant_id` 是 `NOT NULL`，旧用例那条
+     * 「tenant_id 为 null 的定义不得被视为全局定义」的孤儿行在真库里**插不进去**。
+     * 因此改用**真实可构造**的对照：同样是本租户用户，另一个租户定义不得出现在列表里。
+     * 语义（列表必须按 tenant_id 严格过滤、不是「全都返回」）保持不变，强度不降反升
+     * —— 因为现在用的是真实 SQL 查询路径与真实索引，而不是内存数组的 foreach。
      */
-    public function testDefinitionListDoesNotLeakDefinitionWithoutTenantId(): void
+    public function testDefinitionListDoesNotLeakDefinitionFromOtherTenant(): void
     {
-        $ownDefinitionId = $this->seedDefinition(1);
-        $orphanDefinitionId = $this->seedDefinition(null);
+        $ownDefinitionId     = $this->seedDefinition(1);
+        $foreignDefinitionId = $this->seedDefinition(2);
 
         $tenant1Ids = $this->listDefinitionIds($this->tenant1UserId, 1);
+        $tenant2Ids = $this->listDefinitionIds($this->tenant2UserId, 2);
 
         $this->assertContains($ownDefinitionId, $tenant1Ids, '租户 1 的列表应包含自己租户的定义（正常路径）');
         $this->assertNotContains(
-            $orphanDefinitionId,
+            $foreignDefinitionId,
             $tenant1Ids,
-            'tenant_id 为 null 的定义不得被视为「全局定义」对租户 1 可见（原 null 宽免分支）'
+            '租户 2 的定义不得出现在租户 1 的列表里（列表查询必须带 tenant_id 过滤）'
         );
+        $this->assertContains($foreignDefinitionId, $tenant2Ids, '租户 2 的列表应包含自己租户的定义（正常路径）');
+        $this->assertNotContains($ownDefinitionId, $tenant2Ids, '租户 1 的定义不得出现在租户 2 的列表里');
     }
 
     /**
@@ -299,21 +307,47 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种一条工作流定义，返回其 ID
+     * 播种一条工作流定义（**真库**），返回其主键
+     *
+     * 2026 变更：控制器改为真库 + 真引擎后，反射塞内存对象不存在了；
+     * 直接插一行 draft（`nodes_config` 为最小合法图），由
+     * `purgeWorkflowBusinessFixtures()` 按名称前缀统一回收。
+     *
+     * @param int $tenantId 归属租户
      */
-    private function seedDefinition(?int $tenantId): string
+    private function seedDefinition(int $tenantId): int
     {
-        $builder = WorkflowBuilder::create('strict_wf_' . uniqid(), ['tenant_id' => $tenantId]);
-        $definition = $builder->getDefinition();
+        $name = self::STRICT_DEFINITION_PREFIX . uniqid();
+        $now  = date('Y-m-d H:i:s');
 
-        $ref = new \ReflectionProperty(WorkflowDefinitionController::class, 'definitions');
-        $ref->setAccessible(true);
-
-        $definitions = (array) $ref->getValue();
-        $definitions[$definition->getId()] = $definition;
-        $ref->setValue(null, $definitions);
-
-        return $definition->getId();
+        return (int) Db::table('workflow_definitions')->insertGetId([
+            'tenant_id'    => $tenantId,
+            'name'         => $name,
+            'display_name' => 'P3-A 租户严格匹配测试定义',
+            'description'  => 'P3-A 测试夹具（用例结束后删除）',
+            'type'         => 'approval',
+            'version'      => 1,
+            'status'       => 'draft',
+            'is_active'    => 0,
+            'nodes_config' => json_encode([
+                'name'  => $name,
+                'type'  => 'approval',
+                'nodes' => [
+                    ['id' => 'start', 'type' => 'ingenious:start', 'x' => 200, 'y' => 160,
+                        'text' => ['value' => '开始'], 'properties' => ['_alkaid_node_class' => 'StartNode', '_alkaid_node_type' => 'start']],
+                    ['id' => 'end', 'type' => 'ingenious:end', 'x' => 420, 'y' => 160,
+                        'text' => ['value' => '结束'], 'properties' => ['_alkaid_node_class' => 'EndNode', '_alkaid_node_type' => 'end']],
+                ],
+                'edges' => [
+                    ['id' => 'flow_start_end', 'type' => 'polyline', 'sourceNodeId' => 'start',
+                        'targetNodeId' => 'end', 'text' => ['value' => ''], 'properties' => ['_alkaid_type' => 'sequence']],
+                ],
+            ], JSON_UNESCAPED_UNICODE),
+            'created_at'   => $now,
+            'updated_at'   => $now,
+            'created_by'   => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
+            'updated_by'   => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
+        ]);
     }
 
     /**
@@ -375,7 +409,8 @@ class WorkflowTenantStrictnessTest extends ThinkPHPTestCase
     private function resetInMemoryStores(): void
     {
         $stores = [
-            WorkflowDefinitionController::class => ['definitions'],
+            // 定义与触发器控制器已改真库，不再有这些静态属性（property_exists 会跳过）
+            \app\controller\workflow\WorkflowDefinitionController::class => ['definitions'],
             \app\controller\workflow\WorkflowInstanceController::class => ['instances', 'history'],
             WorkflowTaskController::class => ['tasks', 'taskHistory'],
             \app\controller\workflow\WorkflowTriggerController::class => ['triggers', 'triggerLogs'],

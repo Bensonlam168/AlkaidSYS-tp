@@ -52,15 +52,17 @@ use Tests\ThinkPHPTestCase;
  * | `tasks/<id>/form` | `{task_id, form_schema, form_data, form_rules}` | 任务对象（含 `status`、`history`） |
  * | `triggers/<id>/logs` | 分页结构 `{list, total, page, page_size, total_pages}` | 触发器对象（含 `webhook_key`） |
  *
- * ## 夹具形态（2026 更新：实例/任务已改为真库）
+ * ## 夹具形态（2026 更新：实例/任务/触发器全部改为真库）
  *
- * `WorkflowInstanceController` / `WorkflowTaskController` 已从**进程内静态数组**（demo 实现）
- * 改为真库 + 真引擎，因此这里的夹具必须是真的：
+ * `WorkflowInstanceController` / `WorkflowTaskController` / `WorkflowTriggerController`
+ * 均已从**进程内静态数组**（demo 实现）改为真库 + 真引擎，因此这里的夹具必须是真的：
  *   - 实例：插入一条可执行定义（LogicFlow `{nodes, edges}`）后走 `POST /instances` 真启动，
  *     拿到的是**真实实例主键**（不再是 `inst_xxx` 字符串）；
  *   - 任务：实例 → 任务行直插（见 `Tests\Traits\WorkflowExecutableFixture`），
- *     因为任务由引擎在推进时产生，本测试只需要「一条属于本租户的任务」用于路由判定。
- * `WorkflowTriggerController` 仍是 Mock 实现（下一个包才改），它的夹具保持原样。
+ *     因为任务由引擎在推进时产生，本测试只需要「一条属于本租户的任务」用于路由判定；
+ *   - 触发器：先插入可执行定义（`workflow_triggers.definition_id` 有外键），
+ *     再走 `POST /triggers` 真创建，拿到**真实触发器主键**与真 `webhook_key`
+ *     （不再是 `trig_xxx` 占位串）。
  *
  * ## 低代码侧用 Mock 而不是真建表
  *
@@ -648,16 +650,24 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
     }
 
     /**
-     * 通过真实 API 创建一个 webhook 类型触发器
+     * 通过真实 API 创建一个 webhook 类型触发器（真库）
+     *
+     * 2026 变更：触发器控制器已改为真库 + 真引擎，`definition_id` 必须是**真实定义主键**
+     * （`workflow_triggers.definition_id` 有外键），占位字符串会被 422 拒绝。
      *
      * @return array<string, mixed> 触发器数据（含 id / webhook_key）
      */
     private function createWorkflowTrigger(): array
     {
+        $definitionId = $this->insertExecutableDefinition(self::DEFINITION_PREFIX . uniqid());
+
         $response = $this->request('POST', 'v1/workflow/triggers', [
-            'definition_id' => 'wf_reachability_probe',
+            'definition_id' => $definitionId,
             'name' => 'probe webhook trigger',
             'type' => WorkflowTriggerController::TYPE_WEBHOOK,
+            // 不配 secret：`WebhookTrigger` 的 `required` 为空，secret 可选；
+            // 配了 secret 就会强制 HMAC 签名，而本用例只验证**路由是否命中 webhook()**，
+            // 签名链路另由 WorkflowDefinitionLifecycleTest 覆盖。
             'config' => [],
         ]);
         $data = $this->json($response)['data'] ?? [];
@@ -689,15 +699,19 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
     }
 
     /**
-     * 清空仍为 Mock 实现的工作流控制器的进程内静态存储
+     * 清空工作流控制器的进程内静态存储（现已全部改真库，实际是 no-op）
      *
-     * 实例/任务控制器已改为真库，它们的静态存储不存在了；这里只为
-     * `WorkflowTriggerController`（下一个包才改）保留，`property_exists` 容错。
+     * 实例 / 任务 / 触发器 / 定义四个控制器都改成了真库 + 真引擎，静态数组已随实现删除。
+     * 保留本方法是为了让「同一个进程里残留的内存夹具」不干扰路由判定：
+     * 万一将来又出现静态存储，`property_exists()` 会把命名一致的那些清空。
      */
     private function resetInMemoryStores(): void
     {
         $stores = [
             WorkflowTriggerController::class => ['triggers', 'triggerLogs'],
+            \app\controller\workflow\WorkflowDefinitionController::class => ['definitions'],
+            \app\controller\workflow\WorkflowInstanceController::class => ['instances', 'history'],
+            \app\controller\workflow\WorkflowTaskController::class => ['tasks', 'taskHistory'],
         ];
 
         foreach ($stores as $class => $properties) {

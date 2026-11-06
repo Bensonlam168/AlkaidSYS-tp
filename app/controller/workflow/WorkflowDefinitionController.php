@@ -5,444 +5,292 @@ declare(strict_types=1);
 namespace app\controller\workflow;
 
 use app\controller\ApiController;
-use think\App;
-use think\Request;
+use app\Request;
+use Closure;
+use Infrastructure\Workflow\Exception\WorkflowActionException;
+use Infrastructure\Workflow\Service\WorkflowDefinitionService;
+use think\facade\Log;
 use think\Response;
-use Alkaid\Workflow\Engine\Definition\WorkflowBuilder;
-use Alkaid\Workflow\Engine\Definition\WorkflowDefinition;
-use Alkaid\Workflow\Engine\Definition\WorkflowValidator;
-use Alkaid\Workflow\Engine\Definition\Interfaces\WorkflowDefinitionInterface;
+use Throwable;
 
 /**
  * Workflow Definition API Controller | 工作流定义 API 控制器
  *
- * RESTful API for workflow definition management.
- * 工作流定义管理的 RESTful API。
+ * ## 本控制器的职责（分层约定）
  *
- * Endpoints:
- * - GET    /workflow/definitions         - List definitions | 列出定义
- * - GET    /workflow/definitions/{id}    - Get definition | 获取定义
- * - POST   /workflow/definitions         - Create definition | 创建定义
- * - PUT    /workflow/definitions/{id}    - Update definition | 更新定义
- * - DELETE /workflow/definitions/{id}    - Delete definition | 删除定义
- * - POST   /workflow/definitions/{id}/publish   - Publish definition | 发布定义
- * - POST   /workflow/definitions/{id}/archive   - Archive definition | 归档定义
- * - POST   /workflow/definitions/{id}/validate  - Validate definition | 验证定义
- * - POST   /workflow/definitions/{id}/clone     - Clone definition | 克隆定义
+ * 只做四件事：**取参 → 参数校验 → 调 Service → 包统一响应**。
+ * 版本/发布/归档状态机、定义体校验、归属判断、落库全部在
+ * `Infrastructure\Workflow\Service\WorkflowDefinitionService`，
+ * 数据访问在 `Infrastructure\Workflow\Repository\*`。控制器里不出现 SQL、不出现引擎调用。
+ *
+ * ## 与旧实现的关系（Mock → 真库/引擎）
+ *
+ * 旧版本是 `protected static array $definitions` 的内存 Mock：9 个端点看起来都在，
+ * 实际一个字节都没落库，重启即清空；`version/status/is_active` 三列的组合语义也没人负责。
+ *
+ * | 端点 | 旧（Mock） | 新（真库 / 引擎） |
+ * | ---- | ---------- | ----------------- |
+ * | `index` | 内存过滤 + `usort` | `workflow_definitions` 查询（强制 tenant 过滤 + 分页下推） |
+ * | `read` | 内存对象 | 库行（含 `nodes_config` 定义体） |
+ * | `save` | `WorkflowBuilder` 拼对象塞内存 | 插 `version=1` 的草稿行；只给 BPMN 时经 `BpmnConverter` 导入 |
+ * | `update` | 就地改字段 | 草稿原地改；**已发布 fork 出新版本草稿**；已归档 400 |
+ * | `delete` | `unset($array[$id])` | 已发布 / 有实例一律拒绝（CASCADE 会删掉实例，见 Service 注释） |
+ * | `publish` | `$definition->publish()` | 先跑引擎校验器 → `status=published`、`is_active=1`、同家族旧版降级 |
+ * | `archive` | `$definition->archive()` | `status=archived`、`is_active=0`（终态，之后不可启动） |
+ * | `validateAction` | `WorkflowValidator::validate()` | `WorkflowDefinitionValidator`：**真跑** `ModelParser::parse()` 与条件表达式编译 |
+ * | `clone` | 内存里复制数组 | 插新行（新 name、`version=1`、草稿），不复制触发器 |
+ *
+ * ## 为什么响应里没有 `published_at`
+ *
+ * `workflow_definitions` **没有** `published_at` 列（`SHOW CREATE TABLE` 实测）。
+ * 旧 Mock 每次 clone 都把 `published_at` 置 null，那个字段从来没落过库 ——
+ * 与其继续返回一个永远为 null 的假字段，不如不返回。发布时间的可追溯口径是
+ * `updated_at`（发布动作会刷新它）+ `workflow_event_logs`。
  *
  * @package app\controller\workflow
  */
 class WorkflowDefinitionController extends ApiController
 {
     /**
-     * In-memory storage for demo (replace with repository in production)
-     * 内存存储用于演示（生产环境应使用Repository）
-     *
-     * @var array<string, WorkflowDefinition>
+     * 应用服务（惰性构造：控制器本身无状态，服务内部只为仓储/语言服务起惰性依赖）
      */
-    protected static array $definitions = [];
+    private ?WorkflowDefinitionService $definitionService = null;
 
     /**
      * List workflow definitions | 列出工作流定义
      *
-     * GET /workflow/definitions
+     * GET /v1/workflow/definitions
      *
      * Query Parameters:
-     * - page: int (default: 1)
-     * - page_size: int (default: 20, max: 100)
-     * - status: string (draft|published|archived)
-     * - type: string (business|approval|automation|integration)
-     * - name: string (search by name)
-     *
-     * @param Request $request
-     * @return Response
+     * - page: int（默认 1）
+     * - page_size: int（默认 20，上限 100）
+     * - status: string（draft|published|archived）
+     * - type: string（approval|business|automation|integration|hybrid）
+     * - category: string
+     * - name: string（按 name / display_name 模糊匹配）
+     * - active: bool（`is_active` 过滤；列表默认返回**全部版本**）
      */
     public function index(Request $request): Response
     {
-        // Get query parameters
-        $params = $request->get();
-        $page = (int)($params['page'] ?? 1);
-        $pageSize = (int)($params['page_size'] ?? 20);
+        $params   = $request->get();
+        $page     = (int) ($params['page'] ?? 1);
+        $pageSize = (int) ($params['page_size'] ?? 20);
 
-        // Validate pagination
-        $paginationValidation = $this->validatePagination($page, $pageSize);
-        if (!$paginationValidation['valid']) {
-            return $this->validationError($paginationValidation['errors']);
+        $pagination = $this->validatePagination($page, $pageSize);
+
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
         }
 
-        // Get tenant ID from request
+        // 租户ID 由中间件写入（`app\Request::tenantId(): int`，恒 >= 1）
         $tenantId = $request->tenantId();
 
-        // Build filter criteria
-        $filters = [];
-        if (!empty($params['status'])) {
-            $filters['status'] = $params['status'];
-        }
-        if (!empty($params['type'])) {
-            $filters['type'] = $params['type'];
-        }
-        if (!empty($params['name'])) {
-            $filters['name'] = $params['name'];
-        }
+        return $this->respond(function () use ($tenantId, $params, $page, $pageSize): Response {
+            $result = $this->service()->paginate($tenantId, [
+                'status'   => $params['status'] ?? null,
+                'type'     => $params['type'] ?? null,
+                'category' => $params['category'] ?? null,
+                'name'     => $params['name'] ?? null,
+                'active'   => $params['active'] ?? null,
+            ], $page, $pageSize);
 
-        // Get definitions (in production, this would be a database query)
-        $allDefinitions = array_values(self::$definitions);
-
-        // Apply tenant filter
-        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_definitions.tenant_id` 是 NOT NULL，
-        // 不存在「全局定义」，原实现的 `|| getTenantId() === null` 是死分支，
-        // 却会让「没有租户归属」的定义对所有租户可见（fail-open）。
-        // 注：`app\Request::tenantId()` 返回 int（恒 >= 1），故不再需要 null 包裹判断；
-        // 万一将来退化为 null，结果只是「过滤掉全部记录」（fail-closed）。
-        $allDefinitions = array_filter($allDefinitions, function ($def) use ($tenantId) {
-            return $def->getTenantId() === $tenantId;
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
         });
-
-        // Apply status filter
-        if (!empty($filters['status'])) {
-            $allDefinitions = array_filter($allDefinitions, function ($def) use ($filters) {
-                return $def->getStatus() === $filters['status'];
-            });
-        }
-
-        // Apply type filter
-        if (!empty($filters['type'])) {
-            $allDefinitions = array_filter($allDefinitions, function ($def) use ($filters) {
-                return $def->getType() === $filters['type'];
-            });
-        }
-
-        // Apply name filter (partial match)
-        if (!empty($filters['name'])) {
-            $allDefinitions = array_filter($allDefinitions, function ($def) use ($filters) {
-                return stripos($def->getName(), $filters['name']) !== false ||
-                       stripos($def->getDisplayName(), $filters['name']) !== false;
-            });
-        }
-
-        // Re-index array
-        $allDefinitions = array_values($allDefinitions);
-        $total = count($allDefinitions);
-
-        // Paginate
-        $offset = ($page - 1) * $pageSize;
-        $list = array_slice($allDefinitions, $offset, $pageSize);
-
-        // Transform to array format
-        $list = array_map(fn ($def) => $this->transformDefinitionToArray($def), $list);
-
-        return $this->paginate($list, $total, $page, $pageSize);
     }
 
     /**
      * Get workflow definition details | 获取工作流定义详情
      *
-     * GET /workflow/definitions/{id}
-     *
-     * @param string $id Definition ID
-     * @param Request $request
-     * @return Response
+     * GET /v1/workflow/definitions/{id}
      */
     public function read(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $data = $this->transformDefinitionToArray($definition, true);
-
-        return $this->success($data);
+        return $this->respond(function () use ($tenantId, $definitionId): Response {
+            return $this->success(
+                $this->service()->detail($tenantId, $this->parseId($definitionId))
+            );
+        });
     }
 
     /**
      * Create workflow definition | 创建工作流定义
      *
-     * POST /workflow/definitions
+     * POST /v1/workflow/definitions
      *
      * Request Body:
      * {
-     *   "name": "my_workflow",
-     *   "display_name": "My Workflow",
-     *   "description": "Description",
+     *   "name": "my_workflow",              // 必填，`^[a-zA-Z][a-zA-Z0-9_]*$`，租户内唯一
+     *   "display_name": "报销审批",
+     *   "description": "...",
      *   "type": "approval",
-     *   "nodes": [...],
-     *   "connections": [...],
-     *   "config": {...},
-     *   "metadata": {...}
+     *   "category": "finance",
+     *   "icon": "wallet",
+     *   "nodes_config": {"nodes": [...], "edges": [...]},   // LogicFlow（唯一执行格式）
+     *   "bpmn_xml": "<definitions>...</definitions>",      // 可选，仅在没有 nodes_config 时导入
+     *   "triggers_config": {...},
+     *   "variables_schema": {...}
      * }
      *
-     * @param Request $request
-     * @return Response
+     * 新定义永远是 `version=1` 的**草稿**（`status=draft`、`is_active=0`）：
+     * 客户端不能指定 `version`（版本号由服务端单调分配），也不能指定状态
+     * （跳过发布门 = 让未审核的图直接可启动）。
      */
     public function save(Request $request): Response
     {
-        $data = $request->post();
+        // `post()` 在「请求体缺失 / 非 JSON」时返回 null，统一折成空数组再交给服务层校验
+        $data     = $request->post();
+        $data     = is_array($data) ? $data : [];
+        $tenantId = $request->tenantId();
+        $userId   = $request->userId();
 
-        // Validate required fields
-        $errors = $this->validateDefinitionData($data);
-        if (!empty($errors)) {
-            return $this->validationError($errors);
+        // `created_by` / `updated_by` 带 `users.id` 外键：系统身份无法表示
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Get tenant ID
-        $tenantId = $request->tenantId();
-
-        try {
-            // Create definition using builder
-            $builder = WorkflowBuilder::create($data['name'], [
-                'id' => $data['id'] ?? null,
-                'tenant_id' => $tenantId,
-            ]);
-
-            // Set basic properties
-            if (!empty($data['display_name'])) {
-                $builder->displayName($data['display_name']);
-            }
-            if (!empty($data['description'])) {
-                $builder->description($data['description']);
-            }
-            if (!empty($data['type'])) {
-                $builder->type($data['type']);
-            }
-            if (!empty($data['config'])) {
-                $builder->config($data['config']);
-            }
-            if (!empty($data['metadata'])) {
-                foreach ($data['metadata'] as $key => $value) {
-                    $builder->meta($key, $value);
-                }
-            }
-
-            // Build nodes and connections if provided in raw format
-            if (!empty($data['nodes'])) {
-                $this->buildNodesFromData($builder, $data['nodes'], $data['connections'] ?? []);
-            }
-
-            // Get definition (skip validation for draft)
-            $definition = $builder->getDefinition();
-
-            // Store definition
-            self::$definitions[$definition->getId()] = $definition;
-
+        return $this->respond(function () use ($tenantId, $userId, $data): Response {
             return $this->success(
-                $this->transformDefinitionToArray($definition),
+                $this->service()->create($tenantId, $userId, $data),
                 $this->langService->trans('workflow.definition_created'),
                 0,
                 201
             );
-        } catch (\Exception $e) {
-            return $this->error(
-                $this->langService->trans('workflow.creation_failed') . ': ' . $e->getMessage(),
-                500,
-                [],
-                500
-            );
-        }
+        });
     }
 
     /**
      * Update workflow definition | 更新工作流定义
      *
-     * PUT /workflow/definitions/{id}
+     * PUT /v1/workflow/definitions/{id}
      *
-     * @param string $id Definition ID
-     * @param Request $request
-     * @return Response
+     * **语义按当前状态分三种**（口径见 `WorkflowDefinitionService` 类注释）：
+     * - `draft`    → 原地更新，200；
+     * - `published` → 产出（或复用）一份更高版本的草稿并打补丁，**201** +
+     *   `data.forked = true`、`data.forked_from = 源版本ID`、`data.source_id`；
+     * - `archived` → 400（终态不可改，要改请 `clone`）。
+     *
+     * 为什么不能对已发布行就地改：在跑实例的 `definition_id` 指着那一行，
+     * 引擎在推进时按该行现读现解析图 —— 把图换掉等于让在跑的审批中途换道。
      */
     public function update(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
+        $data         = $request->put();
+        $data         = is_array($data) ? $data : [];
+        $userId       = $request->userId();
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
+        return $this->respond(function () use ($tenantId, $userId, $definitionId, $data): Response {
+            $result = $this->service()->update($tenantId, $userId, $this->parseId($definitionId), $data);
+            $row    = $result['row'];
 
-        // Cannot update published definitions
-        if ($definition->getStatus() === WorkflowDefinitionInterface::STATUS_PUBLISHED) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_update_published'),
-                400,
-                [],
-                400
-            );
-        }
+            if ($result['forked']) {
+                $row['forked']      = true;
+                $row['forked_from'] = $result['source_id'];
+                $row['source_id']   = $result['source_id'];
 
-        $data = $request->put();
-
-        try {
-            // Update properties
-            if (isset($data['display_name'])) {
-                $definition->setDisplayName($data['display_name']);
-            }
-            if (isset($data['description'])) {
-                $definition->setDescription($data['description']);
-            }
-            if (isset($data['type'])) {
-                $definition->setType($data['type']);
-            }
-            if (isset($data['config'])) {
-                $definition->setConfig($data['config']);
-            }
-            if (isset($data['metadata'])) {
-                foreach ($data['metadata'] as $key => $value) {
-                    $definition->setMeta($key, $value);
-                }
+                return $this->success(
+                    $row,
+                    '已发布版本不可就地修改，已生成新版本草稿 | published definition forked into a new draft',
+                    0,
+                    201
+                );
             }
 
-            // Update timestamp
-            $definition->setUpdatedAt(new \DateTimeImmutable());
-
-            return $this->success(
-                $this->transformDefinitionToArray($definition),
-                $this->langService->trans('workflow.definition_updated')
-            );
-        } catch (\Exception $e) {
-            return $this->error(
-                $this->langService->trans('workflow.update_failed') . ': ' . $e->getMessage(),
-                500,
-                [],
-                500
-            );
-        }
+            return $this->success($row, $this->langService->trans('workflow.definition_updated'));
+        });
     }
 
     /**
      * Delete workflow definition | 删除工作流定义
      *
-     * DELETE /workflow/definitions/{id}
+     * DELETE /v1/workflow/definitions/{id}
      *
-     * @param string $id Definition ID
-     * @param Request $request
-     * @return Response
+     * 拒绝条件（详见 Service 注释）：
+     * - `published` → 400 `cannot_delete_published`（先归档）；
+     * - 任一实例引用 → **409**，响应 `data.errors.instance_count` 说明数量并建议改用归档。
+     *
+     * 为什么比旧 Mock 严格：`workflow_instances.definition_id` 是 `ON DELETE CASCADE`，
+     * 物理删除会连带删掉实例、任务、轨迹 —— 那是不可恢复的数据丢失。
      */
     public function delete(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
-        }
+        return $this->respond(function () use ($tenantId, $definitionId): Response {
+            $result = $this->service()->delete($tenantId, $this->parseId($definitionId));
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        // Cannot delete published definitions (must archive first)
-        if ($definition->getStatus() === WorkflowDefinitionInterface::STATUS_PUBLISHED) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_delete_published'),
-                400,
-                [],
-                400
-            );
-        }
-
-        unset(self::$definitions[$id]);
-
-        return $this->success(null, $this->langService->trans('workflow.definition_deleted'));
+            return $this->success($result, $this->langService->trans('workflow.definition_deleted'));
+        });
     }
 
     /**
      * Publish workflow definition | 发布工作流定义
      *
-     * POST /workflow/definitions/{id}/publish
+     * POST /v1/workflow/definitions/{id}/publish
      *
-     * @param string $id Definition ID
-     * @param Request $request
-     * @return Response
+     * 只有 `draft` 可以发布；发布前**真跑引擎校验器**，不通过 → 400，`data.errors` 里带
+     * `issues`（结构化问题列表）与 `summary`。一条「能存进库但引擎跑不起来」的发布版本，
+     * 等于把一个 500 留给所有启动实例的调用方。
      */
     public function publish(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
+        $userId       = $request->userId();
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        // Validate before publishing
-        $validator = new WorkflowValidator();
-        $validationResult = $validator->validate($definition);
-
-        if (!$validationResult->isValid()) {
-            return $this->error(
-                $this->langService->trans('workflow.validation_failed'),
-                400,
-                ['validation_errors' => $validationResult->getErrors()],
-                400
+        return $this->respond(function () use ($tenantId, $userId, $definitionId): Response {
+            return $this->success(
+                $this->service()->publish($tenantId, $userId, $this->parseId($definitionId)),
+                $this->langService->trans('workflow.definition_published')
             );
-        }
-
-        // Publish the definition
-        $definition->publish();
-
-        return $this->success(
-            $this->transformDefinitionToArray($definition),
-            $this->langService->trans('workflow.definition_published')
-        );
+        });
     }
 
     /**
      * Archive workflow definition | 归档工作流定义
      *
-     * POST /workflow/definitions/{id}/archive
+     * POST /v1/workflow/definitions/{id}/archive
      *
-     * @param string $id Definition ID
-     * @param Request $request
-     * @return Response
+     * 归档是**终态**：`status=archived` + `is_active=0`。之后
+     * ① 不能启动新实例（`WorkflowInstanceService::start()` 的闸会拒）；
+     * ② 不能编辑（PUT → 400）；③ 不能重复归档（400）。
+     * 但在跑实例不受影响 —— 它们仍然按归档前那一版的图跑完。
      */
     public function archive(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
+        $userId       = $request->userId();
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $definition->archive();
-
-        return $this->success(
-            $this->transformDefinitionToArray($definition),
-            $this->langService->trans('workflow.definition_archived')
-        );
+        return $this->respond(function () use ($tenantId, $userId, $definitionId): Response {
+            return $this->success(
+                $this->service()->archive($tenantId, $userId, $this->parseId($definitionId)),
+                $this->langService->trans('workflow.definition_archived')
+            );
+        });
     }
 
     /**
      * Validate workflow definition | 验证工作流定义
      *
-     * POST /workflow/definitions/{id}/validate
+     * POST /v1/workflow/definitions/{id}/validate
      *
      * 命名说明（独立评审问题 4）：本动作方法曾命名为 `validate()`，与父类
      * `app\BaseController::validate()`（ThinkPHP 数据验证，签名为
@@ -451,218 +299,133 @@ class WorkflowDefinitionController extends ApiController
      * 客户端只要传 `?message=x`，框架按参数名绑定就会触发
      * `TypeError: Argument #3 ($message) must be of type array, string given` → 可控 500。
      *
-     * 现改为 `validateAction()`，恢复类型化签名；**路由 URL 保持不变**，
-     * 仅 `route/workflow.php` 中的目标方法名同步为 `@validateAction`。
+     * 现保持 `validateAction()` 的**类型化签名**（`string $id, Request $request`）；
+     * 路由 URL 保持不变，`route/workflow.php` 中的目标方法名也是 `@validateAction`。
      *
-     * @param string $id Definition ID | 定义ID
-     * @param Request $request Request instance | 请求实例
-     * @return Response
+     * 语义：本端点是**查询式**报告（前端设计器要拿到 issues 逐条高亮），因此
+     * 「图不合法」仍然返回 **200**，靠 `data.valid = false` + `data.issues` 表达；
+     * 真正拿校验当门的是 `publish`（那里失败是 400）。
+     *
+     * 返回结构（`data`）：
+     * ```
+     * {
+     *   "valid": bool,                      // 没有 error 级 issue
+     *   "errors": string[],                 // 兼容旧契约
+     *   "warnings": string[],               // 兼容旧契约
+     *   "info": string[],                   // 兼容旧契约
+     *   "issues": [{code, severity, path, message}],
+     *   "summary": {"errors": int, "warnings": int},
+     *   "source": "logicflow"|"bpmn_xml"|"none",
+     *   "engine": {"declared_nodes", "parsed_nodes", "has_start"},
+     *   "definition_id": int, "name": string, "version": int, "status": string
+     * }
+     * ```
      */
     public function validateAction(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $validator = new WorkflowValidator();
-        $result = $validator->validate($definition);
-
-        return $this->success([
-            'valid' => $result->isValid(),
-            'errors' => $result->getErrors(),
-            'warnings' => $result->getWarnings(),
-            // 修复（问题 4）：ValidationResult 的信息读取方法名是 getInfos()，
-            // 原 getInfo() 不存在，进入校验逻辑后必然 Fatal error → 500
-            'info' => $result->getInfos(),
-        ]);
+        return $this->respond(function () use ($tenantId, $definitionId): Response {
+            return $this->success($this->service()->validate($tenantId, $this->parseId($definitionId)));
+        });
     }
 
     /**
      * Clone workflow definition | 克隆工作流定义
      *
-     * POST /workflow/definitions/{id}/clone
+     * POST /v1/workflow/definitions/{id}/clone
      *
      * Request Body:
      * {
-     *   "name": "new_workflow_name",
-     *   "display_name": "New Workflow Name"
+     *   "name": "new_workflow_name",       // 可选，默认 `{源name}_copy`
+     *   "display_name": "新流程"            // 可选，默认 `{源display_name} (Copy)`
      * }
      *
-     * @param string $id Definition ID
-     * @param Request $request
-     * @return Response
+     * 克隆产出的是 `version=1` 的**草稿**（不可启动），并且**不复制触发器**：
+     * 复制一个 active 的 webhook 触发器指向草稿，会让外部回调直接 400 ——
+     * 那是「看起来配好了、其实一调就错」的配置。
      */
     public function clone(string $id, Request $request): Response
     {
-        $definition = self::$definitions[$id] ?? null;
+        $tenantId     = $request->tenantId();
+        $definitionId = $id;
+        $data         = $request->post();
+        $data         = is_array($data) ? $data : [];
+        $userId       = $request->userId();
 
-        if ($definition === null) {
-            return $this->notFound($this->langService->trans('workflow.definition_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($definition->getTenantId(), $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
+        return $this->respond(function () use ($tenantId, $userId, $definitionId, $data): Response {
+            return $this->success(
+                $this->service()->clone($tenantId, $userId, $this->parseId($definitionId), $data),
+                $this->langService->trans('workflow.definition_cloned'),
+                0,
+                201
+            );
+        });
+    }
+
+    // =====================================================================
+    // 内部
+    // =====================================================================
+
+    /**
+     * 统一的「业务异常 → 响应」出口
+     *
+     * 为什么要收在一处：
+     * 1. 引擎与数据库抛出的异常**不能原样吐给客户端**（会泄露表结构、SQL、内部类名）；
+     *    只有 `WorkflowActionException` 的 `publicMessage` 是「可以给用户看的话」；
+     * 2. 其余 `Throwable` 一律 500 + 通用文案，原始异常写日志（带操作名，便于定位）。
+     *
+     * @param Closure(): Response $action
+     */
+    private function respond(Closure $action): Response
+    {
+        try {
+            return $action();
+        } catch (WorkflowActionException $e) {
+            return $this->error($e->getPublicMessage(), $e->getBusinessCode(), $e->getErrors(), $e->getHttpStatus());
+        } catch (Throwable $e) {
+            Log::error('[WORKFLOW_DEFINITION_FAILED] ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+            ]);
+
+            return $this->error(
+                '工作流定义操作失败，请稍后重试或联系管理员 | workflow definition operation failed',
+                WorkflowActionException::CODE_SERVER_ERROR,
+                [],
+                500
+            );
         }
-
-        $data = $request->post();
-
-        // Clone the definition
-        $clonedData = $definition->toArray();
-        $clonedData['id'] = 'wf_' . uniqid();
-        $clonedData['name'] = $data['name'] ?? $definition->getName() . '_copy';
-        $clonedData['display_name'] = $data['display_name'] ?? $definition->getDisplayName() . ' (Copy)';
-        $clonedData['status'] = WorkflowDefinitionInterface::STATUS_DRAFT;
-        $clonedData['version'] = 1;
-        $clonedData['created_at'] = (new \DateTimeImmutable())->format('c');
-        $clonedData['updated_at'] = $clonedData['created_at'];
-        $clonedData['published_at'] = null;
-
-        // Create cloned definition
-        $cloned = WorkflowDefinition::fromArray($clonedData);
-
-        // Store
-        self::$definitions[$cloned->getId()] = $cloned;
-
-        return $this->success(
-            $this->transformDefinitionToArray($cloned),
-            $this->langService->trans('workflow.definition_cloned'),
-            0,
-            201
-        );
     }
 
     /**
-     * Transform definition to array | 转换定义为数组
+     * 解析路径上的定义ID
      *
-     * @param WorkflowDefinition $definition
-     * @param bool $includeDetails Include nodes and connections
-     * @return array
+     * 非数字 / 非正数 → 404（路径参数不合法等价于「这条资源不存在」，
+     * 不是客户端的参数格式错误 —— 那是请求体校验（422）的语义）。
+     *
+     * @throws WorkflowActionException
      */
-    protected function transformDefinitionToArray(WorkflowDefinition $definition, bool $includeDetails = false): array
+    private function parseId(string $id): int
     {
-        $data = [
-            'id' => $definition->getId(),
-            'name' => $definition->getName(),
-            'display_name' => $definition->getDisplayName(),
-            'description' => $definition->getDescription(),
-            'type' => $definition->getType(),
-            'status' => $definition->getStatus(),
-            'version' => $definition->getVersion(),
-            'tenant_id' => $definition->getTenantId(),
-            // 修复（前置阻塞）：getCreatedAt()/getUpdatedAt()/getPublishedAt() 返回 string|null，
-            // 原实现对 string 调用 format() 会抛 "Call to a member function format() on string"，
-            // 导致定义接口的响应序列化整体 500。这里统一规范化为 ISO 8601 字符串。
-            'created_at' => $this->formatDateTime($definition->getCreatedAt()),
-            'updated_at' => $this->formatDateTime($definition->getUpdatedAt()),
-            'published_at' => $this->formatDateTime($definition->getPublishedAt()),
-        ];
-
-        if ($includeDetails) {
-            $data['nodes'] = array_map(fn ($node) => $node->toArray(), $definition->getNodes());
-            $data['connections'] = array_map(fn ($conn) => $conn->toArray(), $definition->getConnections());
-            $data['config'] = $definition->getConfig();
-            $data['metadata'] = $definition->getMetadata();
+        if (!ctype_digit($id) || (int) $id <= 0) {
+            throw WorkflowActionException::notFound($this->langService->trans('workflow.definition_not_found'));
         }
 
-        return $data;
+        return (int) $id;
     }
 
     /**
-     * 规范化日期时间输出为 ISO 8601 字符串
-     *
-     * WorkflowDefinition 的日期字段是 string|null（非 DateTimeInterface），
-     * 无法直接调用 format()，这里统一转换为 ISO 8601 格式。
-     *
-     * @param string|null $dateTime 原始日期时间字符串
-     * @return string|null
+     * 应用服务（惰性构造，复用控制器的语言服务实例）
      */
-    protected function formatDateTime(?string $dateTime): ?string
+    private function service(): WorkflowDefinitionService
     {
-        if ($dateTime === null || $dateTime === '') {
-            return null;
-        }
-
-        $timestamp = strtotime($dateTime);
-
-        return $timestamp === false ? $dateTime : date('c', $timestamp);
-    }
-
-    /**
-     * Validate definition data | 验证定义数据
-     *
-     * @param array $data
-     * @return array Validation errors
-     */
-    protected function validateDefinitionData(array $data): array
-    {
-        $errors = [];
-
-        if (empty($data['name'])) {
-            $errors['name'] = $this->langService->trans('workflow.name_required');
-        } elseif (!preg_match('/^[a-zA-Z][a-zA-Z0-9_]*$/', $data['name'])) {
-            $errors['name'] = $this->langService->trans('workflow.invalid_name_format');
-        }
-
-        if (!empty($data['type'])) {
-            $validTypes = [
-                WorkflowDefinitionInterface::TYPE_BUSINESS,
-                WorkflowDefinitionInterface::TYPE_APPROVAL,
-                WorkflowDefinitionInterface::TYPE_AUTOMATION,
-                WorkflowDefinitionInterface::TYPE_INTEGRATION,
-            ];
-            if (!in_array($data['type'], $validTypes, true)) {
-                $errors['type'] = $this->langService->trans('workflow.invalid_type');
-            }
-        }
-
-        return $errors;
-    }
-
-    /**
-     * Build nodes from data | 从数据构建节点
-     *
-     * @param WorkflowBuilder $builder
-     * @param array $nodes
-     * @param array $connections
-     * @return void
-     */
-    protected function buildNodesFromData(WorkflowBuilder $builder, array $nodes, array $connections): void
-    {
-        // This is a simplified implementation
-        // In production, this would parse the full node/connection structure
-        foreach ($nodes as $nodeData) {
-            $type = $nodeData['type'] ?? 'task';
-            $name = $nodeData['name'] ?? 'node_' . uniqid();
-            $config = $nodeData['config'] ?? [];
-
-            switch ($type) {
-                case 'start':
-                    $builder->start($name, $config);
-                    break;
-                case 'end':
-                    $builder->end($name, $config);
-                    break;
-                case 'task':
-                    $subType = $nodeData['sub_type'] ?? 'user';
-                    $builder->task($name, $subType, $config);
-                    break;
-                case 'gateway':
-                    $subType = $nodeData['sub_type'] ?? 'exclusive';
-                    $builder->gateway($name, $subType, $config);
-                    break;
-            }
-        }
+        return $this->definitionService ??= new WorkflowDefinitionService($this->langService);
     }
 }
