@@ -6,13 +6,12 @@ namespace Tests\Feature;
 
 use Firebase\JWT\JWT;
 use Infrastructure\Auth\JwtService;
+use Tests\Support\ThinkHelperBootstrap;
 use Tests\ThinkPHPTestCase;
 use think\facade\Env;
 
-// Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
-if (!function_exists('env')) {
-    require_once __DIR__ . '/../../vendor/topthink/framework/src/helper.php';
-}
+// 加载 ThinkPHP 框架 helper（env() / app() / config() 等）| Load ThinkPHP framework helpers
+ThinkHelperBootstrap::ensureHelperFunctionsLoaded();
 
 /**
  * Auth Middleware Error Code Test | 认证中间件错误码测试

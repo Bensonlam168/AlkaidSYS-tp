@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use Tests\ThinkPHPTestCase;
 use Tests\Helpers\AuthHelper;
+use Tests\Support\ThinkHelperBootstrap;
+use Tests\ThinkPHPTestCase;
 
-// Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
-if (!function_exists('env')) {
-    require_once __DIR__ . '/../../vendor/topthink/framework/src/helper.php';
-}
+// 加载 ThinkPHP 框架 helper（env() / app() / config() 等）| Load ThinkPHP framework helpers
+ThinkHelperBootstrap::ensureHelperFunctionsLoaded();
 
 /**
  * Auth Permission Integration Test | 认证权限集成测试

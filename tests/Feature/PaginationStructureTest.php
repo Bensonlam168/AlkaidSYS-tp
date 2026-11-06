@@ -4,12 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use Tests\Support\ThinkHelperBootstrap;
 use Tests\ThinkPHPTestCase;
 
-// Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
-if (!function_exists('env')) {
-    require_once __DIR__ . '/../../vendor/topthink/framework/src/helper.php';
-}
+// 加载 ThinkPHP 框架 helper（env() / app() / config() 等）| Load ThinkPHP framework helpers
+ThinkHelperBootstrap::ensureHelperFunctionsLoaded();
 
 /**
  * Pagination Structure Test | 分页结构测试

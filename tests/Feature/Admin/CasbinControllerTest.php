@@ -5,13 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature\Admin;
 
 use PHPUnit\Framework\Attributes\Group;
+use Tests\Support\ThinkHelperBootstrap;
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
 
-// Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
-if (!function_exists('json')) {
-    require_once __DIR__ . '/../../../vendor/topthink/framework/src/helper.php';
-}
+// 加载 ThinkPHP 框架 helper（env() / json() 等）| Load ThinkPHP framework helpers
+ThinkHelperBootstrap::ensureHelperFunctionsLoaded();
 
 /**
  * Casbin 管理控制器测试

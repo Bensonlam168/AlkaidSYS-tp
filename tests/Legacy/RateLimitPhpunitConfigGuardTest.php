@@ -8,6 +8,7 @@ use DOMDocument;
 use DOMElement;
 use DOMXPath;
 use PHPUnit\Framework\TestCase;
+use Tests\Support\ThinkHelperBootstrap;
 
 /**
  * 守卫：phpunit 配置里的「限流阈值」不得退化到让整条 Feature 套件被 429 打红。
@@ -353,76 +354,42 @@ final class RateLimitPhpunitConfigGuardTest extends TestCase
      * 为什么必须 require 而不是扫文本：本守卫要回答的是「哪些 scope 声明了 capacity/rate」，
      * 只有真跑一遍这份 PHP 才能回答（配置里还有 env() 兜底与条件表达式）；
      * 文本匹配要么漏掉条件分支，要么把注释里提到的字段当成真声明。
+     *
+     * 为什么必须走 `withDefaultEnv()`：配置里每个值都写成 `env('RATELIMIT_*', 默认值)`，
+     * 而「env() 函数存在」与「容器里绑定了 'env'」是两个判定 —— 只补前者，
+     * require 会抛 ClassNotFoundException: class not exists: env。完整来龙去脉
+     * （含「为什么裸 Env 拿到的是生产默认值」「为什么不污染后续用例」）见
+     * `Tests\Support\ThinkHelperBootstrap` 的类注释，本文件不再重复一份。
      */
     private static function ratelimitConfig(): array
     {
-        self::bootstrapEnvHelper();
+        // 只有在 helper 尚未加载（本进程第一次采样）时才需要这条前置断言：文件缺失时给出
+        // 可读的断言失败，而不是让 require_once 静默落空。判定条件与重构前一致 ——
+        // 注意它问的是「要不要现加载 helper」，不是「env() 能不能用」（后者见新类注释 ①②）。
+        if (!function_exists('env')) {
+            self::assertFileExists(
+                ThinkHelperBootstrap::helperFile(),
+                '框架 helper 不存在：请先在 alkaid-backend 容器内 composer install'
+            );
+        }
 
-        $config = require self::repoPath(self::RATELIMIT_CONFIG);
+        $config = ThinkHelperBootstrap::withDefaultEnv(
+            static fn (): mixed => require self::repoPath(self::RATELIMIT_CONFIG)
+        );
         self::assertIsArray($config, 'config/ratelimit.php 必须 return 一个数组，否则本守卫无法取样');
 
         return $config;
     }
 
     /**
-     * 让 `require config/ratelimit.php` 在**没有启动应用容器**的进程里也能跑通
-     *
-     * 背景（容器内实测）：Legacy 套件的 bootstrap 只有 `vendor/autoload.php`，
-     * 而 config/ratelimit.php 的每个值都写成 `env('RATELIMIT_*', 默认值)`；
-     * `env()` 是框架 helper（vendor/topthink/framework/src/helper.php），
-     * 由 `think\App::initialize()` 用 `include_once` 加载，**未启动容器时它并不存在** ——
-     * 直接 require 会 Fatal error: Call to undefined function env()。
-     *
-     * 于是这里按框架自己的顺序补两件事（都是框架本来就会做的事，不引入新语义）：
-     *   1. `require_once` 那份 helper —— App 里也是同一个 `include_once`，重复加载是 no-op，
-     *      不会「cannot redeclare」（helper 内部每个函数还有 function_exists 守卫）；
-     *   2. `env()` 的实现链是 facade（think\facade\Env）→ 容器标识 'env' → `think\Env` 实例，
-     *      裸容器里没有这个绑定（实测会抛 ClassNotFoundException: class not exists: env），
-     *      所以给当前容器绑一个裸的 `think\Env`（它只用 `$_ENV` 初始化、读不到 .env，
-     *      即这里拿到的是**生产默认值**，正好回答「默认部署里声明了哪些 scope 参数」）。
-     *
-     * ⚠️ 两个判定**不能合并**（实测踩过）：
-     *   - `function_exists('env')` 为真 **不** 代表能用：仓库里多个测试文件在**文件顶层**
-     *     `require_once vendor/topthink/framework/src/helper.php`（如 tests/Feature/AuthMiddlewareTest.php:14），
-     *     而 PHPUnit 构建套件时会加载这些文件 —— 于是 helper 早已就位、`env()` 存在，
-     *     但容器里**没有任何 'env' 绑定**，调用时抛 ClassNotFoundException: class not exists: env。
-     *     所以判断的是「当前容器有没有绑定 env」而不是「env() 这个函数在不在」。
-     *
-     * 为什么这不会污染后续用例：`think\App` 构造时会把**自己**设为容器实例
-     * （vendor/topthink/framework/src/think/App.php:189 `static::setInstance($this)`），
-     * 此后 `env()` 走的是 App 自己的 `think\Env`（已 load .env），本文件的临时绑定随之失联。
-     * 同一进程内实测：补完 helper + 绑定后 require 配置正常返回，
-     * 再 `new App()->initialize()`，`env('DB_HOST')` 仍是 .env 里的 `mysql`，不是 `$_ENV` 的 127.0.0.1。
-     *
-     * 全量 `php think test` 时 Feature 套件先跑过、App 已把 'env' 绑进容器，这里整段跳过。
-     */
-    private static function bootstrapEnvHelper(): void
-    {
-        if (!function_exists('env')) {
-            $helper = self::repoPath('vendor/topthink/framework/src/helper.php');
-            self::assertFileExists($helper, '框架 helper 不存在：请先在 alkaid-backend 容器内 composer install');
-
-            require_once $helper;
-        }
-
-        // 已启动过应用（或别处已绑定）时不覆盖：App 的 think\Env 读过 .env，比裸实例更可信
-        $container = \think\Container::getInstance();
-        if ($container->bound('env')) {
-            return;
-        }
-
-        $container->instance('env', new \think\Env());
-    }
-
-    /**
      * 相对仓库根的路径 → 绝对路径
      *
-     * `dirname(__DIR__, 2)`：本文件在 `<仓库根>/tests/Legacy/`，上两级即仓库根，
-     * 与 phpunit.xml 里 `<directory>tests/Legacy</directory>` 的解析基准一致。
+     * 仓库根由 `ThinkHelperBootstrap::repoRoot()` 单点解析，本文件不再自己数 `__DIR__`
+     * 的层级（数错只会让 require 静默落空）。
      */
     private static function repoPath(string $relativePath): string
     {
-        return dirname(__DIR__, 2) . '/' . $relativePath;
+        return ThinkHelperBootstrap::repoRoot() . '/' . $relativePath;
     }
 
     // -------------------------------------------------------------------

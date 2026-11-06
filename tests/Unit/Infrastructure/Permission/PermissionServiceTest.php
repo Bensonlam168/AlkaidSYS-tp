@@ -5,14 +5,13 @@ declare(strict_types=1);
 namespace Tests\Unit\Infrastructure\Permission;
 
 use Infrastructure\Permission\Service\PermissionService;
+use Tests\Support\ThinkHelperBootstrap;
 use Tests\ThinkPHPTestCase;
 use Tests\Traits\DatabaseTransactions;
 use think\facade\Db;
 
-// Load ThinkPHP helper functions | 加载 ThinkPHP 助手函数
-if (!function_exists('env')) {
-    require_once __DIR__ . '/../../../../vendor/topthink/framework/src/helper.php';
-}
+// 加载 ThinkPHP 框架 helper（env() / app() / config() 等）| Load ThinkPHP framework helpers
+ThinkHelperBootstrap::ensureHelperFunctionsLoaded();
 
 /**
  * Permission Service Test | 权限服务测试

@@ -5,13 +5,12 @@ declare(strict_types=1);
 namespace Tests\Feature\Admin;
 
 use Tests\Helpers\AuthHelper;
+use Tests\Support\ThinkHelperBootstrap;
 use Tests\ThinkPHPTestCase;
 use think\facade\Db;
 
-// 加载 ThinkPHP 助手函数 | Load ThinkPHP helper functions
-if (!function_exists('env')) {
-    require_once __DIR__ . '/../../../vendor/topthink/framework/src/helper.php';
-}
+// 加载 ThinkPHP 框架 helper（env() / app() / config() 等）| Load ThinkPHP framework helpers
+ThinkHelperBootstrap::ensureHelperFunctionsLoaded();
 
 /**
  * 权限监控路由鉴权测试
