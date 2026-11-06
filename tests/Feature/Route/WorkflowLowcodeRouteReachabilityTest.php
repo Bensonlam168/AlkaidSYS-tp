@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Route;
 
-use app\controller\workflow\WorkflowInstanceController;
-use app\controller\workflow\WorkflowTaskController;
 use app\controller\workflow\WorkflowTriggerController;
 use Infrastructure\I18n\LanguageService;
 use Infrastructure\Lowcode\Collection\Service\CollectionManager;
@@ -45,9 +43,7 @@ use Tests\ThinkPHPTestCase;
  *
  * ## 为什么可以放心用「响应形状」判定
  *
- * `WorkflowInstanceController` / `WorkflowTaskController` / `WorkflowTriggerController` 用的是
- * **进程内静态数组**（demo 实现），所以同一进程里先创建、再读取，数据一定在；
- * 而两种动作返回的字段集合是**互斥**的：
+ * 三个控制器各动作返回的字段集合是**互斥**的：
  *
  * | 端点 | 正确动作返回 | 被遮蔽时会返回 |
  * | --- | --- | --- |
@@ -55,6 +51,16 @@ use Tests\ThinkPHPTestCase;
  * | `instances/<id>/variables` | `{instance_id, variables}` | 实例对象（含 `definition_id`） |
  * | `tasks/<id>/form` | `{task_id, form_schema, form_data, form_rules}` | 任务对象（含 `status`、`history`） |
  * | `triggers/<id>/logs` | 分页结构 `{list, total, page, page_size, total_pages}` | 触发器对象（含 `webhook_key`） |
+ *
+ * ## 夹具形态（2026 更新：实例/任务已改为真库）
+ *
+ * `WorkflowInstanceController` / `WorkflowTaskController` 已从**进程内静态数组**（demo 实现）
+ * 改为真库 + 真引擎，因此这里的夹具必须是真的：
+ *   - 实例：插入一条可执行定义（LogicFlow `{nodes, edges}`）后走 `POST /instances` 真启动，
+ *     拿到的是**真实实例主键**（不再是 `inst_xxx` 字符串）；
+ *   - 任务：实例 → 任务行直插（见 `Tests\Traits\WorkflowExecutableFixture`），
+ *     因为任务由引擎在推进时产生，本测试只需要「一条属于本租户的任务」用于路由判定。
+ * `WorkflowTriggerController` 仍是 Mock 实现（下一个包才改），它的夹具保持原样。
  *
  * ## 低代码侧用 Mock 而不是真建表
  *
@@ -69,10 +75,17 @@ use Tests\ThinkPHPTestCase;
  */
 class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
 {
+    use \Tests\Traits\WorkflowExecutableFixture;
+
     /**
      * 只审计这两个前缀下的路由（与 `route/workflow.php` / `route/lowcode.php` 一一对应）
      */
     private const AUDIT_PREFIXES = ['/v1/workflow/', '/v1/lowcode/'];
+
+    /**
+     * 真库夹具定义的名称前缀（清理时按前缀删除）
+     */
+    private const DEFINITION_PREFIX = 'route_reachability_';
 
     /**
      * 审计到的规则数下限（防止"一条规则都没收集到 → 断言全部通过"这种假绿）
@@ -118,12 +131,14 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
 
         $this->resetRouteMiddlewareQueue();
         $this->resetInMemoryStores();
+        $this->purgeWorkflowFixturesByNamePrefix(self::DEFINITION_PREFIX);
     }
 
     protected function tearDown(): void
     {
         $this->resetRouteMiddlewareQueue();
         $this->resetInMemoryStores();
+        $this->purgeWorkflowFixturesByNamePrefix(self::DEFINITION_PREFIX);
         $this->unbindLowcodeManagers();
 
         Mockery::close();
@@ -270,7 +285,11 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
             . '说明命中的是 read()（路由仍被父级 :id 遮蔽）。' . $this->diagnostics($response)
         );
         $this->assertSame($instanceId, $data['instance_id'] ?? null);
-        $this->assertGreaterThanOrEqual(1, (int) ($data['count'] ?? 0), '创建实例时写入过 STARTED 历史，count 至少为 1');
+        $this->assertGreaterThanOrEqual(
+            1,
+            (int) ($data['count'] ?? 0),
+            '启动实例时引擎写入了 instance_started 事件，count 至少为 1'
+        );
     }
 
     /**
@@ -291,10 +310,15 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
             'getVariables() 返回的是 {instance_id, variables}；出现 definition_id/status 说明命中了 read()。'
             . $this->diagnostics($response)
         );
+        // 只断言「请求里传的变量原样出现在实例变量里」：
+        // 真引擎启动时会额外写入自己的变量（如 `auto_gen_title`），因此不能再要求整份相等 ——
+        // 那会把「引擎的正常行为」误报成路由缺陷，而本用例要判定的是**进了哪个动作**。
+        $this->assertIsArray($data['variables'] ?? null);
         $this->assertSame(
-            ['probe_key' => 'probe_value'],
-            $data['variables'] ?? null,
-            '返回的必须是实例变量本身（read() 会把变量藏在实例对象的 variables 字段里，形状不同）'
+            'probe_value',
+            $data['variables']['probe_key'] ?? null,
+            '返回的必须是实例变量本身（read() 会把它藏在实例对象里，形状不同）'
+            . $this->diagnostics($response)
         );
     }
 
@@ -596,23 +620,29 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
     }
 
     /**
-     * 通过真实 API 创建一个工作流实例（进程内静态存储，同进程后续请求可读到）
+     * 通过真实 API 创建一个工作流实例（真库 + 真引擎）
+     *
+     * 说明：实例控制器现在真的调引擎启动流程，`definition_id` 必须是**真实定义主键**
+     * （实例表有外键、定义体必须是可执行 LogicFlow 图），占位字符串会被 422 拒绝。
      *
      * @param array<string, mixed> $variables 实例变量
-     * @return string 实例 ID
+     * @return int 真实实例主键
      */
-    private function createWorkflowInstance(array $variables = []): string
+    private function createWorkflowInstance(array $variables = []): int
     {
+        $definitionId = $this->insertExecutableDefinition(self::DEFINITION_PREFIX . uniqid());
+
         $response = $this->request('POST', 'v1/workflow/instances', [
-            'definition_id' => 'wf_reachability_probe',
-            'variables' => $variables,
+            'definition_id' => $definitionId,
+            'title'         => '路由可达性探针实例',
+            'variables'     => $variables,
         ]);
         $data = $this->json($response)['data'] ?? [];
 
         $this->assertSame(201, $response->getCode(), '前置条件：创建实例必须成功。' . $this->diagnostics($response));
 
-        $instanceId = (string) ($data['id'] ?? '');
-        $this->assertNotSame('', $instanceId, '前置条件：创建实例必须返回 id');
+        $instanceId = (int) ($data['id'] ?? 0);
+        $this->assertGreaterThan(0, $instanceId, '前置条件：创建实例必须返回真实实例主键');
 
         return $instanceId;
     }
@@ -639,49 +669,34 @@ class WorkflowLowcodeRouteReachabilityTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种一条待办任务
+     * 播种一条待办任务（真库）
      *
-     * `WorkflowTaskController` **没有**任何创建任务的端点（任务由引擎/审批流产生），
-     * 因此在进程内直接写入它的静态存储；用完由 `tearDown()` 统一清空。
+     * `WorkflowTaskController` **没有**任何创建任务的端点（任务由引擎在推进时产生），
+     * 因此这里直接插入「定义 → 实例 → 任务行」；用完由 `tearDown()` 按定义名前缀统一清理。
      *
-     * @return string 任务 ID
+     * @return int 任务主键
      */
-    private function seedTask(): string
+    private function seedTask(): int
     {
-        $taskId = 'task_reachability_probe';
+        $definitionId = $this->insertExecutableDefinition(self::DEFINITION_PREFIX . uniqid());
+        $instanceId   = $this->seedWorkflowInstanceRow(self::TENANT_ID, $definitionId, self::ADMIN_USER_ID);
 
-        $task = [
-            'id' => $taskId,
-            'instance_id' => 'inst_reachability_probe',
-            'node_id' => 'node_approve',
-            'node_name' => 'Probe Approve',
-            'status' => 'pending',
-            'assignee_id' => (string) self::ADMIN_USER_ID,
-            'assignee_type' => 'user',
-            'form_schema' => ['components' => []],
+        return $this->seedWorkflowTaskRow(self::TENANT_ID, $instanceId, [
+            'assignee'  => self::ADMIN_USER_ID,
+            'status'    => 'claimed',
             'form_data' => ['probe' => true],
-            'form_rules' => [],
-            'variables' => [],
-            'tenant_id' => self::TENANT_ID,
-            'created_at' => (new \DateTimeImmutable())->format('c'),
-            'updated_at' => (new \DateTimeImmutable())->format('c'),
-        ];
-
-        $property = new \ReflectionProperty(WorkflowTaskController::class, 'tasks');
-        $property->setAccessible(true);
-        $property->setValue(null, [$taskId => $task]);
-
-        return $taskId;
+        ]);
     }
 
     /**
-     * 清空四个工作流控制器的进程内静态存储
+     * 清空仍为 Mock 实现的工作流控制器的进程内静态存储
+     *
+     * 实例/任务控制器已改为真库，它们的静态存储不存在了；这里只为
+     * `WorkflowTriggerController`（下一个包才改）保留，`property_exists` 容错。
      */
     private function resetInMemoryStores(): void
     {
         $stores = [
-            WorkflowInstanceController::class => ['instances', 'history'],
-            WorkflowTaskController::class => ['tasks', 'taskHistory'],
             WorkflowTriggerController::class => ['triggers', 'triggerLogs'],
         ];
 

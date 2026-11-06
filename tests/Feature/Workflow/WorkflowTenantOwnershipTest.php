@@ -41,16 +41,22 @@ use think\Response;
  *      控制器内的 `<= 0` 守卫保留为纵深防御，其覆盖率由**用例 15**（反射直接调用 helper）提供。
  *
  * 注意：
- *   - 工作流数据存放在控制器进程内 `protected static array`（demo 实现），本测试用反射播种，
- *     并在每个用例前后清空，避免用例间互相污染；
- *   - 「tenant_id 为 null 的记录」在 DB 中不可能存在（各表 tenant_id 均 NOT NULL），
- *     这里刻意播种，是为了把「缺失归属 → 放行」的失效开放分支钉死成回归断言。
+ *   - 定义 / 触发器控制器**仍是内存 Mock**，对应用例继续用反射播种并在前后清空；
+ *   - 实例 / 任务控制器已改为**真库 + 真引擎**，对应用例改为插真数据、断言真库行：
+ *     `workflow_tasks` / `workflow_instances` 的 `tenant_id` 都是 `NOT NULL` + 外键，
+ *     旧用例靠反射造出来的「tenant_id 为 null 的孤儿记录」在真实库中**不可表示**，
+ *     因此这部分断言升级为两条硬防线：「数据库拒绝 NULL」+「跨租户访问 403」。
  *
  * @package Tests\Feature\Workflow
  */
 class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
 {
     use \Tests\Traits\WorkflowFixtureIsolation;
+
+    /**
+     * 真库夹具定义的名称前缀（清理时按前缀删除，避免误删真实定义）
+     */
+    private const R13_DEFINITION_PREFIX = 'r13_tenant_ownership_';
 
     /**
      * 测试用户 ID（租户 1 / 租户 2）
@@ -216,17 +222,38 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     // =====================================================================
 
     /**
-     * 用例 4（RED）：tenant_id 为 null 的任务，任何租户读取详情都必须被拒绝
+     * 用例 4：跨租户任务详情必须被拒绝（403），且「缺失 tenant_id 的任务」在库里根本插不进去
+     *
+     * 旧实现是内存数组：测试靠反射播种 `tenant_id = null` 的「孤儿任务」，钉住
+     * `isset($task['tenant_id'])` 对 null 返回 false 造成的 fail-open。
+     * 改成真库后这条路**不该再走**，也走不通：`workflow_tasks.tenant_id` 是
+     * `NOT NULL` + 外键 → 孤儿行在真实库中不可表示。
+     *
+     * 因此断言换成两条**真实存在**的防线，语义比原来更强：
+     *   1. 数据库直接拒绝 `tenant_id = NULL` 的任务（fail-closed 在 schema 层就成立）；
+     *   2. 跨租户读同一条任务 → **403**（业务码 403，既不是权限中间件的 2002，
+     *      也不是「查不到所以返回空/404」—— 后者会把「不是你的」伪装成「不存在」）。
      */
-    public function testTaskDetailIsDeniedForRecordWithoutTenantId(): void
+    public function testTaskDetailIsDeniedForForeignTenantAndNullTenantIsRejectedBySchema(): void
     {
-        $taskId = 'task_r13_orphan_' . uniqid();
-        $this->seedTask($taskId, null);
+        $taskId = $this->seedTask(1);
 
-        $this->assertReadDeniedForBothTenants(
+        $response = $this->httpRequest(
+            'GET',
             'v1/workflow/tasks/' . $taskId,
-            'tenant_id 为 null 的工作流任务'
+            [],
+            $this->authHeaders($this->tenant2UserId, 2)
         );
+
+        $this->assertDenied($response, '跨租户读取任务详情必须被拒绝');
+        $this->assertSame(
+            403,
+            (int) (json_decode($response->getContent(), true)['code'] ?? 0),
+            '跨租户读任务的业务码必须是 403（来自租户归属校验），实际响应：' . $response->getContent()
+        );
+
+        // schema 层兜底：tenant_id 为 NULL 的任务行写不进去（R13 那类数据在真库里不可表示）
+        $this->assertNullTenantInsertIsRejected('workflow_tasks');
     }
 
     /**
@@ -234,8 +261,7 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
      */
     public function testTaskDetailIsAllowedForOwnTenantRecord(): void
     {
-        $taskId = 'task_r13_own_' . uniqid();
-        $this->seedTask($taskId, 1);
+        $taskId = $this->seedTask(1);
 
         $response = $this->httpRequest(
             'GET',
@@ -254,48 +280,54 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         $this->assertIsArray($body);
         $this->assertSame(0, $body['code'], '同租户读取任务详情的业务码应为 0，实际响应：' . $response->getContent());
         $this->assertSame($taskId, $body['data']['id'], '返回的应是请求的那条任务');
+        $this->assertSame(1, $body['data']['tenant_id'], '返回任务的 tenant_id 应为 1');
     }
 
     /**
-     * 用例 6（RED）：tenant_id 为 null 的任务，form / claim / approve 都必须被拒绝且无副作用
+     * 用例 6：跨租户调用任务的 form / claim / approve 都必须被拒绝且无副作用
      *
-     * 覆盖 `getForm()`、`claim()` 与 `checkTaskAccess()`（approve 走它）三处失效开放分支。
+     * 覆盖 `getForm()`、`claim()` 与审批动作（走同一套租户归属校验）三处入口。
+     * 副作用断言读的是**库里的行**，不再是内存数组 —— 越权调用连一个字段都不许改。
      */
-    public function testTaskActionEndpointsAreDeniedForRecordWithoutTenantId(): void
+    public function testTaskActionEndpointsAreDeniedForForeignTenant(): void
     {
-        $taskId = 'task_r13_action_' . uniqid();
-        $this->seedTask($taskId, null);
-        $headers = $this->authHeaders($this->tenant1UserId, 1);
+        $taskId = $this->seedTask(1);
+        $headers = $this->authHeaders($this->tenant2UserId, 2);
 
         $this->assertDenied(
             $this->httpRequest('GET', 'v1/workflow/tasks/' . $taskId . '/form', [], $headers),
-            'tenant_id 为 null 的任务，读取表单必须被拒绝（不得 200）'
+            '跨租户读取任务表单必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('POST', 'v1/workflow/tasks/' . $taskId . '/claim', [], $headers),
-            'tenant_id 为 null 的任务，claim 必须被拒绝（不得 200）'
+            '跨租户认领任务必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('POST', 'v1/workflow/tasks/' . $taskId . '/approve', ['comment' => '越权审批'], $headers),
-            'tenant_id 为 null 的任务，approve 必须被拒绝（不得 200）'
+            '跨租户审批任务必须被拒绝（不得 200）'
         );
 
-        // 副作用断言：任务未被认领、状态仍为 pending
-        $task = $this->getStatic(WorkflowTaskController::class, 'tasks', $taskId);
-        $this->assertNotNull($task, '任务应仍存在于控制器静态存储中');
+        // 副作用断言：库里那一行一个字段都没变
+        $task = Db::table('workflow_tasks')->where('id', $taskId)->find();
+        $this->assertIsArray($task, '越权调用后任务行必须仍然存在');
         $this->assertNull($task['assignee'], '越权 claim 被拒绝后，任务 assignee 不应被改写');
         $this->assertSame(
             WorkflowTaskController::STATUS_PENDING,
-            $task['status'],
+            (string) $task['status'],
             '越权 approve 被拒绝后，任务状态应仍为 pending'
         );
+        $this->assertNull($task['comment'], '越权审批的意见不得落库');
 
         // 防止修过头：同租户任务仍可正常认领
-        $ownTaskId = 'task_r13_action_own_' . uniqid();
-        $this->seedTask($ownTaskId, 1);
-        $ownResponse = $this->httpRequest('POST', 'v1/workflow/tasks/' . $ownTaskId . '/claim', [], $headers);
+        $ownTaskId = $this->seedTask(1);
+        $ownResponse = $this->httpRequest(
+            'POST',
+            'v1/workflow/tasks/' . $ownTaskId . '/claim',
+            [],
+            $this->authHeaders($this->tenant1UserId, 1)
+        );
         $this->assertSame(
             200,
             $ownResponse->getCode(),
@@ -304,19 +336,18 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     }
 
     /**
-     * 用例 7（RED）：待办列表不得把「缺失 tenant_id」的任务显示给任何租户
+     * 用例 7：待办列表只能是「本租户 + 在办 + 我是参与者」
      *
-     * 覆盖 `pending()` 内 array_filter 的同一处失效开放分支（本文件唯一在闭包内调用
-     * helper 的位置）：两条任务都指派给当前用户，唯一差别是 tenant_id；缺失归属的那条
-     * 在修复前会出现在待办列表中（`isset()` 对 null 返回 false → 跳过整个校验）。
+     * 旧实现用「孤儿任务不出现在待办里」来钉住 fail-open 分支；真库下孤儿行插不进去
+     * （见用例 4），所以这里改用**真实可构造**的对照：另一租户里指派给同一个用户 ID 的任务。
+     * 断言：本租户那条在列表里，另一租户那条不在 —— 租户过滤确实生效，而不是「全都返回」。
      */
-    public function testPendingListExcludesTasksWithoutTenantId(): void
+    public function testPendingListExcludesTasksFromOtherTenant(): void
     {
-        $ownTaskId = 'task_r13_pending_own_' . uniqid();
-        $orphanTaskId = 'task_r13_pending_orphan_' . uniqid();
+        $ownTaskId = $this->seedTask(1, $this->tenant1UserId);
 
-        $this->seedTask($ownTaskId, 1, $this->tenant1UserId);
-        $this->seedTask($orphanTaskId, null, $this->tenant1UserId);
+        // 另一租户的任务，故意也指派给同一个用户ID（模拟「同一人跨租户拥有账号」的极端情况）
+        $foreignTaskId = $this->seedTask(2, $this->tenant1UserId);
 
         $response = $this->httpRequest(
             'GET',
@@ -335,12 +366,12 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         $this->assertIsArray($body);
         $this->assertSame(0, $body['code'], '待办列表的业务码应为 0，实际响应：' . $response->getContent());
 
-        $ids = array_column($body['data']['list'], 'id');
+        $ids = array_map('intval', array_column($body['data']['list'], 'id'));
         $this->assertContains($ownTaskId, $ids, '待办列表应包含本租户指派给当前用户的任务（正常路径）');
         $this->assertNotContains(
-            $orphanTaskId,
+            $foreignTaskId,
             $ids,
-            '缺少 tenant_id 的任务不得出现在任何租户的待办列表中（R13：isset() 对 null 返回 false 导致校验被跳过）'
+            '其它租户的任务不得出现在本租户的待办列表中（租户过滤必须下推到查询）'
         );
     }
 
@@ -348,17 +379,30 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     // 工作流实例（WorkflowInstanceController）
     // =====================================================================
     /**
-     * 用例 8（RED）：tenant_id 为 null 的实例，任何租户读取详情都必须被拒绝
+     * 用例 8：跨租户读取实例详情必须被拒绝（403），且 NULL tenant_id 的实例插不进库
+     *
+     * 与用例 4 同一口径：真库下 `workflow_instances.tenant_id` 是 NOT NULL + 外键，
+     * 旧的「孤儿实例」只能存在于内存数组里，因此断言换成「schema 拒绝 + 跨租户 403」。
      */
-    public function testInstanceDetailIsDeniedForRecordWithoutTenantId(): void
+    public function testInstanceDetailIsDeniedForForeignTenantAndNullTenantIsRejectedBySchema(): void
     {
-        $instanceId = 'inst_r13_orphan_' . uniqid();
-        $this->seedInstance($instanceId, null);
+        $instanceId = $this->seedInstance(1);
 
-        $this->assertReadDeniedForBothTenants(
+        $response = $this->httpRequest(
+            'GET',
             'v1/workflow/instances/' . $instanceId,
-            'tenant_id 为 null 的工作流实例'
+            [],
+            $this->authHeaders($this->tenant2UserId, 2)
         );
+
+        $this->assertDenied($response, '跨租户读取实例详情必须被拒绝');
+        $this->assertSame(
+            403,
+            (int) (json_decode($response->getContent(), true)['code'] ?? 0),
+            '跨租户读实例的业务码必须是 403（来自租户归属校验），实际响应：' . $response->getContent()
+        );
+
+        $this->assertNullTenantInsertIsRejected('workflow_instances');
     }
 
     /**
@@ -366,8 +410,7 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
      */
     public function testInstanceDetailIsAllowedForOwnTenantRecord(): void
     {
-        $instanceId = 'inst_r13_own_' . uniqid();
-        $this->seedInstance($instanceId, 1);
+        $instanceId = $this->seedInstance(1);
 
         $response = $this->httpRequest(
             'GET',
@@ -386,55 +429,59 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
         $this->assertIsArray($body);
         $this->assertSame(0, $body['code'], '同租户读取实例详情的业务码应为 0，实际响应：' . $response->getContent());
         $this->assertSame($instanceId, $body['data']['id'], '返回的应是请求的那条实例');
+        $this->assertSame(1, $body['data']['tenant_id'], '返回实例的 tenant_id 应为 1');
     }
 
     /**
-     * 用例 10（RED）：tenant_id 为 null 的实例，cancel / history / variables 都必须被拒绝且无副作用
+     * 用例 10：跨租户调用实例的 cancel / history / variables 都必须被拒绝且无副作用
      */
-    public function testInstanceActionEndpointsAreDeniedForRecordWithoutTenantId(): void
+    public function testInstanceActionEndpointsAreDeniedForForeignTenant(): void
     {
-        $instanceId = 'inst_r13_action_' . uniqid();
-        $this->seedInstance($instanceId, null);
-        $headers = $this->authHeaders($this->tenant1UserId, 1);
+        $instanceId = $this->seedInstance(1);
+        $headers = $this->authHeaders($this->tenant2UserId, 2);
 
         $this->assertDenied(
             $this->httpRequest('POST', 'v1/workflow/instances/' . $instanceId . '/cancel', ['reason' => '越权取消'], $headers),
-            'tenant_id 为 null 的实例，cancel 必须被拒绝（不得 200）'
+            '跨租户取消实例必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('GET', 'v1/workflow/instances/' . $instanceId . '/history', [], $headers),
-            'tenant_id 为 null 的实例，history 必须被拒绝（不得 200）'
+            '跨租户读取实例轨迹必须被拒绝（不得 200）'
         );
 
         $this->assertDenied(
             $this->httpRequest('GET', 'v1/workflow/instances/' . $instanceId . '/variables', [], $headers),
-            'tenant_id 为 null 的实例，variables 必须被拒绝（不得 200）'
+            '跨租户读取实例变量必须被拒绝（不得 200）'
         );
 
-        // 副作用断言：实例状态未被取消
-        $instance = $this->getStatic(WorkflowInstanceController::class, 'instances', $instanceId);
-        $this->assertNotNull($instance, '实例应仍存在于控制器静态存储中');
+        // 副作用断言：库里的实例状态未被取消
+        $instance = Db::table('workflow_instances')->where('id', $instanceId)->find();
+        $this->assertIsArray($instance, '越权调用后实例行必须仍然存在');
         $this->assertSame(
             WorkflowInstanceController::STATUS_RUNNING,
-            $instance['status'],
+            (string) $instance['status'],
             '越权 cancel 被拒绝后，实例状态应仍为 running'
         );
+        $this->assertNull($instance['completed_at'], '越权 cancel 不得写入 completed_at');
 
         // 防止修过头：同租户实例仍可正常取消
-        $ownInstanceId = 'inst_r13_action_own_' . uniqid();
-        $this->seedInstance($ownInstanceId, 1);
+        $ownInstanceId = $this->seedInstance(1);
         $ownResponse = $this->httpRequest(
             'POST',
             'v1/workflow/instances/' . $ownInstanceId . '/cancel',
             ['reason' => '正常取消'],
-            $headers
+            $this->authHeaders($this->tenant1UserId, 1)
         );
         $this->assertSame(
             200,
             $ownResponse->getCode(),
             '同租户取消自己的实例应返回 200，实际响应：' . $ownResponse->getContent()
         );
+
+        $cancelled = Db::table('workflow_instances')->where('id', $ownInstanceId)->find();
+        $this->assertIsArray($cancelled);
+        $this->assertSame('cancelled', (string) $cancelled['status'], '取消后实例状态必须落库为 cancelled');
     }
 
     // =====================================================================
@@ -549,21 +596,19 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
      */
     public function testZeroTenantContextIsRejectedForBothOrphanAndOwnedRecords(): void
     {
-        // 数组形态（Task）：tenant_id = null 与 tenant_id = 1 各一条
-        $orphanTaskId = 'task_r13_zero_orphan_' . uniqid();
-        $ownedTaskId = 'task_r13_zero_owned_' . uniqid();
-        $this->seedTask($orphanTaskId, null);
-        $this->seedTask($ownedTaskId, 1);
+        // 数组形态（Task）：真实库里的两条任务（跨租户 + 本租户）
+        $foreignTaskId = $this->seedTask(2);
+        $ownedTaskId   = $this->seedTask(1);
 
-        // 对象形态（Definition）：同样播种一条缺失归属的定义，证明守卫对所有调用形态生效
+        // 对象形态（Definition）：内存 Mock 控制器，同样播种一条定义，证明守卫对所有调用形态生效
         $orphanDefinitionId = $this->seedDefinition(null);
 
         // 手工签发 tenant_id = 0 的令牌：签发侧已不可产生此类 token，此处验证校验侧兜底
         $headers = $this->rawAuthHeaders($this->signZeroTenantAccessToken($this->tenant1UserId));
 
         $this->assertRejectedByAuthMiddleware(
-            $this->httpRequest('GET', 'v1/workflow/tasks/' . $orphanTaskId, [], $headers),
-            '当前租户为 0 的令牌必须被鉴权层拒绝，不能把 0 号租户上下文带进控制器（任务 ' . $orphanTaskId . '）'
+            $this->httpRequest('GET', 'v1/workflow/tasks/' . $foreignTaskId, [], $headers),
+            '当前租户为 0 的令牌必须被鉴权层拒绝，不能把 0 号租户上下文带进控制器（任务 ' . $foreignTaskId . '）'
         );
 
         $this->assertRejectedByAuthMiddleware(
@@ -740,58 +785,118 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种一条工作流任务
+     * 播种一条工作流任务（**真库**）
      *
-     * @param string   $taskId   任务 ID
-     * @param int|null $tenantId 归属租户（null = 缺失归属）
+     * 为什么需要自己造定义与实例：`workflow_tasks.instance_id` 与 `tenant_id` 都有外键，
+     * 任务行不能凭空插入。这里按「定义 → 实例 → 任务」的顺序建出**可追溯**的最小数据，
+     * 而不是退回 Mock（Mock 证明不了租户隔离）。
+     *
+     * @param int      $tenantId 归属租户（1 或 2；NULL 会被数据库拒绝，见 assertNullTenantInsertIsRejected）
      * @param int|null $assignee 受理人（用于待办列表用例）
+     * @return int 任务主键
      */
-    private function seedTask(string $taskId, ?int $tenantId, ?int $assignee = null): void
+    private function seedTask(int $tenantId, ?int $assignee = null): int
     {
-        $now = (new \DateTimeImmutable())->format('c');
+        $instanceId = $this->seedInstance($tenantId);
+        $now        = date('Y-m-d H:i:s');
 
-        $this->putStatic(WorkflowTaskController::class, 'tasks', $taskId, [
-            'id' => $taskId,
-            'tenant_id' => $tenantId,
-            'instance_id' => 'inst_' . $taskId,
-            'definition_id' => 'def_' . $taskId,
-            'name' => 'R13 租户归属测试任务',
-            'type' => WorkflowTaskController::TYPE_APPROVAL,
-            'status' => WorkflowTaskController::STATUS_PENDING,
-            'assignee' => $assignee,
-            'delegated_to' => null,
-            'candidate_users' => [],
-            'candidate_groups' => [],
-            'form_data' => [],
-            'due_date' => null,
-            'created_at' => $now,
-            'updated_at' => $now,
+        return (int) Db::table('workflow_tasks')->insertGetId([
+            'instance_id'      => $instanceId,
+            'tenant_id'        => $tenantId,
+            'node_id'          => 'apply',
+            'node_name'        => 'apply',
+            'task_type'        => 'user_task',
+            'task_sub_type'    => 'approval',
+            'title'            => 'R13 租户归属测试任务',
+            'status'           => 'pending',
+            'priority'         => 0,
+            'assignee'         => $assignee,
+            'candidate_users'  => json_encode([], JSON_UNESCAPED_UNICODE),
+            'candidate_groups' => json_encode([], JSON_UNESCAPED_UNICODE),
+            'form_data'        => json_encode([], JSON_UNESCAPED_UNICODE),
+            'created_at'       => $now,
+            'updated_at'       => $now,
         ]);
     }
 
     /**
-     * 播种一条工作流实例（状态 running，便于验证 cancel 的副作用）
+     * 播种一条工作流实例（**真库**，状态 running，便于验证 cancel 的副作用）
+     *
+     * @param int $tenantId 归属租户
+     * @return int 实例主键
      */
-    private function seedInstance(string $instanceId, ?int $tenantId): void
+    private function seedInstance(int $tenantId): int
     {
-        $now = (new \DateTimeImmutable())->format('c');
+        $definitionId = $this->seedDefinitionRow($tenantId);
+        $now          = date('Y-m-d H:i:s');
 
-        $this->putStatic(WorkflowInstanceController::class, 'instances', $instanceId, [
-            'id' => $instanceId,
-            'definition_id' => 'def_' . $instanceId,
-            'definition_version' => 1,
-            'status' => WorkflowInstanceController::STATUS_RUNNING,
-            'current_node_id' => 'node_start',
-            'variables' => [],
-            'context' => [],
-            'trigger_type' => 'manual',
-            'trigger_data' => [],
-            'started_by' => $this->tenant1UserId,
-            'started_at' => $now,
-            'completed_at' => null,
-            'tenant_id' => $tenantId,
-            'error_message' => null,
+        return (int) Db::table('workflow_instances')->insertGetId([
+            'definition_id' => $definitionId,
+            'tenant_id'     => $tenantId,
+            'title'         => 'R13 租户归属测试实例',
+            'status'        => 'running',
+            'priority'      => 0,
+            'variables'     => json_encode([], JSON_UNESCAPED_UNICODE),
+            'context'       => json_encode([], JSON_UNESCAPED_UNICODE),
+            'started_at'    => $now,
+            'created_by'    => $tenantId === 1 ? $this->tenant1UserId : $this->tenant2UserId,
+            'created_at'    => $now,
+            'updated_at'    => $now,
         ]);
+    }
+
+    /**
+     * 播种一条工作流定义行（**真库**，只作为实例的外键目标，不参与执行）
+     *
+     * @param int $tenantId 归属租户
+     */
+    private function seedDefinitionRow(int $tenantId): int
+    {
+        $now = date('Y-m-d H:i:s');
+
+        return (int) Db::table('workflow_definitions')->insertGetId([
+            'tenant_id'        => $tenantId,
+            'name'             => self::R13_DEFINITION_PREFIX . uniqid(),
+            'display_name'     => 'R13 租户归属测试定义',
+            'description'      => 'R13 测试夹具（用例结束后删除）',
+            'type'             => 'approval',
+            'category'         => 'finance',
+            'icon'             => 'r13-icon',
+            'version'          => 1,
+            'status'           => 'draft',
+            'is_active'        => 0,
+            'created_at'       => $now,
+            'updated_at'       => $now,
+        ]);
+    }
+
+    /**
+     * 断言「tenant_id 为 NULL 的行写不进这张表」
+     *
+     * 这是 R13 的**最底层**防线：控制器的 `isset()` 判断可以被改错，但 schema 层的
+     * `NOT NULL` 无法被绕过 —— 每条写入路径最终都要撞上它。
+     *
+     * 注意：这里刻意用最小列集触发同样的约束失败，只验证「NULL 被拒绝」这一件事，
+     * 不验证别的列是否必填（那与 R13 无关）。
+     *
+     * @param string $table 表名（workflow_tasks / workflow_instances）
+     */
+    private function assertNullTenantInsertIsRejected(string $table): void
+    {
+        $rejected = false;
+
+        try {
+            // 只给 tenant_id = NULL 与最小列：无论失败原因是 NOT NULL 还是别的约束，
+            // 只要 SQL 没有「成功插入」就已达到本断言目的
+            Db::table($table)->insert(['tenant_id' => null, 'created_at' => date('Y-m-d H:i:s')]);
+        } catch (\Throwable) {
+            $rejected = true;
+        }
+
+        $this->assertTrue(
+            $rejected,
+            $table . '.tenant_id 为 NOT NULL，写入 NULL 必须被数据库拒绝（R13 的孤儿数据在真库中不可表示）'
+        );
     }
 
     /**
@@ -1171,10 +1276,40 @@ class WorkflowTenantOwnershipTest extends ThinkPHPTestCase
 
     /**
      * 清理工作流测试夹具（含其他测试类留下的同 slug 残留）
+     *
+     * 分两部分：
+     *   1. `purgeWorkflowFixtures()`：用户/角色/权限（trait 负责，按 ID 区间 OR 自然键）；
+     *   2. `purgeWorkflowBusinessFixtures()`：本类插进真库的定义/实例/任务/事件
+     *      （外键顺序：事件、任务 → 实例 → 定义）。
      */
     private function cleanupFixtures(): void
     {
+        $this->purgeWorkflowBusinessFixtures();
         $this->purgeWorkflowFixtures();
+    }
+
+    /**
+     * 删除本类播种的业务数据（按定义名前缀圈定，绝不按 ID 区间乱删）
+     */
+    private function purgeWorkflowBusinessFixtures(): void
+    {
+        $definitionIds = Db::table('workflow_definitions')
+            ->whereLike('name', self::R13_DEFINITION_PREFIX . '%')
+            ->column('id');
+
+        if ($definitionIds === []) {
+            return;
+        }
+
+        $instanceIds = Db::table('workflow_instances')->whereIn('definition_id', $definitionIds)->column('id');
+
+        if ($instanceIds !== []) {
+            Db::table('workflow_tasks')->whereIn('instance_id', $instanceIds)->delete();
+            Db::table('workflow_event_logs')->whereIn('instance_id', $instanceIds)->delete();
+            Db::table('workflow_instances')->whereIn('id', $instanceIds)->delete();
+        }
+
+        Db::table('workflow_definitions')->whereIn('id', $definitionIds)->delete();
     }
 
     /**

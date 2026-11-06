@@ -5,37 +5,56 @@ declare(strict_types=1);
 namespace app\controller\workflow;
 
 use app\controller\ApiController;
-use think\App;
-use think\facade\Db;
-use think\Request;
+use app\Request;
+use Closure;
+use Infrastructure\Workflow\Exception\WorkflowActionException;
+use Infrastructure\Workflow\Service\WorkflowTaskService;
+use think\facade\Log;
 use think\Response;
+use Throwable;
 
 /**
  * Workflow Task API Controller | 工作流任务 API 控制器
  *
- * RESTful API for workflow task management.
  * 工作流任务管理的 RESTful API。
  *
- * Endpoints:
- * - GET    /workflow/tasks                    - List tasks | 列出任务
- * - GET    /workflow/tasks/pending            - Get pending tasks for current user | 获取当前用户待办任务
- * - GET    /workflow/tasks/{id}               - Get task details | 获取任务详情
- * - POST   /workflow/tasks/{id}/approve       - Approve task | 审批通过
- * - POST   /workflow/tasks/{id}/reject        - Reject task | 审批拒绝
- * - POST   /workflow/tasks/{id}/transfer      - Transfer task | 转办任务
- * - POST   /workflow/tasks/{id}/delegate      - Delegate task | 委托任务
- * - POST   /workflow/tasks/{id}/claim         - Claim task | 认领任务
- * - POST   /workflow/tasks/{id}/unclaim       - Unclaim task | 取消认领
- * - POST   /workflow/tasks/{id}/complete      - Complete task | 完成任务
- * - GET    /workflow/tasks/{id}/form          - Get task form | 获取任务表单
- * - POST   /workflow/tasks/{id}/form          - Submit task form | 提交任务表单
+ * ## 本控制器的职责（分层约定）
+ *
+ * 只做四件事：**取参 → 参数校验 → 调 Service → 包统一响应**。
+ * 租户归属、任务状态机、三层授权（租户/宿主/引擎）、引擎调用与落库全部在
+ * `Infrastructure\Workflow\Service\WorkflowTaskService`，数据访问在 `Infrastructure\Workflow\Repository\*`。
+ *
+ * ## 与旧实现的关系
+ *
+ * 旧版本是 `protected static array $tasks` / `$taskHistory` 的内存 Mock：
+ * 12 个端点全都「跑得通」，但一个字节都没落库 —— 重启即清空，且永不真正推进流程。本版本改为真库 + 真引擎：
+ *
+ * | 端点 | 旧（Mock） | 新（真库 / 引擎） |
+ * | ---- | ---------- | ----------------- |
+ * | `index` | 内存数组过滤 | `workflow_tasks` 查询（强制 tenant 过滤 + 分页下推） |
+ * | `pending` | 内存里算候选 | `searchPending()`（assignee / 候选用户 / 候选组下推到 SQL） |
+ * | `read` | 内存对象 + `$taskHistory` | 库行 + `workflow_event_logs` |
+ * | `approve` / `complete` | 改内存字段 | 引擎 `executeProcessTask()`（任务状态、result、事件由引擎写） |
+ * | `reject` | 改内存字段 | 引擎 `executeAndJumpToEnd()`（实例进入驳回终态） |
+ * | `claim` / `unclaim` | 改内存字段 | 参与者集合交给引擎 + 宿主落受理人/状态 + 事件 |
+ * | `transfer` / `delegate` | 改内存字段（`delegated_to` 等不存在列） | 目标用户校验 + 受理人迁移 + 事件 |
+ * | `getForm` / `submitForm` | 只读写内存 `form_data` | 读库 `form_data`；提交后**推进流程** |
+ *
+ * ## 操作人身份（安全不变量）
+ *
+ * 所有写操作的操作人**只**取 `$request->userId()`：它由 `Auth` 中间件从 JWT 的 `sub` 写入，
+ * 请求头（`X-User-ID` 等）与请求体里的任何 `operator` / `user_id` 字段都不会被读取。
+ * 这一点是硬性的：引擎的 `isAllowed()` 对 `flow_auto`、`flow.admin` 无条件放行，
+ * 一旦允许 HTTP 请求自称这两个身份，等于把任何登录用户都变成超级管理员。
  *
  * @package app\controller\workflow
  */
 class WorkflowTaskController extends ApiController
 {
     /**
-     * Task status constants
+     * Task status constants | 任务状态常量
+     *
+     * 取值与 `workflow_tasks.status` 的列注释一致（保留常量是因为既有测试与调用方按类常量引用）。
      */
     public const STATUS_PENDING = 'pending';
     public const STATUS_CLAIMED = 'claimed';
@@ -45,7 +64,7 @@ class WorkflowTaskController extends ApiController
     public const STATUS_CANCELLED = 'cancelled';
 
     /**
-     * Task type constants
+     * Task type constants | 任务类型常量
      */
     public const TYPE_USER = 'user';
     public const TYPE_SERVICE = 'service';
@@ -54,18 +73,9 @@ class WorkflowTaskController extends ApiController
     public const TYPE_COUNTERSIGN = 'countersign';
 
     /**
-     * In-memory storage for demo
-     *
-     * @var array
+     * 应用服务（惰性构造：控制器本身无状态）
      */
-    protected static array $tasks = [];
-
-    /**
-     * Task action history storage
-     *
-     * @var array
-     */
-    protected static array $taskHistory = [];
+    private ?WorkflowTaskService $workflowTaskService = null;
 
     /**
      * List workflow tasks | 列出工作流任务
@@ -73,74 +83,38 @@ class WorkflowTaskController extends ApiController
      * GET /workflow/tasks
      *
      * Query Parameters:
-     * - page: int
-     * - page_size: int
-     * - instance_id: string
+     * - page / page_size
+     * - instance_id: int
      * - status: string
-     * - type: string
-     * - assignee: string
-     * - candidate_users: string (comma-separated)
-     * - candidate_groups: string (comma-separated)
-     *
-     * @param Request $request
-     * @return Response
+     * - type: string（映射到 `task_type` 列）
+     * - assignee: int
+     * - node_id: string
      */
     public function index(Request $request): Response
     {
-        $params = $request->get();
-        $page = (int)($params['page'] ?? 1);
-        $pageSize = (int)($params['page_size'] ?? 20);
+        $params   = $request->get();
+        $page     = (int) ($params['page'] ?? 1);
+        $pageSize = (int) ($params['page_size'] ?? 20);
 
-        // Validate pagination
-        $paginationValidation = $this->validatePagination($page, $pageSize);
-        if (!$paginationValidation['valid']) {
-            return $this->validationError($paginationValidation['errors']);
+        $pagination = $this->validatePagination($page, $pageSize);
+
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
         }
 
-        // Get tenant ID
         $tenantId = $request->tenantId();
 
-        // Filter tasks
-        $allTasks = array_values(self::$tasks);
+        return $this->respond(function () use ($tenantId, $params, $page, $pageSize): Response {
+            $result = $this->service()->paginate($tenantId, [
+                'status'      => $params['status'] ?? null,
+                'instance_id' => $params['instance_id'] ?? null,
+                'type'        => $params['type'] ?? null,
+                'assignee'    => $params['assignee'] ?? null,
+                'node_id'     => $params['node_id'] ?? null,
+            ], $page, $pageSize);
 
-        // Apply tenant filter
-        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_tasks.tenant_id` 是 NOT NULL，
-        // 不存在「全局任务」，原实现的 `|| (... ?? null) === null` 是永不成立的死分支，
-        // 却会让「缺少 tenant_id 的脏数据」对所有租户可见（fail-open）。
-        // 同时 `app\Request::tenantId()` 的返回类型是 int（恒 >= 1），原先的
-        // `if ($tenantId !== null)` 包裹同为死条件；去掉后即便将来返回 null，
-        // 结果也只是「过滤掉全部记录」（fail-closed），而不是跳过过滤。
-        $allTasks = array_filter($allTasks, fn ($task) => ($task['tenant_id'] ?? null) === $tenantId);
-
-        // Apply status filter
-        if (!empty($params['status'])) {
-            $allTasks = array_filter($allTasks, fn ($task) => $task['status'] === $params['status']);
-        }
-
-        // Apply instance filter
-        if (!empty($params['instance_id'])) {
-            $allTasks = array_filter($allTasks, fn ($task) => $task['instance_id'] === $params['instance_id']);
-        }
-
-        // Apply type filter
-        if (!empty($params['type'])) {
-            $allTasks = array_filter($allTasks, fn ($task) => $task['type'] === $params['type']);
-        }
-
-        // Apply assignee filter
-        if (!empty($params['assignee'])) {
-            $allTasks = array_filter($allTasks, fn ($task) => $task['assignee'] === $params['assignee']);
-        }
-
-        // Re-index and sort by created_at desc
-        $allTasks = array_values($allTasks);
-        usort($allTasks, fn ($a, $b) => strtotime($b['created_at']) - strtotime($a['created_at']));
-
-        $total = count($allTasks);
-        $offset = ($page - 1) * $pageSize;
-        $list = array_slice($allTasks, $offset, $pageSize);
-
-        return $this->paginate($list, $total, $page, $pageSize);
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
+        });
     }
 
     /**
@@ -148,83 +122,37 @@ class WorkflowTaskController extends ApiController
      *
      * GET /workflow/tasks/pending
      *
-     * @param Request $request
-     * @return Response
+     * 「待办」= 在办状态 + （受理人是我 或 我在候选用户里 或 我的角色命中候选组）。
+     * 判定下推到 SQL：只有先过滤再分页，`total` 才与 `list` 一致。
      */
     public function pending(Request $request): Response
     {
-        $params = $request->get();
-        $page = (int)($params['page'] ?? 1);
-        $pageSize = (int)($params['page_size'] ?? 20);
+        $params   = $request->get();
+        $page     = (int) ($params['page'] ?? 1);
+        $pageSize = (int) ($params['page_size'] ?? 20);
 
-        // Validate pagination
-        $paginationValidation = $this->validatePagination($page, $pageSize);
-        if (!$paginationValidation['valid']) {
-            return $this->validationError($paginationValidation['errors']);
+        $pagination = $this->validatePagination($page, $pageSize);
+
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
         }
 
-        // Get current user and tenant
-        $userId = $request->userId();
+        $userId   = $request->userId();
         $tenantId = $request->tenantId();
-        // 说明（缺陷 R1）：历史代码用属性方式读取 userGroups，会落到 think\Request::__get()
-        // → middleware('userGroups')，恒为 null；必须调用 app\Request::userGroups()，
-        // 才能拿到当前用户在当前租户下的角色 slug 列表。
-        $userGroups = $request->userGroups();
 
         if ($userId === null) {
             return $this->unauthorized();
         }
 
-        // Filter pending tasks for current user
-        $pendingTasks = array_filter(self::$tasks, function ($task) use ($userId, $tenantId, $userGroups) {
-            // Check tenant | 租户归属校验（缺陷 R13）：缺失 tenant_id 的任务对任何租户都不可见
-            // 过滤器内只关心「是否归属当前租户」，故以 helper 是否返回 null 作布尔短路
-            if ($this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId) !== null) {
-                return false;
-            }
+        // 角色 slug 必须走 app\Request::userGroups()：属性访问会落到 think\Request::__get()
+        // → middleware('userGroups')，恒为 null（缺陷 R1 的成因）
+        $userGroups = $request->userGroups();
 
-            // Must be pending or claimed by this user
-            if (!in_array($task['status'], [self::STATUS_PENDING, self::STATUS_CLAIMED], true)) {
-                return false;
-            }
+        return $this->respond(function () use ($tenantId, $userId, $userGroups, $page, $pageSize): Response {
+            $result = $this->service()->pending($tenantId, $userId, $userGroups, $page, $pageSize);
 
-            // Check if user is assignee
-            if ($task['assignee'] === $userId) {
-                return true;
-            }
-
-            // Check if user is in candidate users
-            if (in_array($userId, $task['candidate_users'] ?? [], true)) {
-                return true;
-            }
-
-            // Check if user's groups intersect with candidate groups
-            $candidateGroups = $task['candidate_groups'] ?? [];
-            if (!empty(array_intersect($userGroups, $candidateGroups))) {
-                return true;
-            }
-
-            return false;
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
         });
-
-        // Sort by due date (urgent first) then by created_at
-        $pendingTasks = array_values($pendingTasks);
-        usort($pendingTasks, function ($a, $b) {
-            // Priority by due date
-            $aDue = $a['due_date'] ?? '9999-12-31';
-            $bDue = $b['due_date'] ?? '9999-12-31';
-            if ($aDue !== $bDue) {
-                return strcmp($aDue, $bDue);
-            }
-            // Then by created_at
-            return strtotime($b['created_at']) - strtotime($a['created_at']);
-        });
-
-        $total = count($pendingTasks);
-        $offset = ($page - 1) * $pageSize;
-        $list = array_slice($pendingTasks, $offset, $pageSize);
-
-        return $this->paginate($list, $total, $page, $pageSize);
     }
 
     /**
@@ -232,29 +160,16 @@ class WorkflowTaskController extends ApiController
      *
      * GET /workflow/tasks/{id}
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 返回任务行 + `history`（该任务的宿主动作事件）。
      */
     public function read(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
+        $taskId   = $id;
 
-        // Include history
-        $task['history'] = self::$taskHistory[$id] ?? [];
-
-        return $this->success($task);
+        return $this->respond(function () use ($tenantId, $taskId): Response {
+            return $this->success($this->service()->detail($tenantId, $this->parseId($taskId)));
+        });
     }
 
     /**
@@ -262,19 +177,14 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/approve
      *
-     * Request Body:
-     * {
-     *   "comment": "Approval comment",
-     *   "form_data": {...}
-     * }
+     * Request Body: { "comment": "同意", "form_data": {...} }
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 走引擎 `executeProcessTask()`：任务状态、`result`、审批意见、`task_completed` 事件都由引擎写；
+     * 返回值额外带 `next_tasks`（本次推进产生的新任务）。
      */
     public function approve(string $id, Request $request): Response
     {
-        return $this->processApproval($id, $request, true);
+        return $this->runTaskAction($id, $request, 'approve');
     }
 
     /**
@@ -282,19 +192,14 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/reject
      *
-     * Request Body:
-     * {
-     *   "comment": "Rejection reason",
-     *   "form_data": {...}
-     * }
+     * Request Body: { "comment": "金额超标" }
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 走引擎 `executeAndJumpToEnd()`：驳回 = 当前任务结束 + 跳到结束节点；
+     * 引擎按 `submit_type = REJECT` 把实例置为驳回终态（`cancelled`），事件表留下 `instance_rejected`。
      */
     public function reject(string $id, Request $request): Response
     {
-        return $this->processApproval($id, $request, false);
+        return $this->runTaskAction($id, $request, 'reject');
     }
 
     /**
@@ -302,72 +207,14 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/transfer
      *
-     * Request Body:
-     * {
-     *   "target_user": "user_id",
-     *   "comment": "Transfer reason"
-     * }
+     * Request Body: { "target_user": 102, "comment": "请他处理" }
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * ⚠️ 表里没有 `delegated_*` / `transferred_*` 列：转办的真实落库形态是
+     * 「`assignee` 改成目标用户 + 原受理人移出 `candidate_users` + `task_transferred` 事件」。
      */
     public function transfer(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check access
-        $result = $this->checkTaskAccess($task, $request);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // Validate status
-        if (!in_array($task['status'], [self::STATUS_PENDING, self::STATUS_CLAIMED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_transfer_task'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        $data = $request->post();
-
-        if (empty($data['target_user'])) {
-            return $this->validationError(['target_user' => $this->langService->trans('workflow.target_user_required')]);
-        }
-
-        // 缺陷 P2：赋值前必须校验目标用户。
-        // 原实现把 `$data['target_user']` 原样写入 `assignee`，而 DB 层
-        // `workflow_tasks.assignee` 是 int unsigned 且外键指向 `users.id`，
-        // 非数字 → 1366、用户不存在 → 1452，把「用户输入错误」伪装成 500 系统故障。
-        [$targetUserId, $targetUserError] = $this->resolveTargetUser($data['target_user'], $request->tenantId());
-        if ($targetUserId === null) {
-            return $this->validationError(['target_user' => $targetUserError]);
-        }
-
-        $userId = $request->userId() ?? 'system';
-        $originalAssignee = $task['assignee'];
-
-        // Update task
-        $task['assignee'] = $targetUserId;
-        $task['status'] = self::STATUS_PENDING; // Reset to pending for new assignee
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, 'TRANSFERRED', $userId, [
-            'from_user' => $originalAssignee,
-            'to_user' => $targetUserId,
-            'comment' => $data['comment'] ?? null,
-        ]);
-
-        return $this->success($task, $this->langService->trans('workflow.task_transferred'));
+        return $this->runTaskAction($id, $request, 'transfer');
     }
 
     /**
@@ -375,69 +222,13 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/delegate
      *
-     * Request Body:
-     * {
-     *   "delegate_to": "user_id",
-     *   "comment": "Delegation reason"
-     * }
+     * Request Body: { "delegate_to": 103, "comment": "我出差，请你代办" }
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 与转办的唯一可落库差异：**原受理人保留在 `candidate_users`**（委派不等于彻底交出去）。
      */
     public function delegate(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check access
-        $result = $this->checkTaskAccess($task, $request);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // Validate status
-        if (!in_array($task['status'], [self::STATUS_PENDING, self::STATUS_CLAIMED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_delegate_task'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        $data = $request->post();
-
-        if (empty($data['delegate_to'])) {
-            return $this->validationError(['delegate_to' => $this->langService->trans('workflow.delegate_user_required')]);
-        }
-
-        // 缺陷 P2：与 transfer 同理。`delegate_to` 落到 `delegated_to`（同样是对用户 ID 的引用），
-        // 不做校验的话，任何字符串都会被写入，后续按用户 ID 匹配时会静默失效。
-        [$delegateToUserId, $delegateToError] = $this->resolveTargetUser($data['delegate_to'], $request->tenantId());
-        if ($delegateToUserId === null) {
-            return $this->validationError(['delegate_to' => $delegateToError]);
-        }
-
-        $userId = $request->userId() ?? 'system';
-
-        // Update task - keep original owner but set delegate
-        $task['delegated_to'] = $delegateToUserId;
-        $task['delegated_by'] = $userId;
-        $task['delegated_at'] = (new \DateTimeImmutable())->format('c');
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, 'DELEGATED', $userId, [
-            'delegate_to' => $delegateToUserId,
-            'comment' => $data['comment'] ?? null,
-        ]);
-
-        return $this->success($task, $this->langService->trans('workflow.task_delegated'));
+        return $this->runTaskAction($id, $request, 'delegate');
     }
 
     /**
@@ -445,78 +236,12 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/claim
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 认领前必须确认：任务属于本租户、状态是 pending、尚未被受理、**我确实在候选范围内**
+     * （`tests/Feature/Workflow/WorkflowTaskClaimAuthorizationTest.php` 钉的就是这条）。
      */
     public function claim(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        // Can only claim pending tasks
-        if ($task['status'] !== self::STATUS_PENDING) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_claim_task'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        // Check if already assigned
-        if (!empty($task['assignee'])) {
-            return $this->error(
-                $this->langService->trans('workflow.task_already_assigned'),
-                400,
-                ['assignee' => $task['assignee']],
-                400
-            );
-        }
-
-        $userId = $request->userId();
-        if ($userId === null) {
-            return $this->unauthorized();
-        }
-
-        // Check if user is eligible to claim (in candidate users/groups)
-        // 说明（缺陷 R1）：必须调用 app\Request::userGroups()，属性访问恒为 null
-        $userGroups = $request->userGroups();
-        $candidateUsers = $task['candidate_users'] ?? [];
-        $candidateGroups = $task['candidate_groups'] ?? [];
-
-        $canClaim = in_array($userId, $candidateUsers, true) ||
-                    !empty(array_intersect($userGroups, $candidateGroups));
-
-        // 安全（缺陷 R1）：只要任务设置了**任一**候选约束（候选用户 或 候选组），
-        // 当前用户不满足就必须拒绝。原实现要求「候选用户与候选组同时非空」才拦截，
-        // 导致只设其一时守卫被跳过、任何登录用户都能认领（fail-open）。
-        $hasCandidacy = !empty($candidateUsers) || !empty($candidateGroups);
-        if (!$canClaim && $hasCandidacy) {
-            return $this->forbidden($this->langService->trans('workflow.not_eligible_to_claim'));
-        }
-
-        // Claim the task
-        $task['assignee'] = $userId;
-        $task['status'] = self::STATUS_CLAIMED;
-        $task['claimed_at'] = (new \DateTimeImmutable())->format('c');
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, 'CLAIMED', $userId, []);
-
-        return $this->success($task, $this->langService->trans('workflow.task_claimed'));
+        return $this->runTaskAction($id, $request, 'claim');
     }
 
     /**
@@ -524,47 +249,11 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/unclaim
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 只有受理人本人、且任务处于 claimed 状态才能归还；归还后任务回到 pending。
      */
     public function unclaim(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check access
-        $result = $this->checkTaskAccess($task, $request);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // Can only unclaim claimed tasks
-        if ($task['status'] !== self::STATUS_CLAIMED) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_unclaim_task'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        $userId = $request->userId() ?? 'system';
-
-        // Unclaim the task
-        $task['assignee'] = null;
-        $task['status'] = self::STATUS_PENDING;
-        $task['claimed_at'] = null;
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, 'UNCLAIMED', $userId, []);
-
-        return $this->success($task, $this->langService->trans('workflow.task_unclaimed'));
+        return $this->runTaskAction($id, $request, 'unclaim');
     }
 
     /**
@@ -572,58 +261,11 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/complete
      *
-     * Request Body:
-     * {
-     *   "output": {...},
-     *   "comment": "Completion comment"
-     * }
-     *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * Request Body: { "output": {...}, "comment": "已完成" }
      */
     public function complete(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check access
-        $result = $this->checkTaskAccess($task, $request);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // Validate status
-        if (!in_array($task['status'], [self::STATUS_PENDING, self::STATUS_CLAIMED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_complete_task'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        $data = $request->post();
-        $userId = $request->userId() ?? 'system';
-
-        // Complete the task
-        $task['status'] = self::STATUS_COMPLETED;
-        $task['output'] = $data['output'] ?? [];
-        $task['completed_at'] = (new \DateTimeImmutable())->format('c');
-        $task['completed_by'] = $userId;
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, 'COMPLETED', $userId, [
-            'comment' => $data['comment'] ?? null,
-            'output' => $data['output'] ?? [],
-        ]);
-
-        return $this->success($task, $this->langService->trans('workflow.task_completed'));
+        return $this->runTaskAction($id, $request, 'complete');
     }
 
     /**
@@ -631,31 +273,18 @@ class WorkflowTaskController extends ApiController
      *
      * GET /workflow/tasks/{id}/form
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * 返回 `{task_id, form_schema, form_data, form_rules}`（与旧结构兼容）。
+     * `workflow_tasks` 没有 `form_schema` / `form_rules` 列（表单模板在流程定义体上），
+     * 因此这两项是**如实占位**（`null` / `[]`），不是静默丢掉字段。
      */
     public function getForm(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
         $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
+        $taskId   = $id;
 
-        return $this->success([
-            'task_id' => $id,
-            'form_schema' => $task['form_schema'] ?? null,
-            'form_data' => $task['form_data'] ?? [],
-            'form_rules' => $task['form_rules'] ?? [],
-        ]);
+        return $this->respond(function () use ($tenantId, $taskId): Response {
+            return $this->success($this->service()->form($tenantId, $this->parseId($taskId)));
+        });
     }
 
     /**
@@ -663,249 +292,147 @@ class WorkflowTaskController extends ApiController
      *
      * POST /workflow/tasks/{id}/form
      *
-     * Request Body:
-     * {
-     *   "form_data": {...}
-     * }
+     * Request Body: { "form_data": {...}, "comment": "补充说明" }
      *
-     * @param string $id Task ID
-     * @param Request $request
-     * @return Response
+     * ⚠️ 语义变化：旧实现只把 `form_data` 存进内存、流程原地不动；
+     * 现在提交表单会**推进流程**（`executeProcessTask()`，表单键以 `f_` 前缀并入 args）。
+     * 不推进的话，「提交表单」与「什么都没做」对流程而言无法区分，任务会永远停在待办。
      */
     public function submitForm(string $id, Request $request): Response
     {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check access
-        $result = $this->checkTaskAccess($task, $request);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // Validate status
-        if (!in_array($task['status'], [self::STATUS_PENDING, self::STATUS_CLAIMED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_submit_form'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        $data = $request->post();
-
-        if (!isset($data['form_data'])) {
-            return $this->validationError(['form_data' => $this->langService->trans('workflow.form_data_required')]);
-        }
-
-        $userId = $request->userId() ?? 'system';
-
-        // Update task form data
-        $task['form_data'] = $data['form_data'];
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, 'FORM_SUBMITTED', $userId, [
-            'form_data' => $data['form_data'],
-        ]);
-
-        return $this->success([
-            'task_id' => $id,
-            'form_data' => $task['form_data'],
-        ], $this->langService->trans('workflow.form_submitted'));
-    }
-
-    /**
-     * Process approval (approve/reject) | 处理审批
-     *
-     * @param string $id Task ID
-     * @param Request $request
-     * @param bool $approved
-     * @return Response
-     */
-    protected function processApproval(string $id, Request $request, bool $approved): Response
-    {
-        $task = self::$tasks[$id] ?? null;
-
-        if ($task === null) {
-            return $this->notFound($this->langService->trans('workflow.task_not_found'));
-        }
-
-        // Check access
-        $result = $this->checkTaskAccess($task, $request);
-        if ($result !== null) {
-            return $result;
-        }
-
-        // Validate status
-        if (!in_array($task['status'], [self::STATUS_PENDING, self::STATUS_CLAIMED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_process_approval'),
-                400,
-                ['current_status' => $task['status']],
-                400
-            );
-        }
-
-        $data = $request->post();
-        $userId = $request->userId() ?? 'system';
-
-        // Update task
-        $task['status'] = $approved ? self::STATUS_COMPLETED : self::STATUS_REJECTED;
-        $task['approval_result'] = $approved ? 'approved' : 'rejected';
-        $task['approval_comment'] = $data['comment'] ?? null;
-        $task['approval_time'] = (new \DateTimeImmutable())->format('c');
-        $task['approved_by'] = $userId;
-        $task['completed_at'] = (new \DateTimeImmutable())->format('c');
-        $task['completed_by'] = $userId;
-        $task['updated_at'] = (new \DateTimeImmutable())->format('c');
-
-        if (isset($data['form_data'])) {
-            $task['form_data'] = array_merge($task['form_data'] ?? [], $data['form_data']);
-        }
-
-        self::$tasks[$id] = $task;
-
-        // Add history
-        $this->addTaskHistory($id, $approved ? 'APPROVED' : 'REJECTED', $userId, [
-            'comment' => $data['comment'] ?? null,
-            'form_data' => $data['form_data'] ?? null,
-        ]);
-
-        $message = $approved
-            ? $this->langService->trans('workflow.task_approved')
-            : $this->langService->trans('workflow.task_rejected');
-
-        return $this->success($task, $message);
-    }
-
-    /**
-     * Check task access | 检查任务访问权限
-     *
-     * @param array $task
-     * @param Request $request
-     * @return Response|null Returns error response if access denied, null if allowed
-     */
-    protected function checkTaskAccess(array $task, Request $request): ?Response
-    {
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($task['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        // Check user access
+        $taskId = $id;
+        $data   = $request->post();
         $userId = $request->userId();
+        $tenantId = $request->tenantId();
+
         if ($userId === null) {
             return $this->unauthorized();
         }
 
-        // Check if user can access this task
-        $assignee = $task['assignee'] ?? null;
-        $delegatedTo = $task['delegated_to'] ?? null;
-        $candidateUsers = $task['candidate_users'] ?? [];
-        $candidateGroups = $task['candidate_groups'] ?? [];
-        // 说明（缺陷 R1）：必须调用 app\Request::userGroups()，属性访问恒为 null
+        if (!isset($data['form_data']) || !is_array($data['form_data']) || $data['form_data'] === []) {
+            return $this->validationError([
+                'form_data' => $this->langService->trans('workflow.form_data_required'),
+            ]);
+        }
+
         $userGroups = $request->userGroups();
 
-        // 授权语义（缺陷 R1）：
-        // 1. 任务已有受理人 → 仅受理人 / 被委托人可操作；
-        // 2. 任务未认领但设置了候选约束（候选用户 或 候选组）→ 仅命中候选的用户可操作；
-        // 3. 任务未认领且无任何候选约束（开放任务）→ 允许。
-        // 原实现算出的 $canAccess 从未被使用，且把「候选用户非空」当作前提条件，
-        // 使仅设候选组的未认领任务对任何人开放（fail-open）。
-        if ($assignee !== null) {
-            // 有受理人：候选身份不能越过受理人，只有受理人 / 被委托人可操作
-            if ($assignee !== $userId && $delegatedTo !== $userId) {
-                return $this->forbidden($this->langService->trans('workflow.not_task_assignee'));
-            }
+        return $this->respond(function () use ($tenantId, $userId, $userGroups, $taskId, $data): Response {
+            $task = $this->service()->submitForm(
+                $tenantId,
+                $userId,
+                $userGroups,
+                $this->parseId($taskId),
+                $data
+            );
 
-            return null;
+            return $this->success([
+                'task_id'    => $task['id'] ?? null,
+                'form_data'  => $task['form_data'] ?? [],
+                'status'     => $task['status'] ?? null,
+                'next_tasks' => $task['next_tasks'] ?? [],
+            ], $this->langService->trans('workflow.form_submitted'));
+        });
+    }
+
+    // =====================================================================
+    // 内部
+    // =====================================================================
+
+    /**
+     * 任务动作的统一入口（取身份 → 调服务 → 包响应）
+     *
+     * 为什么把 9 个动作收成一个入口：
+     * 它们的前置条件完全相同（真实登录用户 + 租户上下文 + 任务ID），
+     * 分散写 9 遍只会在某一份里漏掉 `userId === null` 的守卫。
+     *
+     * @param string $action approve|reject|complete|claim|unclaim|transfer|delegate
+     */
+    private function runTaskAction(string $id, Request $request, string $action): Response
+    {
+        $userId = $request->userId();
+
+        // 操作人必须来自 JWT（Auth 中间件写入）；未认证 → 401，绝不退化成 'system' / 'flow_auto'
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // 未认领：命中候选用户或候选组才放行
-        $hasCandidacy = !empty($candidateUsers) || !empty($candidateGroups);
-        $isCandidate = in_array($userId, $candidateUsers, true) ||
-                       !empty(array_intersect($userGroups, $candidateGroups));
+        $tenantId   = $request->tenantId();
+        $taskId     = $id;
+        $payload    = $request->post();
+        $userGroups = $request->userGroups();
 
-        if ($hasCandidacy && !$isCandidate) {
-            return $this->forbidden($this->langService->trans('workflow.not_eligible_to_claim'));
-        }
+        return $this->respond(function () use ($action, $tenantId, $userId, $userGroups, $taskId, $payload): Response {
+            $service   = $this->service();
+            $resolvedId = $this->parseId($taskId);
 
-        return null;
+            [$task, $messageKey] = match ($action) {
+                'approve'  => [$service->approve($tenantId, $userId, $userGroups, $resolvedId, $payload), 'workflow.task_approved'],
+                'reject'   => [$service->reject($tenantId, $userId, $userGroups, $resolvedId, $payload), 'workflow.task_rejected'],
+                'complete' => [$service->complete($tenantId, $userId, $userGroups, $resolvedId, $payload), 'workflow.task_completed'],
+                'claim'    => [$service->claim($tenantId, $userId, $userGroups, $resolvedId), 'workflow.task_claimed'],
+                'unclaim'  => [$service->unclaim($tenantId, $userId, $resolvedId), 'workflow.task_unclaimed'],
+                'transfer' => [$service->transfer($tenantId, $userId, $userGroups, $resolvedId, $payload), 'workflow.task_transferred'],
+                'delegate' => [$service->delegate($tenantId, $userId, $userGroups, $resolvedId, $payload), 'workflow.task_delegated'],
+                default    => throw WorkflowActionException::notFound($this->langService->trans('workflow.task_not_found')),
+            };
+
+            return $this->success($task, $this->langService->trans($messageKey));
+        });
     }
 
     /**
-     * 解析并校验「目标用户」入参 | Resolve & validate target user
+     * 统一的「业务异常 → 响应」出口
      *
-     * 缺陷 P2 的统一校验入口（transfer / delegate 共用），两条硬性要求：
-     *   1. 必须是**纯数字**的用户 ID（int 或数字字符串）——入参最终落到
-     *      `workflow_tasks.assignee` / `delegated_to`，二者都是 int unsigned；
-     *   2. 该用户必须存在于**当前租户**——否则等价于允许把任务指派给其它租户的用户，
-     *      造成跨租户数据泄漏。
+     * 引擎与数据库抛出的异常**不能原样返回给客户端**（会泄露 SQL、表结构、内部类名）：
+     * 只有 `WorkflowActionException::publicMessage` 是「可以给用户看的话」，
+     * 其余 `Throwable` 一律 500 + 通用文案，原始异常写日志。
      *
-     * @param mixed $raw      客户端原始入参（可能是任意类型）
-     * @param int   $tenantId 当前租户 ID（app\Request::tenantId() 恒返回 >= 1 的 int）
-     * @return array{0: int|null, 1: string} [合法用户 ID, 错误消息]；合法时错误消息为空字符串
+     * @param Closure(): Response $action
      */
-    protected function resolveTargetUser(mixed $raw, int $tenantId): array
+    private function respond(Closure $action): Response
     {
-        // 只接受 int 与字符串：数组/对象/布尔/null 一律拒绝（JSON 里的用户 ID 只会是前两者）
-        if (!is_int($raw) && !is_string($raw)) {
-            return [null, '目标用户 ID 必须为纯数字 | target user ID must be numeric'];
+        try {
+            return $action();
+        } catch (WorkflowActionException $e) {
+            return $this->error($e->getPublicMessage(), $e->getBusinessCode(), $e->getErrors(), $e->getHttpStatus());
+        } catch (Throwable $e) {
+            Log::error('[WORKFLOW_TASK_FAILED] ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+            ]);
+
+            return $this->error(
+                '工作流任务操作失败，请稍后重试或联系管理员 | workflow task operation failed',
+                WorkflowActionException::CODE_SERVER_ERROR,
+                [],
+                500
+            );
         }
-
-        // ctype_digit 只接受 0-9 组成的字符串，天然拒绝 "12.5"、"-1"、"1e3"、"user_name"
-        if (!ctype_digit((string) $raw)) {
-            return [null, '目标用户 ID 必须为纯数字 | target user ID must be numeric'];
-        }
-
-        $userId = (int) $raw;
-        if ($userId <= 0) {
-            return [null, '目标用户 ID 必须为正整数 | target user ID must be positive'];
-        }
-
-        // 必须存在于当前租户：DB 层 users.tenant_id 为 NOT NULL，跨租户用户一律视为不存在
-        $exists = Db::name('users')
-            ->where('id', $userId)
-            ->where('tenant_id', $tenantId)
-            ->count();
-
-        if ((int) $exists === 0) {
-            return [null, '目标用户不存在或不属于当前租户 | target user does not exist in current tenant'];
-        }
-
-        return [$userId, ''];
     }
 
     /**
-     * Add task history entry | 添加任务历史记录
+     * 解析路径上的任务ID
      *
-     * @param string     $taskId
-     * @param string     $action
-     * @param int|string $userId 操作用户ID（来自 JWT 时为 int，系统操作时为 'system'）
-     * @param array      $data
-     * @return void
+     * 非数字 / 非正数 → 404（资源不存在），与请求体校验失败（422）区分开。
+     *
+     * @throws WorkflowActionException
      */
-    protected function addTaskHistory(string $taskId, string $action, int|string $userId, array $data): void
+    private function parseId(string $id): int
     {
-        if (!isset(self::$taskHistory[$taskId])) {
-            self::$taskHistory[$taskId] = [];
+        if (!ctype_digit($id) || (int) $id <= 0) {
+            throw WorkflowActionException::notFound($this->langService->trans('workflow.task_not_found'));
         }
 
-        self::$taskHistory[$taskId][] = [
-            'id' => 'hist_' . uniqid(),
-            'task_id' => $taskId,
-            'action' => $action,
-            'user_id' => $userId,
-            'data' => $data,
-            'timestamp' => (new \DateTimeImmutable())->format('c'),
-        ];
+        return (int) $id;
+    }
+
+    /**
+     * 应用服务（惰性构造，复用控制器的语言服务实例）
+     */
+    private function service(): WorkflowTaskService
+    {
+        return $this->workflowTaskService ??= new WorkflowTaskService($this->langService);
     }
 }

@@ -30,8 +30,9 @@ use think\facade\Db;
  *   - `app\Request::userGroups()` 契约：返回当前用户在当前租户下的角色 slug，无角色返回 []。
  *
  * 注意：
- *   - 工作流任务存放在控制器进程内 `protected static array $tasks`，本测试用反射直接播种，
- *     并在每个用例前后清空，避免用例间互相污染；
+ *   - 实例/任务控制器已经改为**真库 + 真引擎**，因此任务夹具改为「插一条可执行定义 → 插实例 →
+ *     插任务行」（见 Tests\Traits\WorkflowExecutableFixture），断言直接读 `workflow_tasks`：
+ *     只有真实数据上的 403 才能证明隔离真的生效，Mock 里改个字段就能「通过」；
  *   - 工作流任务路由挂载了 `Permission` 中间件（workflow_task.read / write），
  *     本测试按项目既有做法在数据库内授予测试用户相应权限，走真实权限校验链路，
  *     不绕过中间件。
@@ -41,6 +42,12 @@ use think\facade\Db;
 class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
 {
     use \Tests\Traits\WorkflowFixtureIsolation;
+    use \Tests\Traits\WorkflowExecutableFixture;
+
+    /**
+     * 真库夹具定义的名称前缀（清理时按前缀删除）
+     */
+    private const DEFINITION_PREFIX = 'r1_claim_authorization_';
 
     /**
      * 测试用户 ID
@@ -69,6 +76,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
      */
     private int $readPermissionId = 6301;
     private int $writePermissionId = 6302;
+    private int $instanceReadPermissionId = 6303;
+    private int $instanceWritePermissionId = 6304;
 
     /**
      * 候选组（角色 slug）名称
@@ -97,8 +106,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
         // 清空路由/控制器中间件队列（中间件队列在同进程内跨请求累积）
         $this->resetRouteMiddlewareQueue();
 
-        // 清空控制器进程内静态存储，避免用例间互相污染
-        $this->resetInMemoryStores();
+        // 先清掉上一轮可能残留的真库夹具（定义/实例/任务）
+        $this->purgeWorkflowFixturesByNamePrefix(self::DEFINITION_PREFIX);
 
         // 授予测试用户工作流任务读写权限
         $this->seedAuthorizationFixtures();
@@ -110,7 +119,7 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
     protected function tearDown(): void
     {
         $this->resetRouteMiddlewareQueue();
-        $this->resetInMemoryStores();
+        $this->purgeWorkflowFixturesByNamePrefix(self::DEFINITION_PREFIX);
         $this->cleanupAuthorizationFixtures();
 
         parent::tearDown();
@@ -124,9 +133,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
      */
     public function testClaimDeniedWhenOnlyCandidateUsersAndUserNotListed(): void
     {
-        $taskId = 'task_claim_users_' . uniqid();
         // 任务只设候选用户，且不含当前登录用户
-        $this->seedTask($taskId, [$this->groupUserId], []);
+        $taskId = $this->seedTask([$this->groupUserId], []);
 
         $response = $this->httpRequest(
             'POST',
@@ -147,7 +155,7 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
         $this->assertSame(
             403,
             $body['code'],
-            'claim 拒绝的业务码应为 403（控制器 forbidden），实际响应：' . $response->getContent()
+            'claim 拒绝的业务码应为 403（服务层 forbidden），实际响应：' . $response->getContent()
         );
     }
 
@@ -159,9 +167,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
      */
     public function testClaimDeniedWhenOnlyCandidateGroupsAndRoleMismatch(): void
     {
-        $taskId = 'task_claim_groups_' . uniqid();
         // 任务只设候选组（当前用户角色为 non_member，不匹配）
-        $this->seedTask($taskId, [], [$this->groupSlug]);
+        $taskId = $this->seedTask([], [$this->groupSlug]);
 
         $response = $this->httpRequest(
             'POST',
@@ -182,7 +189,7 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
         $this->assertSame(
             403,
             $body['code'],
-            'claim 拒绝的业务码应为 403（控制器 forbidden），实际响应：' . $response->getContent()
+            'claim 拒绝的业务码应为 403（服务层 forbidden），实际响应：' . $response->getContent()
         );
 
         // 额外断言：任务必须保持未认领状态，不能被越权改写
@@ -200,9 +207,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
      */
     public function testClaimAllowedWhenCandidateGroupMatchesUserRole(): void
     {
-        $taskId = 'task_claim_match_' . uniqid();
         // 任务候选组包含当前用户角色 slug
-        $this->seedTask($taskId, [], [$this->groupSlug]);
+        $taskId = $this->seedTask([], [$this->groupSlug]);
 
         $response = $this->httpRequest(
             'POST',
@@ -230,6 +236,11 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
             $body['data']['status'],
             'claim 成功后任务状态应为 claimed'
         );
+
+        // 落库断言：库里那一行才是真相
+        $stored = $this->readTask($taskId);
+        $this->assertSame($this->groupUserId, (int) $stored['assignee'], 'claim 后 assignee 必须落库');
+        $this->assertSame('claimed', (string) $stored['status'], 'claim 后状态必须落库为 claimed');
     }
 
     /**
@@ -239,8 +250,7 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
      */
     public function testClaimAllowedForOpenTaskWithoutCandidacy(): void
     {
-        $taskId = 'task_claim_open_' . uniqid();
-        $this->seedTask($taskId, [], []);
+        $taskId = $this->seedTask([], []);
 
         $response = $this->httpRequest(
             'POST',
@@ -268,9 +278,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
      */
     public function testApproveDeniedWhenUnassignedTaskCandidateGroupMismatch(): void
     {
-        $taskId = 'task_approve_groups_' . uniqid();
         // 未认领（assignee=null）+ 仅候选组，当前用户角色不匹配
-        $this->seedTask($taskId, [], [$this->groupSlug]);
+        $taskId = $this->seedTask([], [$this->groupSlug]);
 
         $response = $this->httpRequest(
             'POST',
@@ -291,7 +300,7 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
         $this->assertSame(
             403,
             $body['code'],
-            'approve 拒绝的业务码应为 403（控制器 forbidden），实际响应：' . $response->getContent()
+            'approve 拒绝的业务码应为 403（服务层 forbidden），实际响应：' . $response->getContent()
         );
 
         // 任务状态不得被越权改写
@@ -353,15 +362,17 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
     /**
      * 用例 7：已分配任务 —— 候选身份不能越过受理人，但受理人本人必须放行
      *
-     * 覆盖 checkTaskAccess() 的第 1 条语义（有 assignee → 仅 assignee/delegate），
-     * 防止把「候选用户」误当成「可越过受理人」的通行证；同时校准返回值，
-     * 确认收紧后受理人仍然可以正常审批（不修过头）。
+     * 覆盖有 assignee 时的授权语义，防止把「候选用户」误当成「可越过受理人」的通行证；
+     * 同时校准返回值，确认收紧后受理人仍然可以正常审批（不修过头）。
+     *
+     * 注意：情形 B 会**真的推进流程**（`executeProcessTask()`），因此不能用「手插任务行」——
+     * 引擎要按任务行的 `node_name` 回查定义里的节点模型。这里用 HTTP 启动一条真实实例，
+     * 断言第一个任务（受理人 = 发起人）被本人审批后落库为 completed。
      */
     public function testAssignedTaskRejectsCandidateUserButAllowsAssignee(): void
     {
         // 情形 A：任务是候选用户之一，但已被别人受理 → 必须 403
-        $taskIdA = 'task_assigned_reject_' . uniqid();
-        $this->seedTask($taskIdA, [$this->plainUserId], [], $this->groupUserId);
+        $taskIdA = $this->seedTask([$this->plainUserId], [], $this->groupUserId);
 
         $rejected = $this->httpRequest(
             'POST',
@@ -375,14 +386,39 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
             $rejected->getCode(),
             '任务已有受理人时，候选用户不应能审批，实际响应：' . $rejected->getContent()
         );
+        $this->assertSame(
+            $this->groupUserId,
+            (int) $this->readTask($taskIdA)['assignee'],
+            '越权审批被拒绝后，受理人不应被改写'
+        );
 
-        // 情形 B：当前用户就是受理人 → 必须 200
-        $taskIdB = 'task_assigned_allow_' . uniqid();
-        $this->seedTask($taskIdB, [$this->groupUserId], [], $this->plainUserId);
+        // 情形 B：当前用户就是受理人 → 必须 200（真实实例 + 真实引擎）
+        $definitionId = $this->insertExecutableDefinition(self::DEFINITION_PREFIX . 'assignee');
+        $started      = $this->httpRequest('POST', 'v1/workflow/instances', [
+            'definition_id' => $definitionId,
+            'variables'     => ['amount' => 100],
+        ], $this->authHeaders($this->plainUserId));
+
+        $this->assertSame(201, $started->getCode(), '夹具实例应启动成功，实际：' . $started->getContent());
+
+        $instanceId = (int) (json_decode($started->getContent(), true)['data']['id'] ?? 0);
+        $this->assertGreaterThan(0, $instanceId);
+
+        $engineTaskId = (int) Db::table('workflow_tasks')
+            ->where('instance_id', $instanceId)
+            ->where('status', 'claimed')
+            ->value('id');
+
+        $this->assertGreaterThan(0, $engineTaskId, '启动后应生成第一个任务');
+        $this->assertSame(
+            $this->plainUserId,
+            (int) Db::table('workflow_tasks')->where('id', $engineTaskId)->value('assignee'),
+            '前提：第一个任务应受理给发起人'
+        );
 
         $allowed = $this->httpRequest(
             'POST',
-            'v1/workflow/tasks/' . $taskIdB . '/approve',
+            'v1/workflow/tasks/' . $engineTaskId . '/approve',
             ['comment' => '受理人正常审批'],
             $this->authHeaders($this->plainUserId)
         );
@@ -403,58 +439,47 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
     }
 
     /**
-     * 播种一条工作流任务到控制器进程内静态存储
+     * 播种一条工作流任务（**真库**：定义 → 实例 → 任务）
      *
-     * @param string   $taskId         任务 ID
-     * @param string[] $candidateUsers 候选用户 ID 列表
-     * @param string[] $candidateGroups 候选组（角色 slug）列表
-     * @param int|null $assignee       当前受理人
+     * 为什么不能再用反射播种：实例/任务控制器已改为真库 + 真引擎，
+     * 任务的 `instance_id` / `tenant_id` 都有外键，假数据根本插不进去；
+     * 而「越权 403」这类断言必须跑在真实数据上才有意义（Mock 里改一个字段就通过，证明不了隔离）。
+     *
+     * `candidate_users` 刻意写成**字符串形式的用户ID**（`["6101"]`）：引擎建任务时就是
+     * `json_encode(array_map('string', $ids))`，这个用例要覆盖引擎的真实写入形态。
+     *
+     * @param array<int, int|string> $candidateUsers  候选用户 ID 列表
+     * @param string[]               $candidateGroups 候选组（角色 slug）
+     * @param int|null               $assignee        当前受理人
+     * @return int 任务主键
      */
     private function seedTask(
-        string $taskId,
         array $candidateUsers = [],
         array $candidateGroups = [],
         ?int $assignee = null
-    ): void {
-        $now = (new \DateTimeImmutable())->format('c');
+    ): int {
+        $definitionId = $this->insertExecutableDefinition(self::DEFINITION_PREFIX . uniqid());
+        $instanceId   = $this->seedWorkflowInstanceRow(1, $definitionId, $this->plainUserId);
 
-        $task = [
-            'id' => $taskId,
-            'tenant_id' => 1,
-            'instance_id' => 'inst_' . $taskId,
-            'definition_id' => 'def_' . $taskId,
-            'name' => 'R1 授权测试任务',
-            'type' => WorkflowTaskController::TYPE_APPROVAL,
-            'status' => WorkflowTaskController::STATUS_PENDING,
-            'assignee' => $assignee,
-            'delegated_to' => null,
-            'candidate_users' => $candidateUsers,
+        return $this->seedWorkflowTaskRow(1, $instanceId, [
+            'assignee'         => $assignee,
+            'candidate_users'  => array_map('strval', $candidateUsers),
             'candidate_groups' => $candidateGroups,
-            'form_data' => [],
-            'due_date' => null,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ];
-
-        $ref = new \ReflectionProperty(WorkflowTaskController::class, 'tasks');
-        $ref->setAccessible(true);
-        $tasks = (array) $ref->getValue();
-        $tasks[$taskId] = $task;
-        $ref->setValue(null, $tasks);
+        ]);
     }
 
     /**
-     * 读取控制器进程内静态存储中的任务（用于断言越权操作未改写数据）
+     * 读取任务行（用于断言越权操作未改写数据）
+     *
+     * @return array<string, mixed>
      */
-    private function readTask(string $taskId): array
+    private function readTask(int $taskId): array
     {
-        $ref = new \ReflectionProperty(WorkflowTaskController::class, 'tasks');
-        $ref->setAccessible(true);
-        $tasks = (array) $ref->getValue();
+        $row = Db::table('workflow_tasks')->where('id', $taskId)->find();
 
-        $this->assertArrayHasKey($taskId, $tasks, '任务应存在于控制器静态存储中');
+        $this->assertIsArray($row, '任务行应存在于 workflow_tasks 中（id=' . $taskId . '）');
 
-        return $tasks[$taskId];
+        return $row;
     }
 
     /**
@@ -514,22 +539,6 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
     }
 
     /**
-     * 清空工作流任务控制器的进程内静态存储
-     */
-    private function resetInMemoryStores(): void
-    {
-        foreach (['tasks', 'taskHistory'] as $property) {
-            if (!property_exists(WorkflowTaskController::class, $property)) {
-                continue;
-            }
-
-            $ref = new \ReflectionProperty(WorkflowTaskController::class, $property);
-            $ref->setAccessible(true);
-            $ref->setValue(null, []);
-        }
-    }
-
-    /**
      * 播种授权测试所需数据（用户 / 角色 / 权限 / 关联）
      *
      * 清理与幂等性由 WorkflowFixtureIsolation 负责：按「ID 区间 OR 自然键」清理，
@@ -554,6 +563,19 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
                 'workflow_task',
                 'write',
                 $this->writePermissionId,
+                'R1 workflow task claim authorization test permission'
+            );
+            // 用例 7 情形 B 要通过 HTTP 启动真实实例（引擎写实例），需要实例读写权限
+            $this->instanceReadPermissionId = $this->ensureWorkflowPermission(
+                'workflow_instance',
+                'read',
+                $this->instanceReadPermissionId,
+                'R1 workflow task claim authorization test permission'
+            );
+            $this->instanceWritePermissionId = $this->ensureWorkflowPermission(
+                'workflow_instance',
+                'write',
+                $this->instanceWritePermissionId,
                 'R1 workflow task claim authorization test permission'
             );
 
@@ -618,6 +640,8 @@ class WorkflowTaskClaimAuthorizationTest extends ThinkPHPTestCase
             Db::table('role_permissions')->insertAll([
                 ['role_id' => $this->plainRoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
                 ['role_id' => $this->plainRoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
+                ['role_id' => $this->plainRoleId, 'permission_id' => $this->instanceReadPermissionId, 'created_at' => $now],
+                ['role_id' => $this->plainRoleId, 'permission_id' => $this->instanceWritePermissionId, 'created_at' => $now],
                 ['role_id' => $this->groupRoleId, 'permission_id' => $this->readPermissionId, 'created_at' => $now],
                 ['role_id' => $this->groupRoleId, 'permission_id' => $this->writePermissionId, 'created_at' => $now],
             ]);

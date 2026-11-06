@@ -5,33 +5,52 @@ declare(strict_types=1);
 namespace app\controller\workflow;
 
 use app\controller\ApiController;
-use think\App;
-use think\Request;
+use app\Request;
+use Closure;
+use Infrastructure\Workflow\Exception\WorkflowActionException;
+use Infrastructure\Workflow\Service\WorkflowInstanceService;
+use think\facade\Log;
 use think\Response;
+use Throwable;
 
 /**
  * Workflow Instance API Controller | 工作流实例 API 控制器
  *
- * RESTful API for workflow instance management.
  * 工作流实例管理的 RESTful API。
  *
- * Endpoints:
- * - GET    /workflow/instances              - List instances | 列出实例
- * - GET    /workflow/instances/{id}         - Get instance | 获取实例
- * - POST   /workflow/instances              - Start instance | 启动实例
- * - POST   /workflow/instances/{id}/cancel  - Cancel instance | 取消实例
- * - POST   /workflow/instances/{id}/suspend - Suspend instance | 暂停实例
- * - POST   /workflow/instances/{id}/resume  - Resume instance | 恢复实例
- * - GET    /workflow/instances/{id}/history - Get execution history | 获取执行历史
- * - GET    /workflow/instances/{id}/variables - Get variables | 获取变量
- * - PUT    /workflow/instances/{id}/variables - Update variables | 更新变量
+ * ## 本控制器的职责（分层约定）
+ *
+ * 只做四件事：**取参 → 参数校验 → 调 Service → 包统一响应**。
+ * 归属校验、状态机、引擎调用、落库全部在 `Infrastructure\Workflow\Service\WorkflowInstanceService`，
+ * 数据访问在 `Infrastructure\Workflow\Repository\*`。控制器里不出现 SQL、不出现引擎调用。
+ *
+ * ## 与旧实现的关系
+ *
+ * 旧版本是 `protected static array $instances` / `$history` 的内存 Mock：21 个端点看起来都在，
+ * 实际一个字节都没落库，重启即清空。本版本改为真库 + 真引擎：
+ *
+ * | 端点 | 旧（Mock） | 新（真库 / 引擎） |
+ * | ---- | ---------- | ----------------- |
+ * | `index` | 内存数组过滤 | `workflow_instances` 查询（强制 tenant 过滤 + 分页下推） |
+ * | `read` | 内存对象 | 库行 + 在办任务 + 引擎轨迹 |
+ * | `save` | 手写数组塞内存 | 引擎 `startProcessInstanceById()`（实例/首个任务/事件都由引擎写） |
+ * | `cancel` | 改数组字段 | 在办任务 `abandonProcessTask()` + 实例置终态 + 事件 |
+ * | `suspend` / `resume` | 改数组字段 | 实例状态落库 + 事件 |
+ * | `history` | 内存 `$history` | 引擎 `timeline()`（`workflow_event_logs`） |
+ * | `getVariables` / `updateVariables` | 内存数组 | 库中 `variables` / 引擎 `addVariable()`、`removeVariable()` |
+ *
+ * ## 操作人身份
+ *
+ * 所有写操作的操作人**只**取 `$request->userId()`（由 `Auth` 中间件从 JWT 写入）。
+ * 绝不从请求头 / 请求体读取用户身份：引擎的 `isAllowed()` 对 `flow_auto`、`flow.admin` 无条件放行，
+ * 一旦让 HTTP 请求能自称这两个身份，等于把每个调用者都变成超级管理员。
  *
  * @package app\controller\workflow
  */
 class WorkflowInstanceController extends ApiController
 {
     /**
-     * Instance status constants
+     * Instance status constants | 实例状态常量
      */
     public const STATUS_PENDING = 'pending';
     public const STATUS_RUNNING = 'running';
@@ -41,18 +60,9 @@ class WorkflowInstanceController extends ApiController
     public const STATUS_CANCELLED = 'cancelled';
 
     /**
-     * In-memory storage for demo (replace with repository in production)
-     *
-     * @var array
+     * 应用服务（惰性构造：控制器本身无状态，服务内部只为仓储/语言服务起惰性依赖）
      */
-    protected static array $instances = [];
-
-    /**
-     * Instance history storage
-     *
-     * @var array
-     */
-    protected static array $history = [];
+    private ?WorkflowInstanceService $instanceService = null;
 
     /**
      * List workflow instances | 列出工作流实例
@@ -60,96 +70,41 @@ class WorkflowInstanceController extends ApiController
      * GET /workflow/instances
      *
      * Query Parameters:
-     * - page: int (default: 1)
-     * - page_size: int (default: 20)
-     * - definition_id: string (filter by definition)
-     * - status: string (pending|running|suspended|completed|failed|cancelled)
-     * - started_by: string (filter by starter)
-     * - date_from: string (ISO 8601 date)
-     * - date_to: string (ISO 8601 date)
-     *
-     * @param Request $request
-     * @return Response
+     * - page: int（默认 1）
+     * - page_size: int（默认 20，上限 100）
+     * - definition_id: int（按定义筛选）
+     * - status: string（pending|running|suspended|completed|failed|cancelled）
+     * - started_by: int（按发起人筛选，落库列是 `created_by`）
+     * - business_key: string
+     * - date_from / date_to: date（按 `started_at` 过滤）
      */
     public function index(Request $request): Response
     {
-        $params = $request->get();
-        $page = (int)($params['page'] ?? 1);
-        $pageSize = (int)($params['page_size'] ?? 20);
+        $params   = $request->get();
+        $page     = (int) ($params['page'] ?? 1);
+        $pageSize = (int) ($params['page_size'] ?? 20);
 
-        // Validate pagination
-        $paginationValidation = $this->validatePagination($page, $pageSize);
-        if (!$paginationValidation['valid']) {
-            return $this->validationError($paginationValidation['errors']);
+        $pagination = $this->validatePagination($page, $pageSize);
+
+        if (!$pagination['valid']) {
+            return $this->validationError($pagination['errors']);
         }
 
-        // Get tenant ID
+        // 租户ID 由中间件写入（缺失时由全局异常处理器统一处理），这里不可能为 null
         $tenantId = $request->tenantId();
 
-        // Filter instances
-        $allInstances = array_values(self::$instances);
+        return $this->respond(function () use ($tenantId, $params, $page, $pageSize): Response {
+            $result = $this->service()->paginate($tenantId, [
+                'status'        => $params['status'] ?? null,
+                'definition_id' => $params['definition_id'] ?? null,
+                'started_by'    => $params['started_by'] ?? null,
+                'business_key'  => $params['business_key'] ?? null,
+                'date_from'     => $params['date_from'] ?? null,
+                'date_to'       => $params['date_to'] ?? null,
+            ], $page, $pageSize);
 
-        // Apply tenant filter
-        // 缺陷 P3-A：租户过滤必须严格匹配。DB 层 `workflow_instances.tenant_id` 是 NOT NULL，
-        // 不存在「全局实例」，原实现的 `|| (... ?? null) === null` 是死分支，
-        // 却会让「缺少 tenant_id 的脏数据」对所有租户可见（fail-open）。
-        // 注：`app\Request::tenantId()` 返回 int（恒 >= 1），故不再需要 null 包裹判断。
-        $allInstances = array_filter($allInstances, fn ($inst) => ($inst['tenant_id'] ?? null) === $tenantId);
-
-        // Apply status filter
-        if (!empty($params['status'])) {
-            $allInstances = array_filter(
-                $allInstances,
-                fn ($inst) =>
-                $inst['status'] === $params['status']
-            );
-        }
-
-        // Apply definition filter
-        if (!empty($params['definition_id'])) {
-            $allInstances = array_filter(
-                $allInstances,
-                fn ($inst) =>
-                $inst['definition_id'] === $params['definition_id']
-            );
-        }
-
-        // Apply started_by filter
-        if (!empty($params['started_by'])) {
-            $allInstances = array_filter(
-                $allInstances,
-                fn ($inst) =>
-                $inst['started_by'] === $params['started_by']
-            );
-        }
-
-        // Apply date filters
-        if (!empty($params['date_from'])) {
-            $dateFrom = strtotime($params['date_from']);
-            $allInstances = array_filter(
-                $allInstances,
-                fn ($inst) =>
-                strtotime($inst['started_at']) >= $dateFrom
-            );
-        }
-        if (!empty($params['date_to'])) {
-            $dateTo = strtotime($params['date_to']);
-            $allInstances = array_filter(
-                $allInstances,
-                fn ($inst) =>
-                strtotime($inst['started_at']) <= $dateTo
-            );
-        }
-
-        // Re-index and sort by started_at desc
-        $allInstances = array_values($allInstances);
-        usort($allInstances, fn ($a, $b) => strtotime($b['started_at']) - strtotime($a['started_at']));
-
-        $total = count($allInstances);
-        $offset = ($page - 1) * $pageSize;
-        $list = array_slice($allInstances, $offset, $pageSize);
-
-        return $this->paginate($list, $total, $page, $pageSize);
+            return $this->paginate($result['list'], $result['total'], $page, $pageSize);
+        });
     }
 
     /**
@@ -157,26 +112,16 @@ class WorkflowInstanceController extends ApiController
      *
      * GET /workflow/instances/{id}
      *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
+     * 返回值 = 实例行 + `current_tasks`（在办任务）+ `history`（引擎轨迹）。
      */
     public function read(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        return $this->success($instance);
+        return $this->respond(function () use ($tenantId, $instanceId): Response {
+            return $this->success($this->service()->detail($tenantId, $this->parseId($instanceId)));
+        });
     }
 
     /**
@@ -186,56 +131,42 @@ class WorkflowInstanceController extends ApiController
      *
      * Request Body:
      * {
-     *   "definition_id": "wf_xxx",
-     *   "variables": {...},
-     *   "trigger_type": "manual|webhook|schedule|data_event",
-     *   "trigger_data": {...}
+     *   "definition_id": 123,              // 必填，定义的数字主键（旧实现的 `wf_xxx` 字符串不再接受）
+     *   "variables": {...},                // 可选，启动参数即实例变量
+     *   "title": "报销单 2025-001",         // 可选，引擎用 auto_gen_title 作为实例标题
+     *   "business_key": "BX-2025-001"      // 可选，引擎用 business_no 作为业务号
      * }
      *
-     * @param Request $request
-     * @return Response
+     * 实例行、第一个任务、`instance_started` 事件**全部由引擎写**，宿主不重复 INSERT ——
+     * 两份写入点必然分叉（引擎的任务参与者解析、首节点受理人规则都在引擎内部）。
      */
     public function save(Request $request): Response
     {
-        $data = $request->post();
+        $data     = $request->post();
+        $tenantId = $request->tenantId();
+        $userId   = $request->userId();
 
-        // Validate required fields
-        if (empty($data['definition_id'])) {
-            return $this->validationError(['definition_id' => $this->langService->trans('workflow.definition_id_required')]);
+        // 引擎写 `created_by` / `assignee`（都带 users 外键），系统身份无法表示
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Get tenant ID and user info
-        $tenantId = $request->tenantId();
-        $userId = $request->userId() ?? 'system';
+        if (!isset($data['definition_id']) || $data['definition_id'] === '' || $data['definition_id'] === null) {
+            return $this->validationError([
+                'definition_id' => $this->langService->trans('workflow.definition_id_required'),
+            ]);
+        }
 
-        // Generate instance ID
-        $instanceId = 'inst_' . uniqid();
+        return $this->respond(function () use ($tenantId, $userId, $data): Response {
+            $instance = $this->service()->start($tenantId, $userId, $data);
 
-        // Create instance
-        $instance = [
-            'id' => $instanceId,
-            'definition_id' => $data['definition_id'],
-            'definition_version' => $data['definition_version'] ?? 1,
-            'status' => self::STATUS_RUNNING,
-            'current_node_id' => null,
-            'variables' => $data['variables'] ?? [],
-            'context' => [],
-            'trigger_type' => $data['trigger_type'] ?? 'manual',
-            'trigger_data' => $data['trigger_data'] ?? [],
-            'started_by' => $userId,
-            'started_at' => (new \DateTimeImmutable())->format('c'),
-            'completed_at' => null,
-            'tenant_id' => $tenantId,
-            'error_message' => null,
-        ];
-
-        // Store instance
-        self::$instances[$instanceId] = $instance;
-
-        // Add history entry
-        $this->addHistoryEntry($instanceId, 'STARTED', null, 'Instance started', $userId);
-
-        return $this->success($instance, $this->langService->trans('workflow.instance_started'), 0, 201);
+            return $this->success(
+                $instance,
+                $this->langService->trans('workflow.instance_started'),
+                0,
+                201
+            );
+        });
     }
 
     /**
@@ -243,146 +174,78 @@ class WorkflowInstanceController extends ApiController
      *
      * POST /workflow/instances/{id}/cancel
      *
-     * Request Body:
-     * {
-     *   "reason": "Cancellation reason"
-     * }
+     * Request Body: { "reason": "取消原因" }
      *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
+     * 取消原因写入事件快照（`event_data.reason`），**不写** `error_message`：
+     * 后者是「引擎执行失败」的列，把人工取消的原因放进去会让失败排查无从区分。
      */
     public function cancel(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
+        $data       = $request->post();
+        $userId     = $request->userId();
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
+        $reason = $data['reason'] ?? null;
 
-        // Check if cancellable
-        if (!in_array($instance['status'], [self::STATUS_PENDING, self::STATUS_RUNNING, self::STATUS_SUSPENDED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_cancel_instance'),
-                400,
-                ['current_status' => $instance['status']],
-                400
+        return $this->respond(function () use ($tenantId, $userId, $instanceId, $reason): Response {
+            $instance = $this->service()->cancel(
+                $tenantId,
+                $userId,
+                $this->parseId($instanceId),
+                is_scalar($reason) ? (string) $reason : null
             );
-        }
 
-        $data = $request->post();
-        $reason = $data['reason'] ?? 'No reason provided';
-        $userId = $request->userId() ?? 'system';
-
-        // Update instance
-        $instance['status'] = self::STATUS_CANCELLED;
-        $instance['completed_at'] = (new \DateTimeImmutable())->format('c');
-        $instance['error_message'] = $reason;
-        self::$instances[$id] = $instance;
-
-        // Add history entry
-        $this->addHistoryEntry($id, 'CANCELLED', $instance['current_node_id'], $reason, $userId);
-
-        return $this->success($instance, $this->langService->trans('workflow.instance_cancelled'));
+            return $this->success($instance, $this->langService->trans('workflow.instance_cancelled'));
+        });
     }
 
     /**
      * Suspend workflow instance | 暂停工作流实例
      *
      * POST /workflow/instances/{id}/suspend
-     *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
      */
     public function suspend(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
+        $userId     = $request->userId();
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
+        return $this->respond(function () use ($tenantId, $userId, $instanceId): Response {
+            $instance = $this->service()->suspend($tenantId, $userId, $this->parseId($instanceId));
 
-        // Can only suspend running instances
-        if ($instance['status'] !== self::STATUS_RUNNING) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_suspend_instance'),
-                400,
-                ['current_status' => $instance['status']],
-                400
-            );
-        }
-
-        $userId = $request->userId() ?? 'system';
-
-        // Update instance
-        $instance['status'] = self::STATUS_SUSPENDED;
-        self::$instances[$id] = $instance;
-
-        // Add history entry
-        $this->addHistoryEntry($id, 'SUSPENDED', $instance['current_node_id'], 'Instance suspended', $userId);
-
-        return $this->success($instance, $this->langService->trans('workflow.instance_suspended'));
+            return $this->success($instance, $this->langService->trans('workflow.instance_suspended'));
+        });
     }
 
     /**
      * Resume workflow instance | 恢复工作流实例
      *
      * POST /workflow/instances/{id}/resume
-     *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
      */
     public function resume(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
+        $userId     = $request->userId();
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
 
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
+        return $this->respond(function () use ($tenantId, $userId, $instanceId): Response {
+            $instance = $this->service()->resume($tenantId, $userId, $this->parseId($instanceId));
 
-        // Can only resume suspended instances
-        if ($instance['status'] !== self::STATUS_SUSPENDED) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_resume_instance'),
-                400,
-                ['current_status' => $instance['status']],
-                400
-            );
-        }
-
-        $userId = $request->userId() ?? 'system';
-
-        // Update instance
-        $instance['status'] = self::STATUS_RUNNING;
-        self::$instances[$id] = $instance;
-
-        // Add history entry
-        $this->addHistoryEntry($id, 'RESUMED', $instance['current_node_id'], 'Instance resumed', $userId);
-
-        return $this->success($instance, $this->langService->trans('workflow.instance_resumed'));
+            return $this->success($instance, $this->langService->trans('workflow.instance_resumed'));
+        });
     }
 
     /**
@@ -390,62 +253,33 @@ class WorkflowInstanceController extends ApiController
      *
      * GET /workflow/instances/{id}/history
      *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
+     * 返回 `{instance_id, entries, count}`（与旧结构兼容）；`entries[*].event_type`
+     * 是**库里真实值**（`instance_started` / `task_completed` / `instance_rejected` / `instance_cancelled` …），
+     * 不再是大写 Mock 词汇（`STARTED` / `CANCELLED`）。
      */
     public function history(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        $historyEntries = self::$history[$id] ?? [];
-
-        return $this->success([
-            'instance_id' => $id,
-            'entries' => $historyEntries,
-            'count' => count($historyEntries),
-        ]);
+        return $this->respond(function () use ($tenantId, $instanceId): Response {
+            return $this->success($this->service()->history($tenantId, $this->parseId($instanceId)));
+        });
     }
 
     /**
      * Get instance variables | 获取实例变量
      *
      * GET /workflow/instances/{id}/variables
-     *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
      */
     public function getVariables(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
-        }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        return $this->success([
-            'instance_id' => $id,
-            'variables' => $instance['variables'] ?? [],
-        ]);
+        return $this->respond(function () use ($tenantId, $instanceId): Response {
+            return $this->success($this->service()->variables($tenantId, $this->parseId($instanceId)));
+        });
     }
 
     /**
@@ -455,96 +289,101 @@ class WorkflowInstanceController extends ApiController
      *
      * Request Body:
      * {
-     *   "variables": {
-     *     "key1": "value1",
-     *     "key2": "value2"
-     *   },
-     *   "merge": true  // If true, merge with existing; if false, replace
+     *   "variables": { "key1": "value1" },
+     *   "merge": true      // true=合并（默认）；false=全量替换
      * }
-     *
-     * @param string $id Instance ID
-     * @param Request $request
-     * @return Response
      */
     public function updateVariables(string $id, Request $request): Response
     {
-        $instance = self::$instances[$id] ?? null;
+        $tenantId   = $request->tenantId();
+        $instanceId = $id;
+        $data       = $request->put();
+        $userId     = $request->userId();
 
-        if ($instance === null) {
-            return $this->notFound($this->langService->trans('workflow.instance_not_found'));
+        if ($userId === null) {
+            return $this->unauthorized();
         }
-
-        // Check tenant access | 租户归属校验（缺陷 R13：缺失 tenant_id 一律拒绝，不再对 null 宽免）
-        $tenantId = $request->tenantId();
-        $tenantError = $this->assertTenantOwnership($instance['tenant_id'] ?? null, $tenantId);
-        if ($tenantError !== null) {
-            return $tenantError;
-        }
-
-        // Cannot modify completed/failed/cancelled instances
-        if (in_array($instance['status'], [self::STATUS_COMPLETED, self::STATUS_FAILED, self::STATUS_CANCELLED], true)) {
-            return $this->error(
-                $this->langService->trans('workflow.cannot_modify_instance'),
-                400,
-                ['current_status' => $instance['status']],
-                400
-            );
-        }
-
-        $data = $request->put();
 
         if (!isset($data['variables']) || !is_array($data['variables'])) {
-            return $this->validationError(['variables' => $this->langService->trans('workflow.variables_required')]);
+            return $this->validationError([
+                'variables' => $this->langService->trans('workflow.variables_required'),
+            ]);
         }
 
-        $merge = $data['merge'] ?? true;
+        // 只有显式 false 才走「全量替换」；字符串 "false" 之类的一律按默认合并处理，避免误解语义
+        $merge = ($data['merge'] ?? true) !== false;
 
-        if ($merge) {
-            $instance['variables'] = array_merge($instance['variables'] ?? [], $data['variables']);
-        } else {
-            $instance['variables'] = $data['variables'];
+        return $this->respond(function () use ($tenantId, $userId, $instanceId, $data, $merge): Response {
+            $result = $this->service()->updateVariables(
+                $tenantId,
+                $userId,
+                $this->parseId($instanceId),
+                $data['variables'],
+                $merge
+            );
+
+            return $this->success($result, $this->langService->trans('workflow.variables_updated'));
+        });
+    }
+
+    // =====================================================================
+    // 内部
+    // =====================================================================
+
+    /**
+     * 统一的「业务异常 → 响应」出口
+     *
+     * 为什么要收在一处：
+     * 1. 引擎与数据库抛出的异常**不能原样吐给客户端**（会泄露表结构、SQL、内部类名）；
+     *    只有 `WorkflowActionException` 的 `publicMessage` 是「可以给用户看的话」；
+     * 2. 其余 `Throwable` 一律 500 + 通用文案，原始异常写日志（带操作名，便于定位）。
+     *
+     * @param Closure(): Response $action
+     */
+    private function respond(Closure $action): Response
+    {
+        try {
+            return $action();
+        } catch (WorkflowActionException $e) {
+            return $this->error($e->getPublicMessage(), $e->getBusinessCode(), $e->getErrors(), $e->getHttpStatus());
+        } catch (Throwable $e) {
+            Log::error('[WORKFLOW_INSTANCE_FAILED] ' . $e->getMessage(), [
+                'exception' => get_class($e),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+            ]);
+
+            return $this->error(
+                '工作流实例操作失败，请稍后重试或联系管理员 | workflow instance operation failed',
+                WorkflowActionException::CODE_SERVER_ERROR,
+                [],
+                500
+            );
         }
-
-        self::$instances[$id] = $instance;
-
-        $userId = $request->userId() ?? 'system';
-        $this->addHistoryEntry($id, 'VARIABLES_UPDATED', null, 'Variables updated', $userId);
-
-        return $this->success([
-            'instance_id' => $id,
-            'variables' => $instance['variables'],
-        ], $this->langService->trans('workflow.variables_updated'));
     }
 
     /**
-     * Add history entry | 添加历史记录
+     * 解析路径上的实例ID
      *
-     * @param string $instanceId
-     * @param string $eventType
-     * @param string|null $nodeId
-     * @param string $description
-     * @param int|string $userId 操作用户ID（来自 JWT 时为 int，系统/未认证操作时为 'system'）
-     * @return void
+     * 非数字 / 非正数 → 404（路径参数不合法等价于「这条资源不存在」，
+     * 不是客户端的参数格式错误 —— 那是请求体校验（422）的语义）。
+     *
+     * @throws WorkflowActionException
      */
-    protected function addHistoryEntry(
-        string $instanceId,
-        string $eventType,
-        ?string $nodeId,
-        string $description,
-        int|string $userId
-    ): void {
-        if (!isset(self::$history[$instanceId])) {
-            self::$history[$instanceId] = [];
+    private function parseId(string $id): int
+    {
+        if (!ctype_digit($id) || (int) $id <= 0) {
+            throw WorkflowActionException::notFound($this->langService->trans('workflow.instance_not_found'));
         }
 
-        self::$history[$instanceId][] = [
-            'id' => 'hist_' . uniqid(),
-            'instance_id' => $instanceId,
-            'event_type' => $eventType,
-            'node_id' => $nodeId,
-            'description' => $description,
-            'user_id' => $userId,
-            'timestamp' => (new \DateTimeImmutable())->format('c'),
-        ];
+        return (int) $id;
+    }
+
+    /**
+     * 应用服务（惰性构造，复用控制器的语言服务实例）
+     */
+    private function service(): WorkflowInstanceService
+    {
+        return $this->instanceService ??= new WorkflowInstanceService($this->langService);
     }
 }

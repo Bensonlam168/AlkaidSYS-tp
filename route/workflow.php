@@ -99,7 +99,13 @@ Route::group('v1/workflow/definitions', function () {
         ->middleware(\app\middleware\Permission::class, 'workflow_definition.write')
         ->pattern(['id' => '[\w\-]+'])
         ->completeMatch();
-})->middleware(\app\middleware\Auth::class);
+})
+    ->middleware(\app\middleware\Auth::class)
+    // 租户/用户上下文桥接：必须在 Auth **之后**（JWT 里的 tenant_id 覆盖默认租户发生在 Auth 内），
+    // 且必须在控制器之前（引擎的所有读写都要求 TenantContext 已就绪，否则 fail-closed 抛异常）。
+    // 它负责「请求开始写入 + 请求结束（含异常）清理」，防的是 Swoole 常驻进程下的跨请求串租户。
+    // 详见 app\middleware\WorkflowTenantContext 的类注释。
+    ->middleware(\app\middleware\WorkflowTenantContext::class);
 
 // ===========================================================================
 // Workflow Instance API Routes | 工作流实例 API 路由
@@ -156,7 +162,13 @@ Route::group('v1/workflow/instances', function () {
         ->middleware(\app\middleware\Permission::class, 'workflow_instance.write')
         ->pattern(['id' => '[\w\-]+'])
         ->completeMatch();
-})->middleware(\app\middleware\Auth::class);
+})
+    ->middleware(\app\middleware\Auth::class)
+    // 租户/用户上下文桥接：必须在 Auth **之后**（JWT 里的 tenant_id 覆盖默认租户发生在 Auth 内），
+    // 且必须在控制器之前（引擎的所有读写都要求 TenantContext 已就绪，否则 fail-closed 抛异常）。
+    // 它负责「请求开始写入 + 请求结束（含异常）清理」，防的是 Swoole 常驻进程下的跨请求串租户。
+    // 详见 app\middleware\WorkflowTenantContext 的类注释。
+    ->middleware(\app\middleware\WorkflowTenantContext::class);
 
 // ===========================================================================
 // Workflow Task API Routes | 工作流任务 API 路由
@@ -231,7 +243,13 @@ Route::group('v1/workflow/tasks', function () {
         ->middleware(\app\middleware\Permission::class, 'workflow_task.write')
         ->pattern(['id' => '[\w\-]+'])
         ->completeMatch();
-})->middleware(\app\middleware\Auth::class);
+})
+    ->middleware(\app\middleware\Auth::class)
+    // 租户/用户上下文桥接：必须在 Auth **之后**（JWT 里的 tenant_id 覆盖默认租户发生在 Auth 内），
+    // 且必须在控制器之前（引擎的所有读写都要求 TenantContext 已就绪，否则 fail-closed 抛异常）。
+    // 它负责「请求开始写入 + 请求结束（含异常）清理」，防的是 Swoole 常驻进程下的跨请求串租户。
+    // 详见 app\middleware\WorkflowTenantContext 的类注释。
+    ->middleware(\app\middleware\WorkflowTenantContext::class);
 
 // ===========================================================================
 // Workflow Trigger API Routes | 工作流触发器 API 路由
@@ -293,7 +311,13 @@ Route::group('v1/workflow/triggers', function () {
         ->middleware(\app\middleware\Permission::class, 'workflow_trigger.read')
         ->pattern(['id' => '[\w\-]+'])
         ->completeMatch();
-})->middleware(\app\middleware\Auth::class);
+})
+    ->middleware(\app\middleware\Auth::class)
+    // 租户/用户上下文桥接：必须在 Auth **之后**（JWT 里的 tenant_id 覆盖默认租户发生在 Auth 内），
+    // 且必须在控制器之前（引擎的所有读写都要求 TenantContext 已就绪，否则 fail-closed 抛异常）。
+    // 它负责「请求开始写入 + 请求结束（含异常）清理」，防的是 Swoole 常驻进程下的跨请求串租户。
+    // 详见 app\middleware\WorkflowTenantContext 的类注释。
+    ->middleware(\app\middleware\WorkflowTenantContext::class);
 
 // ===========================================================================
 // Webhook Endpoint (No Auth Required) | Webhook 端点（无需认证）
@@ -309,4 +333,8 @@ Route::group('v1/workflow/triggers', function () {
 //    `DEFAULT_TENANT_ID`，因此该环境变量未配置时本端点会直接失败（部署要求，见报告）。
 Route::any('v1/workflow/triggers/webhook/:key', 'app\controller\workflow\WorkflowTriggerController@webhook')
     ->pattern(['key' => '[a-f0-9]{32}'])
+    // webhook 端点没有 Auth（外部回调不可能带 JWT），但仍必须桥接租户上下文：
+    // 触发器回调会调用引擎推进流程，没有 TenantContext 就会 fail-closed 抛异常。
+    // 这里的租户来自全局中间件 TenantIdentify（X-Tenant-ID 或 DEFAULT_TENANT_ID）。
+    ->middleware(\app\middleware\WorkflowTenantContext::class)
     ->completeMatch();
