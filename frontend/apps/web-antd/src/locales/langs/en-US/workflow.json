@@ -1,0 +1,25 @@
+{
+  "title": "Workflow",
+  "todo": {
+    "title": "Pending Tasks"
+  },
+  "task": {
+    "title": "Task Name",
+    "instanceId": "Instance ID",
+    "node": "Node",
+    "status": "Status",
+    "assignee": "Assignee",
+    "createdAt": "Created At",
+    "operation": "Operation",
+    "statusPending": "Pending",
+    "statusClaimed": "Claimed",
+    "statusEscalated": "Escalated",
+    "statusCompleted": "Completed",
+    "statusRejected": "Rejected",
+    "statusCancelled": "Cancelled",
+    "actionApprove": "View / Approve",
+    "filterStatusPlaceholder": "Please select task status",
+    "filterInstanceIdPlaceholder": "Please enter instance ID",
+    "filterAssigneePlaceholder": "Please enter assignee user ID"
+  }
+}

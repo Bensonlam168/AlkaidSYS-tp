@@ -1,0 +1,25 @@
+{
+  "title": "工作流",
+  "todo": {
+    "title": "待办任务"
+  },
+  "task": {
+    "title": "任务名称",
+    "instanceId": "实例 ID",
+    "node": "节点",
+    "status": "状态",
+    "assignee": "受理人",
+    "createdAt": "创建时间",
+    "operation": "操作",
+    "statusPending": "待处理",
+    "statusClaimed": "已领取",
+    "statusEscalated": "已升级",
+    "statusCompleted": "已完成",
+    "statusRejected": "已驳回",
+    "statusCancelled": "已取消",
+    "actionApprove": "查看/审批",
+    "filterStatusPlaceholder": "请选择任务状态",
+    "filterInstanceIdPlaceholder": "请输入实例 ID",
+    "filterAssigneePlaceholder": "请输入受理人用户 ID"
+  }
+}
