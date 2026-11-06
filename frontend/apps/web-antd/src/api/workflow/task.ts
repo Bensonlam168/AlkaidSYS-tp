@@ -177,6 +177,169 @@ export namespace WorkflowTaskApi {
     /** 所属实例ID（整数） */
     instance_id?: number;
   }
+
+  /**
+   * 任务表单里的单个字段 | One field of a task form
+   *
+   * 字段名与 `Infrastructure\Lowcode\Schema\SchemaParser::buildComponents()` 的输出**逐字对应**
+   * （该输出即 `GET /v1/lowcode/forms/{name}?with_parsed=1` 的 `data.parsed.components`）：
+   * 后端把 JSON Schema 的 `x-component` / `x-component-props` / `x-decorator` 等
+   * 摊平成下面这些键，前端不需要再自己解析 JSON Schema。
+   */
+  export interface TaskFormComponent {
+    /** 字段名（提交时 `form_data` 的键） */
+    field: string;
+    /** 字段标题（表单 label） */
+    title: string;
+    /** 渲染组件名，取值形如 `Input` / `Select` / `DatePicker`（映射见 `views/workflow/todo/modules/schema-form.ts`） */
+    component: string;
+    /** 装饰器组件名，一般是 `FormItem`（本包不使用，保留以对齐契约） */
+    decorator: string;
+    /** 组件参数（原样透传给 Vben 表单的 `componentProps`） */
+    componentProps: Record<string, any>;
+    /** 装饰器参数（本包不使用，保留以对齐契约） */
+    decoratorProps: Record<string, any>;
+    /** 是否必填（后端由 JSON Schema 的 `required` 数组换算） */
+    required: boolean;
+    /** 数据类型：`string` / `number` / ... */
+    type: string;
+    /** 枚举值域（后端由 JSON Schema 的 `enum` 透出，非枚举字段为空数组） */
+    enum: any[];
+  }
+
+  /**
+   * 任务表单 | Task form
+   *
+   * 契约以 `WorkflowTaskService::form()` 的 docblock 为准（`app/controller/workflow/WorkflowTaskController::getForm`）：
+   * `resolved = false` 时 `reason` 一定非空，**不会**静默返回空 schema 让前端自己猜。
+   */
+  export interface TaskForm {
+    /** 任务ID */
+    task_id: number;
+    /** 低代码表单名（未解析到时为 null） */
+    form_name: null | string;
+    /** 字段列表（未解析到时为 null） */
+    form_schema: null | TaskFormComponent[];
+    /** 后端校验规则（与低代码表单详情的 `validator.rules` 同源） */
+    form_rules: Record<string, any>;
+    /** 后端校验文案（与低代码表单详情的 `validator.messages` 同源） */
+    form_messages: Record<string, any>;
+    /** 已提交的表单值（`workflow_tasks.form_data` 解码后的对象） */
+    form_data: Record<string, any>;
+    /** 是否解析到表单模板 */
+    resolved: boolean;
+    /**
+     * 未解析到的原因 | Why the form is unresolved
+     *
+     * `resolved = true` 时为 null；否则是下列之一（`WorkflowTaskFormResolver::REASON_*`）：
+     * - `node_has_no_form`：节点**本来就没配**表单 —— 正常情形，可直接审批；
+     * - `form_not_found`：节点配了表单名，但低代码表单不存在 —— 配置异常；
+     * - `definition_not_found`：实例的流程定义版本行缺失 —— 配置异常；
+     * - `instance_not_found`：实例缺失 —— 数据异常；
+     * - `node_not_found`：节点配置里找不到该节点 —— 配置异常。
+     */
+    reason: null | string;
+  }
+
+  /**
+   * 审批动作的公共入参 | Shared payload of task actions
+   *
+   * `comment` 一律可选：`WorkflowTaskService` 只对「转交/委派的目标用户」做必填校验
+   * （`handOver()` 里 `target_user` / `delegate_to`），驳回也没有「理由必填」的要求。
+   * 前端不自造后端没有的必填语义，否则会出现「后端接受、前端拦住」的假拦截。
+   */
+  export interface TaskActionPayload {
+    /** 处理意见 / 审批意见（可选） */
+    comment?: string;
+  }
+
+  /**
+   * 同意入参 | Approve payload
+   *
+   * `POST /v1/workflow/tasks/{id}/approve`：`form_data` 可选，但**一旦带上就会先过后端表单校验**
+   * （不合规 → 422，任务状态与 `form_data` 一个字节都不动）。
+   */
+  export interface ApproveTaskPayload extends TaskActionPayload {
+    /** 表单值（表单类动作才需要） */
+    form_data?: Record<string, any>;
+  }
+
+  /**
+   * 驳回入参 | Reject payload
+   *
+   * `POST /v1/workflow/tasks/{id}/reject`：只有 `comment`（可选）。
+   * ⚠️ 后端**没有**「驳回理由必填」，前端不加。
+   */
+  export type RejectTaskPayload = TaskActionPayload;
+
+  /**
+   * 完成入参 | Complete payload
+   *
+   * `POST /v1/workflow/tasks/{id}/complete`：`output` / `comment` 都可选。
+   */
+  export interface CompleteTaskPayload extends TaskActionPayload {
+    /** 处理输出（落到任务 `result` 上，由引擎写入） */
+    output?: Record<string, any>;
+    /** 表单值（表单类动作才需要） */
+    form_data?: Record<string, any>;
+  }
+
+  /**
+   * 提交表单入参 | Submit form payload
+   *
+   * `POST /v1/workflow/tasks/{id}/form`：**`form_data` 必填且非空**，
+   * 否则控制器直接 `validationError(['form_data' => ...])` 返回 422
+   * （判定条件是 `!isset || !is_array || === []`）。
+   */
+  export interface SubmitTaskFormPayload extends TaskActionPayload {
+    /** 表单值（非空对象） */
+    form_data: Record<string, any>;
+  }
+
+  /**
+   * 提交表单的结果 | Submit form result
+   *
+   * 控制器 `submitForm()` 只回这几个字段（不是整个任务行）。
+   */
+  export interface SubmitTaskFormResult {
+    /** 任务ID */
+    task_id: null | number;
+    /** 提交后的表单值 */
+    form_data: Record<string, any>;
+    /** 提交后的任务状态 */
+    status: null | string;
+    /** 本次推进产生的新任务 */
+    next_tasks: Array<Record<string, any>>;
+    /**
+     * 表单校验结论 | Form validation verdict
+     *
+     * `validated = false` + `needs_attention = true` 表示「模板缺失、后端已跳过校验」，
+     * 前端据此提示运维，而不是把它当成一次正常提交悄悄放过。无表单时为 null。
+     */
+    form_validation: null | Record<string, any>;
+  }
+
+  /**
+   * 转交入参 | Transfer payload
+   *
+   * `POST /v1/workflow/tasks/{id}/transfer`：**`target_user` 必填**（后端 `handOver()` 校验），
+   * 且目标用户必须存在于当前租户，也不能是自己。
+   */
+  export interface TransferTaskPayload extends TaskActionPayload {
+    /** 目标用户ID（本租户用户目录里的 `id`） */
+    target_user: number;
+  }
+
+  /**
+   * 委派入参 | Delegate payload
+   *
+   * `POST /v1/workflow/tasks/{id}/delegate`：**`delegate_to` 必填**；
+   * 与转交的唯一可落库差异是原受理人仍留在候选集里。
+   */
+  export interface DelegateTaskPayload extends TaskActionPayload {
+    /** 被委派人用户ID */
+    delegate_to: number;
+  }
 }
 
 /**
@@ -193,8 +356,12 @@ export namespace WorkflowTaskApi {
  *
  * @param result 后端原始分页信封
  * @returns 网格可直接消费的 `{ items, total }`
+ *
+ * @remarks
+ * 导出是为了让 `./user.ts`（选人目录，同样是 `{ list, total, page, page_size, total_pages }`
+ * 信封）复用同一份映射，而不是各自抄一遍 —— 两处抄两份，改适配器时就会漏改一处。
  */
-function toGridPage<T>(
+export function toGridPage<T>(
   result: WorkflowTaskApi.Paginated<T>,
 ): WorkflowTaskApi.GridPage<T> {
   return {
@@ -286,4 +453,163 @@ async function unclaimTask(id: number) {
   );
 }
 
-export { claimTask, getPendingTasks, getTask, getTaskList, unclaimTask };
+/**
+ * 任务表单 | Get task form
+ *
+ * `GET /v1/workflow/tasks/{id}/form`（权限码 `workflow_task.read`）
+ *
+ * 返回 `form_schema`（可渲染的字段列表）+ `form_rules` / `form_messages`（后端校验规则与文案）
+ * + `form_data`（已提交值）+ `resolved` / `reason`（模板是否解析到、没解析到的原因）。
+ *
+ * 表单模板不是存在任务行上，而是沿
+ * `task → instance.definition_id（具体版本行）→ nodes_config → 节点 properties.form → lowcode_forms`
+ * 解析出来的，因此老实例读到的一定是它启动时那一版模板。
+ *
+ * @param id 任务ID
+ */
+async function getTaskForm(id: number) {
+  return requestClient.get<WorkflowTaskApi.TaskForm>(
+    `/v1/workflow/tasks/${id}/form`,
+  );
+}
+
+/**
+ * 提交任务表单 | Submit task form
+ *
+ * `POST /v1/workflow/tasks/{id}/form`（权限码 `workflow_task.write`）
+ *
+ * ⚠️ 语义是**推进流程**（`executeProcessTask()`），不是「暂存草稿」。
+ * `form_data` 必填且非空（后端 422 兜底），提交前还会按后端表单规则校验，不过则 422 + `data.errors`。
+ *
+ * @param id 任务ID
+ * @param payload `form_data`（非空）+ 可选 `comment`
+ */
+async function submitTaskForm(
+  id: number,
+  payload: WorkflowTaskApi.SubmitTaskFormPayload,
+) {
+  return requestClient.post<WorkflowTaskApi.SubmitTaskFormResult>(
+    `/v1/workflow/tasks/${id}/form`,
+    payload,
+  );
+}
+
+/**
+ * 同意 | Approve task
+ *
+ * `POST /v1/workflow/tasks/{id}/approve`（权限码 `workflow_task.write`）
+ *
+ * 走引擎 `executeProcessTask()`：任务状态、`result`、审批意见与事件都由引擎写；
+ * 返回值额外带 `next_tasks`（本次推进产生的新任务）。
+ * 带上 `form_data` 时会先过后端表单校验（不合规 422，任务一个字节不动）。
+ *
+ * @param id 任务ID
+ * @param payload 可选 `comment` / `form_data`
+ */
+async function approveTask(
+  id: number,
+  payload: WorkflowTaskApi.ApproveTaskPayload = {},
+) {
+  return requestClient.post<WorkflowTaskApi.WorkflowTask>(
+    `/v1/workflow/tasks/${id}/approve`,
+    payload,
+  );
+}
+
+/**
+ * 驳回 | Reject task
+ *
+ * `POST /v1/workflow/tasks/{id}/reject`（权限码 `workflow_task.write`）
+ *
+ * 走引擎 `executeAndJumpToEnd()`：驳回 = 当前任务结束 + 跳到结束节点，实例进入驳回终态
+ * （`cancelled`），任务行被纠正为 `rejected`。
+ *
+ * @param id 任务ID
+ * @param payload 可选 `comment`（后端**不要求**驳回理由必填）
+ */
+async function rejectTask(
+  id: number,
+  payload: WorkflowTaskApi.RejectTaskPayload = {},
+) {
+  return requestClient.post<WorkflowTaskApi.WorkflowTask>(
+    `/v1/workflow/tasks/${id}/reject`,
+    payload,
+  );
+}
+
+/**
+ * 完成任务 | Complete task
+ *
+ * `POST /v1/workflow/tasks/{id}/complete`（权限码 `workflow_task.write`）
+ *
+ * `output` 落到任务 `result` 上，`comment` 是处理意见，两者都可选。
+ *
+ * @param id 任务ID
+ * @param payload 可选 `output` / `comment` / `form_data`
+ */
+async function completeTask(
+  id: number,
+  payload: WorkflowTaskApi.CompleteTaskPayload = {},
+) {
+  return requestClient.post<WorkflowTaskApi.WorkflowTask>(
+    `/v1/workflow/tasks/${id}/complete`,
+    payload,
+  );
+}
+
+/**
+ * 转交任务 | Transfer task
+ *
+ * `POST /v1/workflow/tasks/{id}/transfer`（权限码 `workflow_task.write`）
+ *
+ * 落库形态是「`assignee` 改成目标用户 + 原受理人移出 `candidate_users` + `task_transferred` 事件」，
+ * 任务状态并不会变成 `transferred`。`target_user` 必填，且不能是自己。
+ *
+ * @param id 任务ID
+ * @param payload `target_user`（必填）+ 可选 `comment`
+ */
+async function transferTask(
+  id: number,
+  payload: WorkflowTaskApi.TransferTaskPayload,
+) {
+  return requestClient.post<WorkflowTaskApi.WorkflowTask>(
+    `/v1/workflow/tasks/${id}/transfer`,
+    payload,
+  );
+}
+
+/**
+ * 委派任务 | Delegate task
+ *
+ * `POST /v1/workflow/tasks/{id}/delegate`（权限码 `workflow_task.write`）
+ *
+ * 与转交的唯一可落库差异：原受理人**保留在 `candidate_users`**（委派不等于彻底交出去）。
+ * `delegate_to` 必填，且不能是自己。
+ *
+ * @param id 任务ID
+ * @param payload `delegate_to`（必填）+ 可选 `comment`
+ */
+async function delegateTask(
+  id: number,
+  payload: WorkflowTaskApi.DelegateTaskPayload,
+) {
+  return requestClient.post<WorkflowTaskApi.WorkflowTask>(
+    `/v1/workflow/tasks/${id}/delegate`,
+    payload,
+  );
+}
+
+export {
+  approveTask,
+  claimTask,
+  completeTask,
+  delegateTask,
+  getPendingTasks,
+  getTask,
+  getTaskForm,
+  getTaskList,
+  rejectTask,
+  submitTaskForm,
+  transferTask,
+  unclaimTask,
+};

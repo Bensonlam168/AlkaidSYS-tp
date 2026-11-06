@@ -5,13 +5,14 @@ import type {
 } from '#/adapter/vxe-table';
 import type { WorkflowTaskApi } from '#/api/workflow/task';
 
-import { Page } from '@vben/common-ui';
+import { Page, useVbenDrawer } from '@vben/common-ui';
 
 import { useVbenVxeGrid } from '#/adapter/vxe-table';
 import { getPendingTasks } from '#/api/workflow/task';
 import { $t } from '#/locales';
 
 import { useColumns } from './data';
+import Approval from './modules/approval.vue';
 
 /**
  * 我的待办列表 | My pending workflow tasks
@@ -25,7 +26,20 @@ import { useColumns } from './data';
  *    （筛选 schema 留给将来的「全部任务」页，见 `./data.ts` 文件头注释）；
  * 3. **没有权限码门禁**：本包按「只做注释」处理，理由见 `api/workflow/task.ts` 头部的权限码说明。
  */
-const [Grid] = useVbenVxeGrid({
+
+/**
+ * 审批抽屉 | Approval drawer
+ *
+ * `connectedComponent` 把抽屉外壳留在列表页、内容组件（`./modules/approval.vue`）按需挂载，
+ * 抽屉本体不重复实现；`destroyOnClose` 保证每次打开都是一份干净状态（表单 schema、选人、
+ * 审批意见都不复用上一次的），否则「上一个任务的字段」会漏到下一个任务上。
+ */
+const [ApprovalDrawer, approvalDrawerApi] = useVbenDrawer({
+  connectedComponent: Approval,
+  destroyOnClose: true,
+});
+
+const [Grid, gridApi] = useVbenVxeGrid({
   gridOptions: {
     columns: useColumns(onActionClick),
     height: 'auto',
@@ -58,7 +72,8 @@ const [Grid] = useVbenVxeGrid({
 /**
  * 操作列点击分发
  *
- * 当前只有「查看/审批」一个动作，且审批抽屉由下一个包实现。
+ * 「查看/审批」打开同一个抽屉：后端没有「只读详情」与「审批」两套端点，
+ * 详情 + 表单 + 动作都在同一个抽屉里完成，拆成两个入口只会让用户多点一次。
  */
 function onActionClick({
   code,
@@ -76,28 +91,31 @@ function onActionClick({
 }
 
 /**
- * 打开审批抽屉（占位）
+ * 打开审批抽屉
  *
- * TODO(下一个包)：打开审批抽屉，按任务ID拉取 `GET /v1/workflow/tasks/{id}` 与
- * `GET /v1/workflow/tasks/{id}/form` 渲染表单，并接 approve / reject / transfer /
- * delegate / complete 等写动作（权限码 `workflow_task.write`）。
- *
- * 本次刻意不引入任何不存在的抽屉组件：只留入口 + 日志，避免首屏出现「点了没反应」的假死按钮。
+ * 只传任务ID：抽屉内部自己去拉 `GET /v1/workflow/tasks/{id}` 与
+ * `GET /v1/workflow/tasks/{id}/form`，避免「列表行的字段」与「详情字段」两套口径
+ * （列表行是分页查询的结果，字段未必与详情端点一致）。
  *
  * @param row 当前任务行
  */
 function openApproval(row: WorkflowTaskApi.WorkflowTask) {
-  // TODO(下一个包)：打开审批抽屉
-  console.warn(
-    '[workflow/todo] 审批抽屉尚未实现，任务ID：',
-    row.id,
-    '实例ID：',
-    row.instance_id,
-  );
+  approvalDrawerApi.setData({ taskId: row.id }).open();
+}
+
+/**
+ * 审批成功后刷新列表
+ *
+ * 审批会改变任务状态（同意/驳回后任务离开在办集合、领取/取消领取改受理人与状态），
+ * 不刷新的话用户看到的是「刚审批完，任务还挂在待办里」。
+ */
+function onApprovalSuccess() {
+  gridApi.query();
 }
 </script>
 <template>
   <Page auto-content-height>
+    <ApprovalDrawer @success="onApprovalSuccess" />
     <Grid :table-title="$t('workflow.todo.title')" />
   </Page>
 </template>

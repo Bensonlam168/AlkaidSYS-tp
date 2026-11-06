@@ -75,10 +75,13 @@ export function getTaskStatusOptions(): Array<{
  * 3. `ID`：只有 ID（未回填姓名的常见情形）；
  * 4. `—`：既无姓名也无 ID（未认领任务）。
  *
+ * 导出原因：审批抽屉（`./modules/approval.vue`）的「受理人」项要显示同一个口径，
+ * 两处各写一份的话，列表显示「张三（12）」而抽屉显示空白，用户会以为是两个任务。
+ *
  * @param row 当前任务行
  * @returns 单元格展示文本（永不为空串）
  */
-function formatAssignee(row: WorkflowTaskApi.WorkflowTask): string {
+export function formatAssignee(row: WorkflowTaskApi.WorkflowTask): string {
   const name = row.assignee_name?.trim() ?? '';
   const id = row.assignee;
   const hasId = id !== null && id !== undefined;
