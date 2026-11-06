@@ -6,6 +6,7 @@ namespace Infrastructure\Workflow\Service;
 
 use Alkaid\Workflow\Engine\enums\ProcessSubmitTypeEnum;
 use Infrastructure\I18n\LanguageService;
+use Infrastructure\Lowcode\FormDesigner\Service\FormValidatorGenerator;
 use Infrastructure\Workflow\Exception\WorkflowActionException;
 use Infrastructure\Workflow\Repository\WorkflowEventLogRepository;
 use Infrastructure\Workflow\Repository\WorkflowInstanceRepository;
@@ -15,6 +16,8 @@ use Infrastructure\Workflow\Support\WorkflowActorMatch;
 use Infrastructure\Workflow\Support\WorkflowTaskFormResolver;
 use Infrastructure\Workflow\WorkflowEngineBootstrap;
 use madong\helper\Dict;
+use think\facade\Log;
+use think\Validate;
 use Throwable;
 
 /**
@@ -47,6 +50,10 @@ use Throwable;
  * | 待办 / 列表 / 详情 | 仓储 | 纯查询，不需要经过引擎 |
  * | 认领 / 取消认领 | 宿主 + 引擎协作 | 引擎 `transfer()` **未实现**（抛 `BadMethodCallException`），认领语义由宿主落库 |
  * | 转办 / 委派 | 宿主 + 引擎协作 | 同上；参与者集合用引擎 `addCandidateActor()` / `removeTaskActor()` 维护 |
+ *
+ * 但「提交表单」还有一段**引擎不管、必须宿主来做**的前置工作：按表单模板里的 rules 校验
+ * `form_data`（{@see self::validateFormData()}）。引擎只负责推进状态机，它既不认识低代码表单，
+ * 也不会因为「金额是负数」而拒绝 —— 少了宿主这一段，后端的「唯一权威」就不存在。
  *
  * > 本包**不改** `plugins/workflow-engine/src/`，因此「引擎未实现」的方法只能由宿主补齐；
  * > 与客户端相关的语义差异写在交付报告「契约冲突」一节。
@@ -107,13 +114,16 @@ class WorkflowTaskService
 
     private ?WorkflowTaskFormResolver $formResolver;
 
+    private ?FormValidatorGenerator $formValidatorGenerator;
+
     /**
-     * @param LanguageService|null              $lang          语言服务（控制器传入同一个实例；null 时惰性新建）
-     * @param WorkflowTaskRepository|null       $tasks         任务仓储
-     * @param WorkflowInstanceRepository|null   $instances     实例仓储（判断实例是否允许办理）
-     * @param WorkflowEventLogRepository|null   $events        事件仓储（宿主动作留痕）
-     * @param WorkflowUserDirectoryRepository|null $users      用户目录（转办/委派的目标用户校验 + 选人目录）
-     * @param WorkflowTaskFormResolver|null     $formResolver  表单解析器（表单模板 → 低代码表单 + 校验规则）
+     * @param LanguageService|null              $lang         语言服务（控制器传入同一个实例；null 时惰性新建）
+     * @param WorkflowTaskRepository|null       $tasks        任务仓储
+     * @param WorkflowInstanceRepository|null   $instances    实例仓储（判断实例是否允许办理）
+     * @param WorkflowEventLogRepository|null   $events       事件仓储（宿主动作留痕）
+     * @param WorkflowUserDirectoryRepository|null $users     用户目录（转办/委派的目标用户校验 + 选人目录）
+     * @param WorkflowTaskFormResolver|null     $formResolver 表单解析器（表单模板 → 低代码表单 + 校验规则）
+     * @param FormValidatorGenerator|null       $validators   校验器生成器（与低代码表单接口**同一个类**，见 validateFormData()）
      */
     public function __construct(
         ?LanguageService $lang = null,
@@ -121,14 +131,16 @@ class WorkflowTaskService
         ?WorkflowInstanceRepository $instances = null,
         ?WorkflowEventLogRepository $events = null,
         ?WorkflowUserDirectoryRepository $users = null,
-        ?WorkflowTaskFormResolver $formResolver = null
+        ?WorkflowTaskFormResolver $formResolver = null,
+        ?FormValidatorGenerator $validators = null
     ) {
-        $this->lang         = $lang;
-        $this->tasks        = $tasks;
-        $this->instances    = $instances;
-        $this->events       = $events;
-        $this->users        = $users;
-        $this->formResolver = $formResolver;
+        $this->lang                   = $lang;
+        $this->tasks                  = $tasks;
+        $this->instances              = $instances;
+        $this->events                 = $events;
+        $this->users                  = $users;
+        $this->formResolver           = $formResolver;
+        $this->formValidatorGenerator = $validators;
     }
 
     // =====================================================================
@@ -296,21 +308,50 @@ class WorkflowTaskService
     }
 
     /**
-     * 提交表单（写 `form_data` 并推进流程）
+     * 提交表单（**先按后端规则校验 → 再落库 → 再推进流程**）
      *
      * ⚠️ 与旧实现相比是**语义变化**：旧实现只把 `form_data` 写进内存对象、流程原地不动；
      * 真库实现必须推进流程 —— 否则「提交表单」与「什么都没做」对流程而言无法区分，
      * 任务永远停在待办、后续节点永远不产生。因此这里同样是 `executeProcessTask()`，
      * 表单键以 `f_` 前缀并入 args。
      *
+     * ## 为什么校验规则必须「借」而不是「另写一套」
+     *
+     * 改造前本方法只判断「`form_data` 是不是非空数组」，于是负数金额、超长文本、必填留空
+     * 都能直接落库 —— AGENTS.md 约定的「后端是唯一权威」其实并不存在
+     * （前端按 `GET /v1/lowcode/forms/{name}?with_validator=1` 的 rules 渲染与兜底校验）。
+     *
+     * 现在：沿 {@see WorkflowTaskFormResolver} 取出 `form_rules` / `form_messages`
+     * （与 `GET /v1/workflow/tasks/{id}/form` 的 `form_rules`、以及
+     * `GET /v1/lowcode/forms/{name}?with_validator=1` 的 `data.validator.rules` **同源**），
+     * 再交给**同一个生成器**（{@see FormValidatorGenerator::buildFromDefinition()}）
+     * 变成 ThinkPHP 验证器执行。
+     *
+     * 关键实现细节：**执行的就是 resolver 原样返回的那个数组**（不是拿 schema 重新生成一份）。
+     * 因此「返回给前端的规则」与「后端实际执行的规则」是同一份内存数据，
+     * 不存在「前端按 A 校验、后端按 B 校验」这种两套真相的漂移空间。
+     * 宿主侧**不写**任何正则或规则表。
+     *
+     * ## 三种解析结果的行为（既不能一律放行，也不能一律拦）
+     *
+     * | resolver 结果 | 行为 | 理由 |
+     * | ------------- | ---- | ---- |
+     * | `resolved: true` | 按 rules 校验；不过 → 422，`data.errors` 按字段给文案 | 正常路径 |
+     * | `node_has_no_form` | **不校验**，照常落库 | 纯审批节点本来就没有表单，没有规则可依 |
+     * | `form_not_found` / `definition_not_found` / `instance_not_found` / `node_not_found` | **不拦**，落库 + 响应带标记 + WARNING 日志 | 配置错误不该变成业务死锁（拦了任务永远无法完成），但也绝不能静默（否则脏数据无人知晓） |
+     *
+     * 三条行为都落在 {@see self::validateFormData()} 里，本方法只做「结构」层的兜底检查。
+     *
      * @param array<string, mixed> $payload `form_data`（必填）/ `comment`
      * @param string[]             $userGroupSlugs
-     * @return array<string, mixed>
+     * @return array<string, mixed> 任务行 + `next_tasks` + `form_validation`（校验结论）
      */
     public function submitForm(int $tenantId, int $userId, array $userGroupSlugs, int $taskId, array $payload): array
     {
         $formData = $payload['form_data'] ?? null;
 
+        // 结构校验：必须是**非空数组**（「有东西可提交」）。字段内容对不对由 validateFormData() 判，
+        // 这里只挡「压根没传」与「传了个标量」—— 后者连逐字段校验都无从谈起。
         if (!is_array($formData) || $formData === []) {
             throw WorkflowActionException::invalid([
                 'form_data' => $this->t('workflow.form_data_required'),
@@ -493,10 +534,22 @@ class WorkflowTaskService
         // 3）宿主授权（移植旧 checkTaskAccess 语义）
         $this->assertActor($task, $userId, $userGroupSlugs);
 
-        // 4）表单类动作先把 form_data 落库：即使后续推进失败，用户填的内容也不会丢
+        // 4）表单类动作：**先按后端规则校验 → 通过后才落库**
+        //
+        //    顺序不能反：先写 form_data 再校验失败，会在库里留下一行「脏表单 + 任务没推进」的数据，
+        //    用户看到 422、重开表单却看到自己「没提交成功」的内容 —— 比直接拒绝更糟。
+        //
+        //    位置也刻意放在这里（三层授权之后、落库之前）而不是 submitForm() 入口：
+        //    若放在入口，未登录/非受理人的请求能靠 422 的字段文案反推本节点的表单规则。
+        $formValidation = null;
+
         if ($action === self::ACTION_FORM) {
+            $formData = is_array($payload['form_data'] ?? null) ? $payload['form_data'] : [];
+
+            $formValidation = $this->validateFormData($tenantId, $task, $formData);
+
             $this->tasks()->updateForTenant($tenantId, $taskId, [
-                'form_data' => json_encode($payload['form_data'], JSON_UNESCAPED_UNICODE),
+                'form_data' => json_encode($formData, JSON_UNESCAPED_UNICODE),
             ]);
         }
 
@@ -534,6 +587,13 @@ class WorkflowTaskService
 
         $refreshed = $this->requireOwned($tenantId, $taskId);
         $refreshed['next_tasks'] = $this->normalizeNextTasks($result);
+
+        // 7）把表单校验结论一并回给前端（只有表单类动作才有该键）：
+        //    `validated=false` 且 `needs_attention=true` 时必须让前端**能提示运维** ——
+        //    「跳过校验」这件事一旦静默，配置错误就会一直烂在那里，直到有人发现批下来的单子金额是负数
+        if ($formValidation !== null) {
+            $refreshed['form_validation'] = $formValidation;
+        }
 
         return $refreshed;
     }
@@ -753,6 +813,188 @@ class WorkflowTaskService
     private function isCandidate(array $task, int $userId, array $userGroupSlugs): bool
     {
         return WorkflowActorMatch::isCandidate($task, $userId, $userGroupSlugs);
+    }
+
+    /**
+     * 按**后端表单规则**校验 `form_data`（AGENTS.md 里「后端才是唯一权威」那句话的实现）
+     *
+     * ## 规则从哪来（这是本方法唯一允许的来源）
+     *
+     * `form_rules` / `form_messages` 由 {@see WorkflowTaskFormResolver::resolve()} 给出，
+     * 与 `GET /v1/workflow/tasks/{id}/form` 返回给前端的 `form_rules` / `form_messages`
+     * **是同一份数据来源**（该端点直接返回 resolver 的结果）。
+     * 因此这里既不需要、也**不允许**另写正则或另建规则表 ——
+     * 宿主侧一旦自己维护一份映射，就立刻变成「前端按 A 校验、后端按 B 校验」，
+     * 而那类问题最难查（两边看起来都对）。
+     *
+     * ## 强制手段
+     *
+     * 校验不通过一律抛 422（{@see WorkflowActionException::invalid()}），
+     * `data.errors` 是 `{字段: 文案}`，文案取自 `form_messages`（即表单设计器里配的 title，
+     * 而不是 `require|max:200` 这种原始规则串）—— 前端据此能把红字标到对应输入框上。
+     *
+     * @param int                  $tenantId 当前租户（必须是请求上下文里的，不是任务行里的）
+     * @param array<string, mixed> $task     任务行（调用方已完成租户归属与授权校验）
+     * @param array<string, mixed> $formData 待校验的表单值
+     * @return array{
+     *     validated: bool,
+     *     skipped: bool,
+     *     reason: string|null,
+     *     form_name: string|null,
+     *     needs_attention: bool,
+     *     message: string|null
+     * } 校验结论（失败时本方法不返回，直接抛 422）
+     */
+    private function validateFormData(int $tenantId, array $task, array $formData): array
+    {
+        // 1）解出「这个节点该用哪张表单、它的规则与文案是什么」
+        $resolved = $this->formResolver()->resolve($tenantId, $task);
+
+        if (($resolved['resolved'] ?? false) !== true) {
+            return $this->skipFormValidation($tenantId, $task, $resolved);
+        }
+
+        $rules    = is_array($resolved['form_rules'] ?? null) ? $resolved['form_rules'] : [];
+        $messages = is_array($resolved['form_messages'] ?? null) ? $resolved['form_messages'] : [];
+        $formName = is_string($resolved['form_name'] ?? null) ? $resolved['form_name'] : null;
+
+        // 2）表单存在但没有任何可执行规则（schema 里没有 properties / required 的极端情况）：
+        //    「没有规则」不等于「校验通过」，但也确实没有可拦的字段 —— 如实标记为未校验，
+        //    而不是谎报 validated=true（那会让「后端校验过了」这句话失去意义）。
+        if ($rules === []) {
+            return [
+                'validated'       => false,
+                'skipped'         => true,
+                'reason'          => null,
+                'form_name'       => $formName,
+                'needs_attention' => false,
+                'message'         => null,
+            ];
+        }
+
+        // 3）用**同一个生成器**把这份 rules/messages 还原成 ThinkPHP 验证器。
+        //    `buildFromDefinition()` 正是 FormValidatorManager 命中缓存时走的那条路径
+        //    （同一个类、同一份 rules、同一份 messages、连自定义规则 tenantMatch/compare 的注册方式都一样），
+        //    所以「前端拿到的 rules」与「这里执行的 rules」是同一份内存数据，没有漂移空间。
+        $validator = $this->formValidatorGenerator()->buildFromDefinition($rules, $messages, [
+            // context 与 resolver 解析时的口径保持一致（tenant_id 供 tenantMatch 用；site_id 恒为 null）
+            'tenant_id' => $tenantId,
+            'site_id'   => null,
+        ]);
+
+        // 批量模式：一次把**所有**不合规字段收齐，而不是只报第一条 ——
+        // 否则用户改完「金额」再提交、又发现「备注超长」，来回试错
+        $validator->batch(true);
+
+        if ($validator->check($formData)) {
+            return [
+                'validated'       => true,
+                'skipped'         => false,
+                'reason'          => null,
+                'form_name'       => $formName,
+                'needs_attention' => false,
+                'message'         => null,
+            ];
+        }
+
+        // 4）校验失败 → 422，`data.errors` 与 `ApiController::validationError()` 同构
+        throw WorkflowActionException::invalid(
+            $this->fieldErrorsOf($validator),
+            $this->t('workflow.form_validation_failed')
+        );
+    }
+
+    /**
+     * 「模板没解出来」时的统一结论：分正常形态与配置错误两种，绝不一律放行、也绝不一律拦
+     *
+     * | reason | 处理 | 理由 |
+     * | ------ | ---- | ---- |
+     * | `node_has_no_form` | 不校验、不告警 | 纯审批 / 复核节点本来就没有表单，没有规则可依 |
+     * | 其余（表单 / 定义 / 实例 / 节点找不到） | 不拦 + WARNING + 响应带标记 | 配置错误**不该变成业务死锁**，但**也不能静默** |
+     *
+     * 「不拦」是因为拦下来会让任务永远无法完成：改了表单名的那次发布会把在跑实例上的所有待办
+     * 直接变成死数据，而修复路径（改定义、建表单）反而需要运维先动数据库。
+     * 「不能静默」是因为放过一次未校验的提交就等于放过一行脏数据 ——
+     * 日志给运维定位（哪条任务、哪个节点、配的哪张表单），响应标记给前端以提示用户。
+     *
+     * @param int                  $tenantId 当前租户
+     * @param array<string, mixed> $task     任务行
+     * @param array<string, mixed> $resolved resolver 的原始返回
+     * @return array{
+     *     validated: bool,
+     *     skipped: bool,
+     *     reason: string|null,
+     *     form_name: string|null,
+     *     needs_attention: bool,
+     *     message: string|null
+     * }
+     */
+    private function skipFormValidation(int $tenantId, array $task, array $resolved): array
+    {
+        $reason   = is_string($resolved['reason'] ?? null) ? $resolved['reason'] : '';
+        $formName = is_string($resolved['form_name'] ?? null) ? $resolved['form_name'] : null;
+
+        if ($reason === WorkflowTaskFormResolver::REASON_NODE_HAS_NO_FORM) {
+            // 正常形态：没有表单就没有规则，提交的内容照常落库（例如「确认已阅」类节点）
+            return [
+                'validated'       => false,
+                'skipped'         => true,
+                'reason'          => $reason,
+                'form_name'       => null,
+                'needs_attention' => false,
+                'message'         => null,
+            ];
+        }
+
+        Log::warning('[WORKFLOW_FORM_TEMPLATE_MISSING] 任务表单模板缺失，已跳过表单校验并继续受理（配置错误不应变成业务死锁，但必须留痕）', [
+            'tenant_id'   => $tenantId,
+            'task_id'     => (int) ($task['id'] ?? 0),
+            'instance_id' => (int) ($task['instance_id'] ?? 0),
+            'node_id'     => $task['node_id'] ?? null,
+            'node_name'   => $task['node_name'] ?? null,
+            'form_name'   => $formName,
+            'reason'      => $reason,
+        ]);
+
+        return [
+            'validated'       => false,
+            'skipped'         => true,
+            'reason'          => $reason,
+            'form_name'       => $formName,
+            'needs_attention' => true,
+            'message'         => $reason === WorkflowTaskFormResolver::REASON_FORM_NOT_FOUND
+                ? $this->t('workflow.form_validation_skipped_form_not_found', ['form_name' => (string) $formName])
+                : $this->t('workflow.form_validation_skipped', ['reason' => $reason]),
+        ];
+    }
+
+    /**
+     * 把验证器的错误归一成 `{字段: 文案}`
+     *
+     * `Validate::getError(true)` 返回的本来就是 `field => message`
+     * （`checkItems()` 以字段名为键写入 `$this->error`），这里只做两件事：
+     * 键强制转字符串、非字符串文案兜底 JSON 化。
+     * **不重新拼文案** —— 否则会把 `form_messages` 里配好的可读文案覆盖成宿主自己编的一句话。
+     *
+     * @return array<string, string>
+     */
+    private function fieldErrorsOf(Validate $validator): array
+    {
+        $errors = $validator->getError(true);
+
+        if (!is_array($errors)) {
+            return ['form_data' => is_scalar($errors) ? (string) $errors : $this->t('workflow.form_validation_failed')];
+        }
+
+        $normalized = [];
+
+        foreach ($errors as $field => $message) {
+            $text = is_scalar($message) ? (string) $message : (string) json_encode($message, JSON_UNESCAPED_UNICODE);
+
+            $normalized[(string) $field] = $text === '' ? $this->t('workflow.form_validation_failed') : $text;
+        }
+
+        return $normalized;
     }
 
     /**
@@ -978,12 +1220,14 @@ class WorkflowTaskService
 
     /**
      * 惰性取语言服务
+     *
+     * @param array<string, string> $params 文案占位符（`:name` 形式，见 LanguageService::translate()）
      */
-    private function t(string $key): string
+    private function t(string $key, array $params = []): string
     {
         $this->lang ??= new LanguageService();
 
-        return $this->lang->trans($key);
+        return $this->lang->trans($key, $params);
     }
 
     private function tasks(): WorkflowTaskRepository
@@ -1012,6 +1256,18 @@ class WorkflowTaskService
     private function formResolver(): WorkflowTaskFormResolver
     {
         return $this->formResolver ??= new WorkflowTaskFormResolver();
+    }
+
+    /**
+     * 校验器生成器：与 `FormValidatorManager` / 低代码表单接口**同一个类**
+     *
+     * 这里刻意只注入「生成器」而不是整个 Manager：`buildFromDefinition($rules, $messages, $context)`
+     * 让宿主直接执行 resolver 返回的那份 rules —— 不需要 schema，也就没有「第二次生成、可能生成出别的规则」
+     * 的可能性。Manager 额外做的只是缓存与从 schema 生成，宿主侧用不上也不该用。
+     */
+    private function formValidatorGenerator(): FormValidatorGenerator
+    {
+        return $this->formValidatorGenerator ??= new FormValidatorGenerator();
     }
 
     /**

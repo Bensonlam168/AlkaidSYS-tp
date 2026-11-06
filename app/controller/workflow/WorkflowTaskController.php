@@ -349,6 +349,11 @@ class WorkflowTaskController extends ApiController
      * ⚠️ 语义变化：旧实现只把 `form_data` 存进内存、流程原地不动；
      * 现在提交表单会**推进流程**（`executeProcessTask()`，表单键以 `f_` 前缀并入 args）。
      * 不推进的话，「提交表单」与「什么都没做」对流程而言无法区分，任务会永远停在待办。
+     *
+     * 校验：`form_data` 会先按**后端表单规则**校验（`WorkflowTaskService::validateFormData()`，
+     * 规则与 `GET /v1/lowcode/forms/{name}?with_validator=1` 同源），不过则 422 + `data.errors` 按字段给文案。
+     * 响应里的 `form_validation` 是本次校验结论：`validated=false` + `needs_attention=true`
+     * 表示「模板缺失、已跳过校验」—— 前端据此提示运维，而不是把它当成一次正常提交悄悄放过。
      */
     public function submitForm(string $id, Request $request): Response
     {
@@ -383,6 +388,9 @@ class WorkflowTaskController extends ApiController
                 'form_data'  => $task['form_data'] ?? [],
                 'status'     => $task['status'] ?? null,
                 'next_tasks' => $task['next_tasks'] ?? [],
+                // 表单校验结论（见 WorkflowTaskService::validateFormData()）：
+                // `validated=false` + `needs_attention=true` = 模板缺失、已跳过校验，前端应提示运维
+                'form_validation' => $task['form_validation'] ?? null,
             ], $this->langService->trans('workflow.form_submitted'));
         });
     }
