@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Workflow;
 
-use app\controller\workflow\WorkflowTriggerController;
 use Infrastructure\Permission\Service\PermissionService;
 use Tests\Helpers\AuthHelper;
 use Tests\ThinkPHPTestCase;
@@ -18,9 +17,18 @@ use think\facade\Db;
  * `string $userId`，本文件 `declare(strict_types=1)` —— 已认证用户调用时
  * int 传入 string 形参会抛 TypeError，接口 500。
  *
- * 覆盖两个调用点（其余 update / test 走同一个 helper，签名修复后同样受益）：
- *   - `save()`    → `:320`
- *   - `enable()`  → `:745`（setTriggerStatus）
+ * 覆盖两个调用点（其余 update / test / disable 走同一个 helper，签名修复后同样受益）：
+ *   - `save()`    → 创建时写 `trigger_created` 日志
+ *   - `enable()`  → `setTriggerStatus()` 写 `trigger_enabled` 日志
+ *
+ * 2026 变更（Mock → 真库 + 真引擎）：
+ *   控制器不再持有 `static $triggerLogs` 内存数组，日志落 `workflow_event_logs`
+ *   （`instance_id` 为 NULL 表示「管理类事件」，`event_data.trigger_id` 承载归属）。
+ *   因此本用例的「日志真的写入了」不再靠反射读内存，而是：
+ *     ① 调 `GET v1/workflow/triggers/{id}/logs` 走真实端点契约；
+ *     ② 再直接查库核对 `user_id` 列，证明操作人是真的落库、不是响应层拼出来的。
+ *   断言语义（CREATED / ENABLED 都存在、操作人必须是当前登录用户、不得退化为 system）
+ *   逐条保留，未削弱。
  *
  * @package Tests\Feature\Workflow
  */
@@ -34,8 +42,14 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
     /** 测试角色 ID */
     private int $roleId = 6511;
 
-    /** 测试权限 ID */
+    /** 测试权限 ID（写） */
     private int $permissionId = 6521;
+
+    /** 测试权限 ID（读，logs 端点要求 workflow_trigger.read） */
+    private int $readPermissionId = 6522;
+
+    /** 定义名统一前缀（tearDown 按前缀回收，避免脏数据） */
+    private const DEFINITION_PREFIX = 'wf_trigger_logtype_def_';
 
     protected function setUp(): void
     {
@@ -51,15 +65,14 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
         $this->app()->instance(\app\middleware\Permission::class, new \app\middleware\Permission());
 
         $this->resetRouteMiddlewareQueue();
-        $this->resetInMemoryStores();
         $this->seedFixtures();
         $this->clearPermissionCache();
     }
 
     protected function tearDown(): void
     {
+        $this->purgeSeededWorkflowRows();
         $this->resetRouteMiddlewareQueue();
-        $this->resetInMemoryStores();
         $this->cleanupFixtures();
 
         parent::tearDown();
@@ -70,11 +83,13 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
      */
     public function testCreateTriggerWithAuthenticatedUserDoesNotTypeError(): void
     {
+        $definitionId = $this->seedDefinition();
+
         $response = $this->httpRequest(
             'POST',
             'v1/workflow/triggers',
             [
-                'definition_id' => 'wf_trigger_type_test',
+                'definition_id' => $definitionId,
                 'name' => '类型契约测试触发器',
                 'type' => 'manual',
             ],
@@ -100,11 +115,13 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
      */
     public function testEnableTriggerWithAuthenticatedUserDoesNotTypeError(): void
     {
+        $definitionId = $this->seedDefinition();
+
         $create = $this->httpRequest(
             'POST',
             'v1/workflow/triggers',
             [
-                'definition_id' => 'wf_trigger_enable_test',
+                'definition_id' => $definitionId,
                 'name' => '启用路径测试触发器',
                 'type' => 'manual',
             ],
@@ -117,6 +134,7 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
         $this->assertIsArray($body);
         $triggerId = $body['data']['id'] ?? null;
         $this->assertNotEmpty($triggerId, '响应中应包含触发器 ID');
+        $triggerId = (int) $triggerId;
 
         $response = $this->httpRequest(
             'POST',
@@ -132,33 +150,135 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
             . $response->getContent()
         );
 
-        // 日志必须真的写入，且 user_id 为当前用户
-        $logs = $this->readTriggerLogs();
-        $this->assertArrayHasKey($triggerId, $logs, '应存在该触发器的日志');
-        $events = array_column($logs[$triggerId], 'event');
-        $this->assertContains('CREATED', $events, '创建应留下 CREATED 日志');
-        $this->assertContains('ENABLED', $events, '启用应留下 ENABLED 日志');
+        // ① 走真实日志端点：事件词汇与归属都对
+        $logs = $this->readTriggerLogsViaEndpoint($triggerId);
+        $this->assertNotSame([], $logs, '应存在该触发器的日志（logs 端点返回空）');
 
-        foreach ($logs[$triggerId] as $entry) {
+        $events = array_column($logs, 'event');
+        $this->assertContains('CREATED', $events, '创建应留下 CREATED 日志，实际：' . json_encode($events));
+        $this->assertContains('ENABLED', $events, '启用应留下 ENABLED 日志，实际：' . json_encode($events));
+
+        foreach ($logs as $entry) {
             $this->assertSame(
                 (string) $this->userId,
                 (string) $entry['user_id'],
                 '日志的操作人应为当前登录用户（' . $this->userId . '），不得退化为 system'
             );
         }
+
+        // ② 再直接查库核对：证明 user_id 是真落库的列值，而不是呈现层拼出来的
+        $dbUserIds = Db::table('workflow_event_logs')
+            ->where('tenant_id', 1)
+            ->whereIn('event_type', ['trigger_created', 'trigger_enabled'])
+            ->whereRaw("CAST(JSON_UNQUOTE(JSON_EXTRACT(event_data, '\$.trigger_id')) AS UNSIGNED) = ?", [$triggerId])
+            ->column('user_id');
+
+        $this->assertCount(2, $dbUserIds, '库里应有 2 条管理类日志（created + enabled），实际：' . json_encode($dbUserIds));
+
+        foreach ($dbUserIds as $dbUserId) {
+            $this->assertSame(
+                $this->userId,
+                (int) $dbUserId,
+                'workflow_event_logs.user_id 必须是真实登录用户，不得为 NULL / 0'
+            );
+        }
     }
 
     /**
-     * 读取控制器进程内触发器日志（通过反射）
+     * 经真实端点读触发器日志
      *
-     * @return array<string, array<int, array<string, mixed>>>
+     * @return array<int, array<string, mixed>>
      */
-    private function readTriggerLogs(): array
+    private function readTriggerLogsViaEndpoint(int $triggerId): array
     {
-        $ref = new \ReflectionProperty(WorkflowTriggerController::class, 'triggerLogs');
-        $ref->setAccessible(true);
+        $response = $this->httpRequest(
+            'GET',
+            'v1/workflow/triggers/' . $triggerId . '/logs',
+            [],
+            $this->authHeaders()
+        );
 
-        return (array) $ref->getValue();
+        $this->assertSame(
+            200,
+            $response->getCode(),
+            'logs 端点应返回 200，实际响应：' . $response->getContent()
+        );
+
+        $body = json_decode($response->getContent(), true);
+        $this->assertIsArray($body);
+        $this->assertArrayHasKey('data', $body);
+
+        return (array) ($body['data']['list'] ?? []);
+    }
+
+    /**
+     * 插入一条真实定义（触发器必须挂在同租户的真实定义上，外键才成立）
+     */
+    private function seedDefinition(): int
+    {
+        $name = self::DEFINITION_PREFIX . uniqid();
+        $now  = date('Y-m-d H:i:s');
+
+        return (int) Db::table('workflow_definitions')->insertGetId([
+            'tenant_id'    => 1,
+            'name'         => $name,
+            'display_name' => '触发器日志类型测试定义',
+            'description'  => 'C-7 回归夹具（用例结束后按前缀删除）',
+            'type'         => 'approval',
+            'version'      => 1,
+            'status'       => 'draft',
+            'is_active'    => 0,
+            'nodes_config' => json_encode([
+                'name'  => $name,
+                'type'  => 'approval',
+                'nodes' => [
+                    ['id' => 'start', 'type' => 'ingenious:start', 'x' => 200, 'y' => 160,
+                        'text' => ['value' => '开始'], 'properties' => ['_alkaid_node_class' => 'StartNode', '_alkaid_node_type' => 'start']],
+                    ['id' => 'end', 'type' => 'ingenious:end', 'x' => 420, 'y' => 160,
+                        'text' => ['value' => '结束'], 'properties' => ['_alkaid_node_class' => 'EndNode', '_alkaid_node_type' => 'end']],
+                ],
+                'edges' => [
+                    ['id' => 'flow_start_end', 'type' => 'polyline', 'sourceNodeId' => 'start',
+                        'targetNodeId' => 'end', 'text' => ['value' => ''], 'properties' => ['_alkaid_type' => 'sequence']],
+                ],
+            ], JSON_UNESCAPED_UNICODE),
+            'created_at'   => $now,
+            'updated_at'   => $now,
+            'created_by'   => $this->userId,
+            'updated_by'   => $this->userId,
+        ]);
+    }
+
+    /**
+     * 回收本用例写入的业务行（严格按外键顺序：event_logs → triggers → definitions）
+     *
+     * 说明：trait 的 `purgeWorkflowFixtures()` 只清 users / roles / permissions，
+     * 不认识工作流业务表，因此业务夹具必须自己收尾。
+     */
+    private function purgeSeededWorkflowRows(): void
+    {
+        $definitionIds = Db::table('workflow_definitions')
+            ->where('name', 'like', self::DEFINITION_PREFIX . '%')
+            ->column('id');
+
+        if ($definitionIds === []) {
+            return;
+        }
+
+        $triggerIds = Db::table('workflow_triggers')->whereIn('definition_id', $definitionIds)->column('id');
+
+        if ($triggerIds !== []) {
+            Db::table('workflow_event_logs')
+                ->whereRaw(
+                    "CAST(JSON_UNQUOTE(JSON_EXTRACT(event_data, '\$.trigger_id')) AS UNSIGNED) IN ("
+                    . implode(',', array_map('intval', $triggerIds)) . ')'
+                )
+                ->delete();
+
+            Db::table('workflow_triggers')->whereIn('id', $triggerIds)->delete();
+        }
+
+        Db::table('workflow_definitions')->whereIn('id', $definitionIds)->delete();
     }
 
     /**
@@ -175,7 +295,15 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
                 'workflow_trigger',
                 'write',
                 $this->permissionId,
-                'C-7 回归测试权限（触发器）'
+                'C-7 回归测试权限（触发器写）'
+            );
+
+            // logs 端点要求 workflow_trigger.read：不授予会得到 403 而不是日志
+            $this->readPermissionId = $this->ensureWorkflowPermission(
+                'workflow_trigger',
+                'read',
+                $this->readPermissionId,
+                'C-7 回归测试权限（触发器读）'
             );
 
             Db::table('users')->insert([
@@ -203,11 +331,13 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
                 'created_at' => $now,
             ]);
 
-            Db::table('role_permissions')->insert([
-                'role_id' => $this->roleId,
-                'permission_id' => $this->permissionId,
-                'created_at' => $now,
-            ]);
+            foreach ([$this->permissionId, $this->readPermissionId] as $permissionId) {
+                Db::table('role_permissions')->insert([
+                    'role_id' => $this->roleId,
+                    'permission_id' => $permissionId,
+                    'created_at' => $now,
+                ]);
+            }
         });
     }
 
@@ -244,9 +374,14 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
 
     /**
      * 简易 HTTP 调用辅助（与既有工作流 Feature 测试保持一致）
+     *
+     * 每次请求前清空路由/控制器中间件队列：ThinkPHP 的中间件队列在同一进程内跨请求累积，
+     * 上一次请求的 Auth / Permission 会残留在队列里，导致后续请求的鉴权结论失真。
      */
     private function httpRequest(string $method, string $uri, array $data = [], array $headers = [])
     {
+        $this->resetRouteMiddlewareQueue();
+
         $request = $this->app()->make(\think\Request::class, [], true);
         $request->setMethod($method);
         $request->setPathinfo($uri);
@@ -255,7 +390,7 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
             $request->withGet($data);
         } else {
             $request->withPost($data);
-            $request->withInput(json_encode($data));
+            $request->withInput((string) json_encode($data));
         }
 
         return $this->runHttp($request->withHeader($headers));
@@ -276,21 +411,5 @@ class WorkflowTriggerLogTypeTest extends ThinkPHPTestCase
         $queue['controller'] = [];
 
         $ref->setValue($middleware, $queue);
-    }
-
-    /**
-     * 清空触发器控制器的进程内静态存储
-     */
-    private function resetInMemoryStores(): void
-    {
-        foreach (['triggers', 'triggerLogs'] as $property) {
-            if (!property_exists(WorkflowTriggerController::class, $property)) {
-                continue;
-            }
-
-            $ref = new \ReflectionProperty(WorkflowTriggerController::class, $property);
-            $ref->setAccessible(true);
-            $ref->setValue(null, []);
-        }
     }
 }

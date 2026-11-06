@@ -202,6 +202,25 @@ class WorkflowInstanceService
             );
         }
 
+        // 发布/归档语义的闸：只有「当前可启动的发布版本」才能启动新实例
+        // （status=published 且 is_active=1，口径见 WorkflowDefinitionService 类注释）
+        //
+        // 引擎**完全不看** status / is_active（它只按 definition_id 读图），
+        // 所以这道闸必须由宿主补：否则「草稿」「已归档」「已被新版本取代的旧发布版本」
+        // 都能被直接启动 —— 草稿绕过发布审核、归档定义复活、旧版本又跑出新的在跑实例。
+        if (!WorkflowDefinitionRepository::isStartable($definition)) {
+            throw WorkflowActionException::conflict(
+                '该工作流定义当前不可启动：仅「已发布且启用」的版本可启动新实例'
+                . '（草稿、已归档、已被新版本取代的发布版本均不可启动）| '
+                . 'definition is not startable (published + active required)',
+                [
+                    'definition_id' => (string) $definitionId,
+                    'status'        => (string) ($definition['status'] ?? ''),
+                    'is_active'     => (int) ($definition['is_active'] ?? 0),
+                ]
+            );
+        }
+
         $args = $this->buildStartArgs($variables, $payload);
 
         try {

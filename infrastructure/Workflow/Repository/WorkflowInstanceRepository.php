@@ -175,6 +175,24 @@ class WorkflowInstanceRepository
     }
 
     /**
+     * 统计某定义下的实例数（**不带租户条件**，用于删除定义前的「有实例」判定）
+     *
+     * 为什么不带租户：`workflow_instances.definition_id` 上有 `ON DELETE CASCADE` 外键，
+     * 删一行定义会连带删掉**该定义下所有租户的实例**。删除前的拦截必须按「物理上会被级联删掉的行数」
+     * 计算，而不是按「我能看到的行数」计算 —— 否则跨租户实例会被静默抹掉。
+     * 定义本身已按 `${tenant_id}` 限定（调用方先做归属校验），所以这里放开租户条件是安全的。
+     *
+     * @param int $definitionId 定义ID
+     * @return int 实例总数
+     */
+    public function countByDefinition(int $definitionId): int
+    {
+        return (int) Db::name($this->table)
+            ->where('definition_id', $definitionId)
+            ->count();
+    }
+
+    /**
      * 行归一化：json 列解码成数组（`variables` / `context`）
      *
      * 保留一个原则：**不改列名、不改语义**，只把 json 字符串变成数组，

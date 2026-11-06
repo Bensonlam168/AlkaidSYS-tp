@@ -106,6 +106,30 @@ final class WorkflowActionException extends RuntimeException
     }
 
     /**
+     * 401：外部回调凭据无效（webhook 签名不匹配）
+     *
+     * 为什么单独一个工厂，而不是复用 `forbidden()`：webhook 回调没有 JWT，
+     * 「签名错」与「租户不对」是两类完全不同的整改动作 ——
+     * 前者要在调用方检查 secret，后者要在本侧检查 key 归属。把两者混成 403 会让排障无从下手。
+     *
+     * @param array<string, string> $errors 字段级错误
+     */
+    public static function unauthorized(string $message, array $errors = []): self
+    {
+        return new self($message, 401, 401, $errors);
+    }
+
+    /**
+     * 405：HTTP 方法不被该 webhook 允许
+     *
+     * @param array<string, mixed> $errors 字段级错误（含 `allowed_methods`）
+     */
+    public static function methodNotAllowed(string $message, array $errors = []): self
+    {
+        return new self($message, 405, 405, $errors);
+    }
+
+    /**
      * 422：入参非法
      *
      * @param array<string, string> $errors 字段级错误
@@ -128,6 +152,22 @@ final class WorkflowActionException extends RuntimeException
     public static function conflict(string $message, array $errors = []): self
     {
         return new self($message, 400, 400, $errors);
+    }
+
+    /**
+     * 409：与**既有数据**冲突（唯一键重复、仍被其他记录引用）
+     *
+     * 与 {@see self::conflict()} 的区别是一句话能说清的：
+     * - 400 是「你这次请求的**状态**不对」（重试同样的请求永远不会成功，除非先做别的动作）；
+     * - 409 是「**数据**层面撞车」（换一个名字、先清掉引用方就能成功）。
+     * 把「重名」渲染成 400 会让客户端误以为是自己的请求格式有问题；
+     * 把「仍有实例引用」渲染成 400 会掩盖「需要先归档而非删除」这条整改路径。
+     *
+     * @param array<string, mixed> $errors 字段级错误（如 `instance_count` / `name`）
+     */
+    public static function conflicting(string $message, array $errors = []): self
+    {
+        return new self($message, 409, 409, $errors);
     }
 
     /**

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Workflow;
 
-use Alkaid\Workflow\Engine\Definition\WorkflowBuilder;
 use Infrastructure\Permission\Service\PermissionService;
 use Tests\Helpers\AuthHelper;
 use Tests\ThinkPHPTestCase;
@@ -29,6 +28,12 @@ use think\facade\Db;
  *   - 客户端可控的 `?message=x` 查询参数 → 不再 500；
  *   - 存在的定义 → 200 且返回校验结果（证明 `getInfos()` 生效）。
  *
+ * 2026 变更（Mock → 真库 + 真引擎）：
+ *   控制器不再持有 `static $definitions` 内存存储，夹具改为向 `workflow_definitions` 插真行；
+ *   因此用例 3 现在同时证明「校验真的跑了引擎」——`valid` 为 true 依赖
+ *   `LogicFlowSerializer::fromLogicFlow()` + `ModelParser::parse()` 真的解析成功，
+ *   而不是 Mock 里写死的常量。断言集合（valid/errors/warnings/info）保持不变。
+ *
  * @package Tests\Feature\Workflow
  */
 class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
@@ -50,6 +55,13 @@ class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
      * 工作流定义读权限 ID（validate 路由只要求 read 权限）
      */
     private int $readPermissionId = 991101;
+
+    /**
+     * 本用例向真实库插入的定义 ID（tearDown 里按主键删除，避免脏数据）
+     *
+     * @var list<int>
+     */
+    private array $seededDefinitionIds = [];
 
     protected function setUp(): void
     {
@@ -82,12 +94,28 @@ class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
 
     protected function tearDown(): void
     {
+        // 先删真实库夹具，再做既有清理：validate 端点不写库，但夹具本身必须回收
+        $this->purgeSeededDefinitions();
+
         $this->resetRouteMiddlewareQueue();
         $this->resetInMemoryStores();
         $this->cleanupPermissions();
         $this->clearPermissionCache();
 
         parent::tearDown();
+    }
+
+    /**
+     * 删除本用例插入的定义行
+     */
+    private function purgeSeededDefinitions(): void
+    {
+        if ($this->seededDefinitionIds === []) {
+            return;
+        }
+
+        Db::table('workflow_definitions')->whereIn('id', $this->seededDefinitionIds)->delete();
+        $this->seededDefinitionIds = [];
     }
 
     /**
@@ -161,36 +189,96 @@ class WorkflowDefinitionValidateEndpointTest extends ThinkPHPTestCase
     }
 
     /**
-     * 向控制器进程内静态存储注入一条工作流定义，并返回其 ID
+     * 向**真实库**插入一条工作流定义，并返回其主键
      *
-     * 说明：本用例聚焦 validate 端点，创建定义链路已由 WorkflowTenantIsolationTest 覆盖，
+     * 2026 变更：`WorkflowDefinitionController` 已由内存 Mock 改为真库 + 真引擎，
+     * 反射往 `static $definitions` 里塞对象的路子不存在了（也没有意义：Mock 证明不了校验真的跑了）。
+     * 这里直接插一行 `nodes_config` 为**合法 LogicFlow 图**的草稿定义，
+     * 让 `validateAction` 真的走一遍 `LogicFlowSerializer` + `ModelParser`。
+     *
+     * 说明：本用例聚焦 validate 端点，创建定义链路已由 WorkflowDefinitionLifecycleTest 覆盖，
      * 这里直接构造定义以降低耦合（无需 write 权限与创建接口前置条件）。
      */
-    private function seedDefinition(int $tenantId = 1): string
+    private function seedDefinition(int $tenantId = 1): int
     {
-        $builder    = WorkflowBuilder::create('validate_endpoint_wf_' . uniqid(), ['tenant_id' => $tenantId]);
-        $definition = $builder->getDefinition();
+        $name = 'validate_endpoint_wf_' . uniqid();
+        $now  = date('Y-m-d H:i:s');
 
-        $ref = new \ReflectionProperty(
-            \app\controller\workflow\WorkflowDefinitionController::class,
-            'definitions'
-        );
-        $ref->setAccessible(true);
+        $id = (int) Db::table('workflow_definitions')->insertGetId([
+            'tenant_id'    => $tenantId,
+            'name'         => $name,
+            'display_name' => '校验端点测试定义',
+            'description'  => 'validate 端点用例夹具（用例结束后删除）',
+            'type'         => 'approval',
+            'version'      => 1,
+            'status'       => 'draft',
+            'is_active'    => 0,
+            'nodes_config' => json_encode($this->minimalGraph($name), JSON_UNESCAPED_UNICODE),
+            'created_at'   => $now,
+            'updated_at'   => $now,
+            'created_by'   => $this->userId,
+            'updated_by'   => $this->userId,
+        ]);
 
-        $definitions = (array) $ref->getValue();
-        $definitions[$definition->getId()] = $definition;
-        $ref->setValue(null, $definitions);
+        $this->seededDefinitionIds[] = $id;
 
-        return $definition->getId();
+        return $id;
+    }
+
+    /**
+     * 最小可执行图：start → apply → end（引擎能解析出非空模型）
+     *
+     * @return array<string, mixed>
+     */
+    private function minimalGraph(string $name): array
+    {
+        $node = static fn (string $id, string $parserKey, int $x, string $text): array => [
+            'id'         => $id,
+            'type'       => 'ingenious:' . $parserKey,
+            'x'          => $x,
+            'y'          => 160,
+            'text'       => ['value' => $text],
+            'properties' => [
+                '_alkaid_node_class' => match ($parserKey) {
+                    'start' => 'StartNode',
+                    'end'   => 'EndNode',
+                    default => 'TaskNode',
+                },
+                '_alkaid_node_type'  => $parserKey,
+            ],
+        ];
+
+        $edge = static fn (string $id, string $source, string $target): array => [
+            'id'           => $id,
+            'type'         => 'polyline',
+            'sourceNodeId' => $source,
+            'targetNodeId' => $target,
+            'text'         => ['value' => ''],
+            'properties'   => ['_alkaid_type' => 'sequence'],
+        ];
+
+        return [
+            'name'  => $name,
+            'type'  => 'approval',
+            'nodes' => [
+                $node('start', 'start', 200, '开始'),
+                $node('apply', 'task', 420, '填写申请'),
+                $node('end', 'end', 640, '结束'),
+            ],
+            'edges' => [
+                $edge('flow_start_apply', 'start', 'apply'),
+                $edge('flow_apply_end', 'apply', 'end'),
+            ],
+        ];
     }
 
     /**
      * 发起 POST v1/workflow/definitions/{id}/validate 请求
      *
-     * @param string $definitionId 定义 ID
+     * @param int|string $definitionId 定义 ID（不存在的 ID 允许传非数字字符串）
      * @param array $query 查询参数（模拟客户端可控参数）
      */
-    private function postValidate(string $definitionId, array $query = [])
+    private function postValidate(int|string $definitionId, array $query = [])
     {
         // 强制新建实例：容器默认返回共享 Request，复用会把上一个用例的查询参数
         // （如 message=x）带入本用例，导致结论失真
