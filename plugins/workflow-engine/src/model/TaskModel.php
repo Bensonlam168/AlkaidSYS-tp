@@ -59,9 +59,15 @@ class TaskModel extends NodeModel implements ITaskModel
     private string|null $callback; // 自动执行回调类
     private mixed $ext; // 自定义扩展属性
     // 候选用户标识
-    private string|null $candidateUsers; // ext.getStr("candidateUsers");
+    //
+    // 为什么类型是 `string|array|null`：LogicFlow 的 properties 里这两项**两种形态都有人写** ——
+    // 设计器导出的是 `["role:admin"]`（数组），手写/历史数据常是 `"5,7"`（逗号串）。
+    // 声明成 `string|null` 时，一旦配置是数组，`DynamicPropsTrait::handleSet()` 就会抛
+    // `TypeError: Cannot assign array to property ... of type ?string` —— 即「配了数组的节点
+    // 一执行就崩」。解析器（DefaultTaskActorResolver）两种形态都吃，这里如实放开类型。
+    private string|array|null $candidateUsers; // ext.getStr("candidateUsers");
     // 候选用户组标识
-    private string|null $candidateGroups; // ext.getStr("candidateGroups");
+    private string|array|null $candidateGroups; // ext.getStr("candidateGroups");
     // 候选用户处理类字符串
     private string|null $candidateHandler; // ext.getStr("candidateHandler");
     // 会签类型 PARALLEL表示并行会签，SEQUENTIAL表示串行会签

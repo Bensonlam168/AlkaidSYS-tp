@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Alkaid\Workflow\Engine\Services;
 
+use Alkaid\Workflow\Engine\Core\ServiceContext;
 use Alkaid\Workflow\Engine\Entities\ProcessTaskEntity;
+use Alkaid\Workflow\Engine\Entities\TaskActorResolution;
 use Alkaid\Workflow\Engine\Entities\WorkflowStateMap;
 use Alkaid\Workflow\Engine\enums\ProcessConstEnum;
 use Alkaid\Workflow\Engine\enums\ProcessTaskPerformTypeEnum;
@@ -14,12 +16,16 @@ use Alkaid\Workflow\Engine\interface\IExecution;
 use Alkaid\Workflow\Engine\interface\model\IProcessTask;
 use Alkaid\Workflow\Engine\interface\model\IProcessTaskActor;
 use Alkaid\Workflow\Engine\interface\services\IProcessTaskService;
+use Alkaid\Workflow\Engine\interface\services\ITaskActorDirectory;
+use Alkaid\Workflow\Engine\interface\services\ITaskActorResolver;
+use Alkaid\Workflow\Engine\libs\utils\ProcessFlowUtils;
 use Alkaid\Workflow\Engine\libs\utils\StringHelper;
 use Alkaid\Workflow\Engine\model\CustomModel;
 use Alkaid\Workflow\Engine\model\ProcessModel;
 use Alkaid\Workflow\Engine\model\TaskModel;
 use Alkaid\Workflow\Engine\Services\Support\RecordsHistorySafely;
 use Alkaid\Workflow\Engine\Services\Support\ResolvesWorkflowTenant;
+use madong\helper\Dict;
 use madong\interface\IDict;
 
 /**
@@ -46,6 +52,16 @@ use madong\interface\IDict;
  * 本仓库**没有** `workflow_task_actors` 表，参与者只能落 `workflow_tasks.assignee`
  * （单个处理人）与 `candidate_users`（json 数组）。这是字段口径的取舍，
  * 不是「随便找个列塞」：`assignee` 语义本来就是「处理人」，候选人是「可处理该任务的人集合」。
+ *
+ * 节点上配置的「谁有权办」（`assignee` / `candidate_ext_users` / `candidate_ext_groups`）
+ * 由 {@see ITaskActorResolver} 解析成上述列：
+ * - `assignee` / `assignee_name`：解析出的处理人与姓名；
+ * - `candidate_users`：**展开后的**用户ID 并集（含 assignee）—— `isAllowed()` 只认这一列，
+ *   所以角色/部门必须展开成人写进来，否则配了等于没配；
+ * - `candidate_groups`：原始组引用（`role:admin` 这类）**原样保留**，用于展示与审计。
+ *
+ * 解析不出任何人时**不抛异常**：任务照常以 pending 落库、流程继续推进，
+ * 但会记 WARNING（否则就是「任务生成了但没人能推」这种最难查的故障）。
  *
  * ── 未实现的部分 ──────────────────────────────────────────────────────────
  * `saveProcessTask/updateProcessTask`（空接口无字段声明）、`transfer`（缺转办历史表）、
@@ -138,32 +154,38 @@ class ProcessTaskService implements IProcessTaskService
      */
     public function createTask(TaskModel $taskModel, IExecution $execution): ?array
     {
-        $assignee = $this->firstActorId($taskModel->getAssignee(), '任务节点 ' . (string) $taskModel->getName());
-
-        return [$this->insertTask($taskModel, $execution, $assignee)];
+        return [$this->insertTask($taskModel, $execution)];
     }
 
     /**
      * 创建会签任务（一个参与者一条记录）
      *
+     * 参与者同样走解析器：角色/部门会被展开成具体的人，然后**一人一条任务**。
+     * 展开失败（角色不存在等）时不会伪造参与者，也不会抛异常卡住流程 ——
+     * 解析结果为空时这里才报错，因为「会签节点一个人都没有」等于会签永远签不完。
+     *
      * @return array<int, ProcessTaskEntity>
      */
     public function createCountersignTask(TaskModel $taskModel, IExecution $execution): IProcessTask|array|null
     {
-        $actors = $this->getTaskActors($taskModel, $execution);
+        $resolution = $this->resolveNodeActors($taskModel, $this->executionVariables($execution), null);
+        $actors = $resolution->candidateUserIds;
 
         if ($actors === []) {
             throw new LFlowException(sprintf(
-                '会签节点 %s 没有可用的参与者，无法创建会签任务'
-                . '（本仓库没有 IProcessUser / ICandidateHandler 实现，无法从角色/部门/表达式解析参与者）',
-                (string) $taskModel->getName()
+                '会签节点 %s 没有可用的参与者，无法创建会签任务（%s）',
+                (string) $taskModel->getName(),
+                $resolution->warnings === []
+                    ? '节点未配置 assignee / candidate_ext_users / candidate_ext_groups'
+                    : '解析告警：' . implode('；', $resolution->warnings)
             ));
         }
 
         $tasks = [];
 
         foreach ($actors as $actor) {
-            $tasks[] = $this->insertTask($taskModel, $execution, $actor);
+            // 每个会签人一条记录：处理人是他自己，候选人也只放他自己（不允许代签）
+            $tasks[] = $this->insertTask($taskModel, $execution, $resolution->forActor($actor));
         }
 
         return $tasks;
@@ -199,6 +221,13 @@ class ProcessTaskService implements IProcessTaskService
 
         if ($operatorId !== null) {
             $data['assignee'] = $operatorId;
+            // 候选池任务（建任务时没有 assignee）被认领后，姓名要跟着补上 ——
+            // 否则列表里会出现「assignee=996667 / assignee_name=NULL」这种半截数据
+            $operatorName = $this->resolveUserName($operatorId);
+
+            if ($operatorName !== null) {
+                $data['assignee_name'] = $operatorName;
+            }
         }
 
         $this->scoped(self::TABLE, '完成流程任务')->updateById($taskId, $data);
@@ -289,14 +318,21 @@ class ProcessTaskService implements IProcessTaskService
         ]);
 
         // 2）在上一个任务节点重建待办，处理人沿用原任务的处理人
-        $assignee = $this->firstActorId($row['assignee'] ?? null, '驳回目标节点 ' . (string) $previousTaskNode->getName());
-
+        //
+        // 处理人**沿用**被驳回的那条任务的处理人（他刚才审的就是这个节点），
+        // 但候选人仍然按上一个节点自己的配置展开（角色/部门照旧生效），
+        // 两者并集后写进 candidate_users，避免「驳回之后没人能接着办」。
         $columns = $this->buildTaskColumns(
             $previousTaskNode,
             (string) $row['instance_id'],
             (string) ($row['created_by'] ?? ''),
-            $assignee,
-            ProcessTaskPerformTypeEnum::NORMAL->value
+            ProcessTaskPerformTypeEnum::NORMAL->value,
+            [],
+            $this->resolveNodeActors(
+                $previousTaskNode,
+                [],
+                $row['assignee'] ?? null
+            )
         );
 
         return $this->insertTaskRow($columns);
@@ -305,29 +341,15 @@ class ProcessTaskService implements IProcessTaskService
     /**
      * 解析任务节点配置里声明的参与者（用于会签）
      *
+     * 返回值是**展开后**的用户ID（角色/部门已变成具体的人，见 {@see ITaskActorResolver}）。
+     *
      * @return string[] 参与者ID列表
      */
     public function getTaskActors(TaskModel $model, IExecution $execution): array
     {
-        $tokens = [];
+        $resolution = $this->resolveNodeActors($model, $this->executionVariables($execution), null);
 
-        $assignee = $model->getAssignee();
-        if (is_scalar($assignee) && (string) $assignee !== '') {
-            $tokens[] = (string) $assignee;
-        }
-
-        $candidates = $model->getCandidateUsers();
-        if (is_scalar($candidates) && (string) $candidates !== '') {
-            $tokens[] = (string) $candidates;
-        }
-
-        $actors = [];
-
-        foreach ($tokens as $token) {
-            $actors = array_merge($actors, $this->parseActorTokens($token, '任务节点 ' . (string) $model->getName()));
-        }
-
-        return array_values(array_unique($actors));
+        return array_map(static fn (int $id): string => (string) $id, $resolution->candidateUserIds);
     }
 
     /**
@@ -373,6 +395,12 @@ class ProcessTaskService implements IProcessTaskService
 
         if (!isset($row['assignee']) || $row['assignee'] === null || $row['assignee'] === '') {
             $data['assignee'] = (int) $merged[0];
+            // 与 finishProcessTask() 同口径：assignee 变了，姓名也要跟上
+            $name = $this->resolveUserName((int) $merged[0]);
+
+            if ($name !== null) {
+                $data['assignee_name'] = $name;
+            }
         }
 
         $this->scoped(self::TABLE, '追加任务参与者')->updateById($taskId, $data);
@@ -476,45 +504,122 @@ class ProcessTaskService implements IProcessTaskService
     /**
      * 组装并写入一条任务记录
      *
-     * @param TaskModel  $taskModel 任务节点模型
-     * @param IExecution $execution 执行对象
-     * @param string     $assignee  处理人ID（空串表示暂不指派）
+     * @param TaskModel                $taskModel  任务节点模型
+     * @param IExecution               $execution  执行对象
+     * @param TaskActorResolution|null $resolution 参与者解析结果（会签逐人建任务时由调用方传入；
+     *                                             不传则按节点配置实时解析）
      */
-    private function insertTask(TaskModel $taskModel, IExecution $execution, string $assignee): ProcessTaskEntity
-    {
+    private function insertTask(
+        TaskModel $taskModel,
+        IExecution $execution,
+        ?TaskActorResolution $resolution = null
+    ): ProcessTaskEntity {
         $performType = $taskModel->getPerformType();
 
         if ($performType instanceof \BackedEnum) {
             $performType = $performType->value;
         }
 
+        $variables = $this->executionVariables($execution);
+
         $columns = $this->buildTaskColumns(
             $taskModel,
             (string) $execution->getProcessInstanceId(),
             (string) $execution->getOperator(),
-            $assignee,
-            $performType
+            $performType,
+            $variables,
+            $resolution ?? $this->resolveNodeActors(
+                $taskModel,
+                $variables,
+                $this->firstTaskApplicant($taskModel, $execution)
+            )
         );
 
         return $this->insertTaskRow($columns);
     }
 
     /**
+     * 申请节点（第一个任务节点）的处理人 = 流程发起人
+     *
+     * ## 为什么必须在这里补
+     *
+     * 「第一个任务节点是申请节点，处理人等于发起人」这条规则，引擎原本只写在
+     * `ProcessEngines::executeAndJumpTask()` / `executeAndJumpToFirstTaskNode()`
+     * 这两个**跳转**路径里；正常启动（`startProcessInstanceById()` → 开始节点 →
+     * 第一个任务）这一最常用路径上**根本没设**，于是申请任务的处理人是 null、
+     * 候选人也是空集 —— 结果就是发起人自己都办不了自己的申请任务，
+     * 只有 `flow_auto` / `flow.admin` 能推进（这正是既有 E2E 测试一直用 `flow_auto` 的原因）。
+     *
+     * 这里按**同一条语义**补上，且只作用于第一个任务节点，其它节点完全不受影响。
+     * 取值口径是实例的 `created_by`（创建实例时写入的发起人ID）；
+     * 顺带兼容宿主把发起人放在 `operator` 字段上的实现。
+     *
+     * ⚠️ 这里用 `is_callable()` 而不是 `method_exists()` 做能力探测：
+     * `Execution` 的 getter 全是 `DynamicPropsTrait::__call()` 变出来的魔术方法，
+     * 而 `method_exists()` **看不见魔术方法**（恒为 false）——
+     * 用它守卫会得到「能力永远缺失」的错误结论（本人第一次就是这么写错的，
+     * 结果是申请节点处理人仍然为空，且 `executionVariables()` 永远返回空数组）。
+     *
+     * @param TaskModel  $taskModel 任务节点模型
+     * @param IExecution $execution 执行对象
+     * @return string|null 发起人ID（取不到 / 不是第一个任务节点时为 null）
+     */
+    private function firstTaskApplicant(TaskModel $taskModel, IExecution $execution): ?string
+    {
+        $nodeName = (string) $taskModel->getName();
+
+        if ($nodeName === '' || !is_callable([$execution, 'getProcessModel'])) {
+            return null;
+        }
+
+        $processModel = $execution->getProcessModel();
+
+        if (!$processModel instanceof ProcessModel) {
+            return null;
+        }
+
+        if (!ProcessFlowUtils::isFistTaskName($processModel, $nodeName)) {
+            return null;
+        }
+
+        $instance = is_callable([$execution, 'getProcessInstance']) ? $execution->getProcessInstance() : null;
+
+        if (!is_object($instance) || !is_callable([$instance, 'getData'])) {
+            return null;
+        }
+
+        foreach (['created_by', 'operator'] as $field) {
+            $value = $instance->getData($field);
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return (string) $value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 由任务节点模型 + 实例信息组装任务列
      *
-     * @param TaskModel $taskModel 任务节点模型
-     * @param string    $instanceId 实例ID
-     * @param string    $operator   操作人
-     * @param string    $assignee   处理人
-     * @param mixed     $performType 参与类型（引擎 ProcessTaskPerformTypeEnum）
+     * 参与者相关的三列（`assignee` / `assignee_name` / `candidate_users` / `candidate_groups`）
+     * 全部来自解析结果，不再「把 assignee 复制一份当候选人」。
+     *
+     * @param TaskModel          $taskModel  任务节点模型
+     * @param string             $instanceId 实例ID
+     * @param string             $operator   操作人
+     * @param mixed              $performType 参与类型（引擎 ProcessTaskPerformTypeEnum）
+     * @param array              $variables  运行时变量（表达式求值与到期时间解析用）
+     * @param TaskActorResolution $resolution 参与者解析结果
      * @return array<string, mixed>
      */
     private function buildTaskColumns(
         TaskModel $taskModel,
         string $instanceId,
         string $operator,
-        string $assignee,
-        mixed $performType
+        mixed $performType,
+        array $variables = [],
+        ?TaskActorResolution $resolution = null
     ): array {
         $instanceId = trim($instanceId);
 
@@ -536,6 +641,10 @@ class ProcessTaskService implements IProcessTaskService
             ProcessTaskPerformTypeEnum::COUNTERSIGN->value
         );
 
+        $resolution ??= $this->resolveNodeActors($taskModel, $variables, null);
+
+        $this->reportActorWarnings($nodeName, $instanceId, $resolution);
+
         $timestamp = date('Y-m-d H:i:s');
 
         return [
@@ -549,16 +658,17 @@ class ProcessTaskService implements IProcessTaskService
             'task_sub_type'    => $isCountersign ? 'countersign' : 'approval',
             'title'            => mb_substr($displayName !== '' ? $displayName : $nodeName, 0, 200),
             'description'      => null,
-            'status'           => $assignee !== '' ? 'claimed' : 'pending',
-            'priority'         => 5,
-            'assignee'         => $assignee !== '' ? (int) $assignee : null,
-            'assignee_name'    => null,
-            'candidate_users'  => $assignee !== '' ? json_encode([$assignee], JSON_UNESCAPED_UNICODE) : json_encode([]),
-            'candidate_groups' => json_encode([], JSON_UNESCAPED_UNICODE),
+            // 有处理人 = 已指派（claimed）；只有候选人 / 谁都没有 = 待办（pending，谁抢谁办）
+            'status'           => $resolution->assignee !== null ? 'claimed' : 'pending',
+            'priority'         => $this->resolvePriority($taskModel),
+            'assignee'         => $resolution->assignee,
+            'assignee_name'    => $resolution->assigneeName,
+            'candidate_users'  => json_encode($resolution->candidateUserIds, JSON_UNESCAPED_UNICODE),
+            'candidate_groups' => json_encode($resolution->candidateGroupRefs, JSON_UNESCAPED_UNICODE),
             'form_data'        => null,
             'result'           => null,
             'comment'          => null,
-            'due_date'         => null,
+            'due_date'         => $this->resolveDueDate($taskModel, $variables),
             'reminder_times'   => json_encode([], JSON_UNESCAPED_UNICODE),
             'completed_at'     => null,
             'rejected_at'      => null,
@@ -567,6 +677,234 @@ class ProcessTaskService implements IProcessTaskService
             'updated_at'       => $timestamp,
             'created_by'       => $this->userIdOrNull($operator),
         ];
+    }
+
+    /**
+     * 把参与者解析的告警写进日志（WARN）
+     *
+     * 两类都要记：
+     * 1）解析过程中被拒绝/跳过的引用（角色不存在、跨租户、dept 无法展开……）；
+     * 2）解析完一个人都没有 —— 任务照样落库，但**必须留下痕迹**，
+     *    否则「流程推进了、任务也生成了、就是没人能办」只能靠人肉排查。
+     *
+     * @param string              $nodeName   节点名
+     * @param string              $instanceId 实例ID
+     * @param TaskActorResolution $resolution 解析结果
+     */
+    private function reportActorWarnings(string $nodeName, string $instanceId, TaskActorResolution $resolution): void
+    {
+        foreach ($resolution->warnings as $warning) {
+            $this->logHistory('warning', sprintf(
+                '任务参与者解析告警（实例 %s / 节点 %s）：%s',
+                $instanceId,
+                $nodeName,
+                $warning
+            ));
+        }
+
+        if (!$resolution->hasNoActor()) {
+            return;
+        }
+
+        $this->logHistory('warning', sprintf(
+            '任务「%s」（实例 %s）创建时没有解析出任何可执行参与者：assignee=null，candidate_users=[]，candidate_groups=%s。'
+            . '任务会以 pending 落库，但普通用户无法推进（只有 %s / %s 这类系统身份能执行）。'
+            . '请检查节点的参与者配置，或确认对应角色在本租户内是否已有成员',
+            $nodeName,
+            $instanceId,
+            json_encode($resolution->candidateGroupRefs, JSON_UNESCAPED_UNICODE),
+            ProcessConstEnum::AUTO_ID->value,
+            ProcessConstEnum::ADMIN_ID->value
+        ));
+    }
+
+    /**
+     * 调解析器解析节点参与者（解析器由容器注册，宿主可替换）
+     *
+     * 为什么取不到就 new 默认实现，而不是抛「容器没装配」：
+     * 任务创建是引擎的基础路径，插件也可能被独立使用（CLI / 单元测试没有容器）。
+     * 默认实现与容器默认注册的是**同一个类**，行为一致，不存在「测试跑一套、线上跑另一套」。
+     * 宿主替换解析器时会注册到容器里，这里就会优先用宿主的实现。
+     *
+     * @param TaskModel          $taskModel         任务节点模型
+     * @param array              $variables         运行时变量
+     * @param string|int|null    $preferredAssignee 强制处理人（驳回沿用原处理人）
+     */
+    private function resolveNodeActors(
+        TaskModel $taskModel,
+        array $variables,
+        string|int|null $preferredAssignee
+    ): TaskActorResolution {
+        return $this->actorResolver()->resolve(
+            $taskModel,
+            $variables,
+            '任务节点 ' . (string) $taskModel->getName(),
+            $preferredAssignee
+        );
+    }
+
+    /**
+     * 取参与者解析器（容器优先，取不到回落到默认实现）
+     */
+    private function actorResolver(): ITaskActorResolver
+    {
+        try {
+            $resolver = ServiceContext::find(ITaskActorResolver::class);
+        } catch (\Throwable) {
+            // 容器未初始化 / PHP-DI 缺失：与「未注册」同口径，回落默认实现
+            $resolver = null;
+        }
+
+        return $resolver instanceof ITaskActorResolver ? $resolver : new DefaultTaskActorResolver();
+    }
+
+    /**
+     * 取人员目录（容器优先，取不到回落到默认实现）
+     */
+    private function actorDirectory(): ITaskActorDirectory
+    {
+        try {
+            $directory = ServiceContext::find(ITaskActorDirectory::class);
+        } catch (\Throwable) {
+            $directory = null;
+        }
+
+        return $directory instanceof ITaskActorDirectory ? $directory : new DefaultTaskActorDirectory();
+    }
+
+    /**
+     * 查某个用户在本租户内的显示名（`users.name`，为空回落 `username`）
+     *
+     * 只用于「认领 / 完成时把 assignee_name 补上」这类**展示性**字段：
+     * 查不到就返回 null，绝不让它把任务完成这条主链路带崩。
+     * 租户过滤由目录实现负责（跨租户会查不到 → null）。
+     */
+    private function resolveUserName(int $userId): ?string
+    {
+        try {
+            $names = $this->actorDirectory()->findUserNames($this->tenantId('回填任务处理人姓名'), [$userId]);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $name = $names[$userId] ?? null;
+
+        return is_string($name) && trim($name) !== '' ? $name : null;
+    }
+
+    /**
+     * 取本次执行可见的流程变量（`${...}` 表达式与到期时间的求值上下文）
+     *
+     * 来源两级，后者覆盖前者：
+     * 1）流程实例变量（`workflow_instances.variables`，启动参数即流程变量）；
+     * 2）本次执行参数（`Execution::getArgs()`，`executeProcessTask()` 传进来的审批参数）。
+     *
+     * `IExecution` 接口里这些方法全被注释掉了（上游遗留），因此只能守卫式调用，
+     * 取不到就当「没有变量」——不做任何猜测。
+     *
+     * ⚠️ 守卫必须用 `is_callable()`：`Execution` 的 getter 是 `__call()` 魔术方法，
+     * `method_exists()` 对它们恒为 false，用它守卫会让本方法**永远返回空数组**，
+     * 于是 `${applicant_id}` 这类表达式与「到期时间取变量」都会静默失效。
+     *
+     * @return array<string, mixed>
+     */
+    private function executionVariables(IExecution $execution): array
+    {
+        $variables = [];
+
+        if (is_callable([$execution, 'getProcessInstance'])) {
+            $instance = $execution->getProcessInstance();
+
+            if (is_object($instance) && is_callable([$instance, 'getData'])) {
+                $stored = $instance->getData('variable');
+
+                if (is_array($stored)) {
+                    $variables = $stored;
+                }
+            }
+        }
+
+        if (is_callable([$execution, 'getArgs'])) {
+            $args = $execution->getArgs();
+
+            if ($args instanceof IDict) {
+                $variables = array_merge($variables, $args->toArray());
+            }
+        }
+
+        return $variables;
+    }
+
+    /**
+     * 解析任务优先级（`properties.field.priority`，没有就保持既有默认 5）
+     *
+     * 为什么读 `ext` 而不是 `properties`：`TaskParser` 只把自定义扩展属性
+     * （LogicFlow 节点的 `properties.field`）整体塞进 `TaskModel::$ext`，
+     * 顶层的 `properties.priority` 没有被任何解析器接住。凭空去读一个没人写入的键，
+     * 只会得到「永远是默认值」的假实现。
+     */
+    private function resolvePriority(TaskModel $taskModel): int
+    {
+        $ext = $taskModel->getExt();
+        $raw = $ext instanceof IDict ? $ext->get('priority') : null;
+
+        if (!is_scalar($raw) || trim((string) $raw) === '') {
+            return 5;
+        }
+
+        // 列注释口径是 1-10，越界按边界收敛（写 0 或 99 只会让排序失去意义）
+        return max(1, min(10, (int) $raw));
+    }
+
+    /**
+     * 解析任务到期时间（`properties.expire_time`）
+     *
+     * ── 语义（已查证，不猜）────────────────────────────────────────────────
+     * `INodeParser::EXPIRE_TIME_KEY = 'expire_time'` 的注释写的是
+     * 「期待任务完成时间**变量key**」，而它的唯一实现是
+     * {@see ProcessFlowUtils::processTime()}，支持三种形态：
+     * 1）**运行时变量名**：变量里存的可以是 DateTime / 时间戳 / 时间字符串；
+     * 2）**时长**：`30m` / `2h` / `1d` / `60s`，表示「从现在起 N 个单位」；
+     * 3）**绝对时间串**：能被 `new DateTime()` 解析的字符串。
+     *
+     * 因此这里直接复用该工具，不另写一套解析：
+     * - 变量上下文就是流程变量（见 {@see self::executionVariables()}）；
+     * - 结果统一换算到 PHP 默认时区再格式化 —— `new DateTime("@timestamp")` 得到的是 UTC，
+     *   不换算就会与 `created_at`（`date()`，默认时区）差几个小时，看起来像「时区错乱」；
+     * - 解析不出来就保持 null 并记 WARNING（不编一个时间，也不让建任务失败）。
+     */
+    private function resolveDueDate(TaskModel $taskModel, array $variables): ?string
+    {
+        $expireTime = $taskModel->getExpireTime();
+
+        if (!is_scalar($expireTime) || trim((string) $expireTime) === '') {
+            return null;
+        }
+
+        $args = new Dict();
+        $args->putAll($variables);
+
+        try {
+            $resolved = ProcessFlowUtils::processTime((string) $expireTime, $args);
+        } catch (\Throwable $e) {
+            $this->logHistory('warning', sprintf(
+                '任务节点 %s 的到期时间「%s」解析失败（%s: %s），due_date 留空',
+                (string) $taskModel->getName(),
+                (string) $expireTime,
+                get_debug_type($e),
+                $e->getMessage()
+            ));
+
+            return null;
+        }
+
+        if ($resolved === null) {
+            return null;
+        }
+
+        return $resolved
+            ->setTimezone(new \DateTimeZone(date_default_timezone_get()))
+            ->format('Y-m-d H:i:s');
     }
 
     /**
@@ -586,28 +924,12 @@ class ProcessTaskService implements IProcessTaskService
     }
 
     /**
-     * 只取一个处理人：节点上写了多人时，普通任务取第一个（其余按候选人处理）
+     * 把「显式传入的参与者」拆成参与者ID列表（用于 addTaskActor / removeTaskActor 这类 API）
      *
-     * @param mixed  $raw       原始 assignee
-     * @param string $operation 操作描述
-     */
-    private function firstActorId(mixed $raw, string $operation): string
-    {
-        if ($raw === null || (is_string($raw) && trim($raw) === '')) {
-            return '';
-        }
-
-        $actors = $this->parseActorTokens(is_scalar($raw) ? (string) $raw : '', $operation);
-
-        return $actors[0] ?? '';
-    }
-
-    /**
-     * 把参与者表达式拆成参与者ID列表
-     *
-     * 只接受**数字ID**。如果遇到表达式 / 表单键 / 角色标识，直接报错而不是静默丢掉：
-     * 本插件没有 `IProcessUser`、`ICandidateHandler` 实现（全仓 grep 零命中），
-     * 也没有用户/部门/角色服务，解析不出人来；静默丢弃会产生「任务没人能办」的暗坑。
+     * ⚠️ 与节点配置的解析**不是同一条路径**：节点配置走 {@see ITaskActorResolver}
+     * （支持 `user:` / `role:` / `dept:` / `${表达式}`），而这里接收的是调用方
+     * 明确给出的用户ID（转办、追加参与者），因此只接受**数字ID**，
+     * 遇到别的形态直接报错 —— 静默丢弃会产生「加了个不存在的参与者」的暗坑。
      *
      * @param string $raw       原始参与者串（逗号/分号/竖线/空格分隔）
      * @param string $operation 操作描述
@@ -628,8 +950,9 @@ class ProcessTaskService implements IProcessTaskService
             if (!ctype_digit($token) || (int) $token <= 0) {
                 throw new LFlowException(sprintf(
                     '%s：参与者「%s」不是数字用户ID，无法解析。'
-                    . '本仓库没有 IProcessUser / ICandidateHandler 实现，也没有用户/部门/角色服务，'
-                    . '表达式、表单键与角色标识都解析不出具体人员，因此不做猜测',
+                    . '本方法只接受明确的用户ID；'
+                    . '按角色/部门/表达式指派请配在节点上（assignee / candidate_ext_users / candidate_ext_groups），'
+                    . '由参与者解析器统一展开',
                     $operation,
                     $token
                 ));

@@ -10,6 +10,8 @@ use Alkaid\Workflow\Engine\Services\ProcessDefineService;
 use Alkaid\Workflow\Engine\Services\ProcessInstanceHistoryService;
 use Alkaid\Workflow\Engine\Services\ProcessInstanceService;
 use Alkaid\Workflow\Engine\Services\ProcessTaskService;
+use Alkaid\Workflow\Engine\Services\DefaultTaskActorDirectory;
+use Alkaid\Workflow\Engine\Services\DefaultTaskActorResolver;
 use Alkaid\Workflow\Engine\interface\IProcessEngines;
 use Alkaid\Workflow\Engine\interface\IConfiguration;
 use Alkaid\Workflow\Engine\interface\services\IProcessDefineService;
@@ -21,6 +23,8 @@ use Alkaid\Workflow\Engine\interface\services\IProcessFormService;
 use Alkaid\Workflow\Engine\interface\services\IProcessTypeService;
 use Alkaid\Workflow\Engine\interface\services\IProcessInstanceHistoryService;
 use Alkaid\Workflow\Engine\interface\services\IProcessTaskHistoryService;
+use Alkaid\Workflow\Engine\interface\services\ITaskActorDirectory;
+use Alkaid\Workflow\Engine\interface\services\ITaskActorResolver;
 use Alkaid\Workflow\Engine\parser\INodeParser;
 use Alkaid\Workflow\Engine\parser\handler\StartParser;
 use Alkaid\Workflow\Engine\parser\handler\EndParser;
@@ -166,6 +170,19 @@ class WorkflowContainer
         // 实现它的 4 个方法就是死代码（理由见 IProcessInstanceHistoryService 的类注释）。
         $processTaskHistoryService = $config['process_task_history_service'] ?? null;
 
+        // 任务参与者解析器：把节点上配的「谁有权办」（assignee / candidate_ext_users /
+        // candidate_ext_groups）解析成可落库的用户 id。默认用插件自带的实现，
+        // 宿主可用 `task_actor_resolver` 换成自己的（例如接组织架构服务）。
+        //
+        // 与历史服务同理：**不能**登记接口名本身 —— normalizeDefinitions() 只把
+        // 「存在的类」包成 DI\create()，接口名会作为字面值留下，取回时是字符串，
+        // 调用方按接口接收必然 TypeError。
+        $taskActorResolver = $config['task_actor_resolver'] ?? DefaultTaskActorResolver::class;
+
+        // 人员目录（查角色成员 / 用户 / 部门）：解析器的数据来源，同样可被宿主替换。
+        // 单独登记的理由：解析规则与「怎么查人」是两件事，前者值得脱离数据库测试。
+        $taskActorDirectory = $config['task_actor_directory'] ?? DefaultTaskActorDirectory::class;
+
         $this->coreConfig = $config;
 
         $this->coreServices = [
@@ -211,6 +228,14 @@ class WorkflowContainer
             // 工作流任务历史服务
             'processTaskHistoryService' => $processTaskHistoryService,
             IProcessTaskHistoryService::class => $processTaskHistoryService,
+
+            // 任务参与者解析器（短名 + 接口 FQCN 同时登记：
+            // 引擎侧 ProcessTaskService 取的是 `ServiceContext::find(ITaskActorResolver::class)`，
+            // 宿主覆盖时可能写短名 `taskActorResolver`，两者必须指向同一个实现）
+            'taskActorResolver' => $taskActorResolver,
+            ITaskActorResolver::class => $taskActorResolver,
+            'taskActorDirectory' => $taskActorDirectory,
+            ITaskActorDirectory::class => $taskActorDirectory,
 
             // 节点解析器
             'startParser' => StartParser::class,
@@ -278,6 +303,16 @@ class WorkflowContainer
         $this->coreServices[IProcessTaskHistoryService::class]
             = $this->coreServices[IProcessTaskHistoryService::class]
             ?? $this->coreServices['processTaskHistoryService'];
+
+        // 参与者解析器 / 人员目录：宿主可能用 `config['task_actor_resolver']`（见 buildCoreServices 开头）
+        // 或 `service_dependencies['taskActorResolver']` 覆盖同一个服务，两边必须指向同一实现，
+        // 否则会出现「短名是宿主的、引擎按接口取到的仍是插件默认实现」的割裂。
+        $this->coreServices[ITaskActorResolver::class]
+            = $this->coreServices[ITaskActorResolver::class]
+            ?? $this->coreServices['taskActorResolver'];
+        $this->coreServices[ITaskActorDirectory::class]
+            = $this->coreServices[ITaskActorDirectory::class]
+            ?? $this->coreServices['taskActorDirectory'];
 
         // 引擎实现类：允许宿主通过 service_dependencies['processEngines'] 覆盖，默认用插件自带实现
         $engineCandidate = $this->coreServices['processEngines'] ?? ProcessEngines::class;
@@ -476,6 +511,18 @@ class WorkflowContainer
     public function getProcessTaskService(): IProcessTaskService
     {
         return $this->get('processTaskService');
+    }
+
+    /**
+     * 获取任务参与者解析器
+     *
+     * 宿主替换解析器后，这里返回的就是宿主的实现（短名与接口 FQCN 指向同一对象）。
+     *
+     * @return ITaskActorResolver
+     */
+    public function getTaskActorResolver(): ITaskActorResolver
+    {
+        return $this->get(ITaskActorResolver::class);
     }
 
     /**
